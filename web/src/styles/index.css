@@ -1,0 +1,264 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import './theme.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  html {
+    @apply overflow-x-hidden;
+  }
+
+  body {
+    @apply min-h-svh w-full bg-background text-foreground has-[div[data-variant='inset']]:bg-sidebar;
+  }
+
+  /* Override Radix scroll locking for sticky headers */
+  body[data-scroll-locked] {
+    overflow: unset !important;
+  }
+
+  /* Cursor pointer for buttons */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Prevent focus zoom on mobile devices */
+  @media screen and (max-width: 767px) {
+
+    input,
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+}
+
+@utility container {
+  margin-inline: auto;
+  padding-inline: 2rem;
+}
+
+@utility no-scrollbar {
+
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
+}
+
+@utility faded-bottom {
+  @apply after:pointer-events-none after:absolute after:start-0 after:bottom-0 after:hidden after:h-32 after:w-full after:rounded-b-2xl md:after:block;
+
+  &::after {
+    background: linear-gradient(180deg, transparent 10%, var(--background) 70%);
+  }
+}
+
+/* styles.css */
+.CollapsibleContent {
+  overflow: hidden;
+}
+
+.CollapsibleContent[data-state='open'] {
+  animation: slideDown 300ms ease-out;
+}
+
+.CollapsibleContent[data-state='closed'] {
+  animation: slideUp 300ms ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    height: 0;
+  }
+
+  to {
+    height: var(--radix-collapsible-content-height);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    height: var(--radix-collapsible-content-height);
+  }
+
+  to {
+    height: 0;
+  }
+}
+
+/* Error pulse animation for pipeline nodes */
+@keyframes error-pulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    border-color: rgb(239, 68, 68);
+  }
+
+  50% {
+    box-shadow: 0 0 20px 4px rgba(239, 68, 68, 0.3);
+    border-color: rgb(248, 113, 113);
+  }
+}
+
+
+.animate-error-pulse {
+  animation: error-pulse 2s ease-in-out infinite;
+}
+
+@keyframes fade-in-slide-up {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-slide-up {
+  animation: fade-in-slide-up 0.3s ease-out forwards;
+}
+
+@keyframes bell-ring {
+  0% {
+    transform: rotate(0);
+  }
+
+  10% {
+    transform: rotate(30deg);
+  }
+
+  30% {
+    transform: rotate(-28deg);
+  }
+
+  50% {
+    transform: rotate(34deg);
+  }
+
+  70% {
+    transform: rotate(-32deg);
+  }
+
+  90% {
+    transform: rotate(30deg);
+  }
+
+  100% {
+    transform: rotate(0);
+  }
+}
+
+.animate-bell-ring {
+  animation: bell-ring 2s ease-in-out infinite;
+  transform-origin: top center;
+}
+
+/* Restart button animations */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-gradient {
+  animation: gradient 3s ease infinite;
+}
+
+@keyframes progress {
+  0% {
+    transform: scaleX(0);
+  }
+
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+.animate-progress {
+  animation: progress 1.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Reset the global border/outline that the * rule applies to ReactFlow node wrappers */
+.react-flow__node,
+.react-flow__node-input,
+.react-flow__node-output,
+.react-flow__node-default {
+  border: none !important;
+  outline: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  width: auto !important;
+  --xy-node-border: none;
+  --xy-node-boxshadow-hover-default: none;
+  --xy-node-boxshadow-selected-default: none;
+}
+
+.react-flow__node:focus,
+.react-flow__node:focus-visible,
+.react-flow__node-input:focus,
+.react-flow__node-input:focus-visible,
+.react-flow__node-output:focus,
+.react-flow__node-output:focus-visible {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}

@@ -1,0 +1,276 @@
+version: "3.8"
+
+# =============================================================================
+# ROSETTA APPLICATION DOCKER COMPOSE
+# =============================================================================
+# This compose file runs 3 containers:
+# 1. compute-node: Python CDC pipeline manager (mode=worker)
+# 2. web: FastAPI backend + React frontend (mode=web)
+# 3. worker: Celery async task processor (mode=worker)
+#
+# Prerequisites:
+#   Run ./build.sh first to build the images
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # COMPUTE NODE - Python Pipeline Manager (CDC Engine)
+  # ===========================================================================
+  rosetta-compute-node:
+    image: rosetta-etl:1.0.0-compute
+    container_name: rosetta-compute
+    restart: unless-stopped
+    ports:
+      - "${COMPUTE_PORT:-8001}:8001"
+    environment:
+      MODE: worker
+      # Database Configuration
+      ROSETTA_DB_HOST: ${ROSETTA_DB_HOST:-rosetta-postgres}
+      ROSETTA_DB_PORT: ${ROSETTA_DB_PORT:-5432}
+      ROSETTA_DB_NAME: ${ROSETTA_DB_NAME:-postgres}
+      ROSETTA_DB_USER: ${ROSETTA_DB_USER:-postgres}
+      ROSETTA_DB_PASSWORD: ${ROSETTA_DB_PASSWORD:-postgres}
+      # Debezium Configuration
+      DEBEZIUM_OFFSET_STORAGE_PATH: /app/tmp/offsets
+      DEBEZIUM_OFFSET_FLUSH_INTERVAL_MS: 60000
+      # Pipeline Configuration
+      PIPELINE_MAX_BATCH_SIZE: ${PIPELINE_MAX_BATCH_SIZE:-4096}
+      PIPELINE_MAX_QUEUE_SIZE: ${PIPELINE_MAX_QUEUE_SIZE:-16384}
+      PIPELINE_POLL_INTERVAL_MS: ${PIPELINE_POLL_INTERVAL_MS:-500}
+      # Connection Pool
+      MAIN_POOL_MAX_CONN: ${MAIN_POOL_MAX_CONN:-8}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      DEBUG: ${DEBUG:-false}
+      CREDENTIAL_ENCRYPTION_KEY: Wn5x7y9z1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8=
+      # Redis and DLQ Configuration
+      REDIS_URL: ${REDIS_URL:-redis://rosetta-redis:6379/0}
+      DLQ_KEY_PREFIX: ${DLQ_KEY_PREFIX:-rosetta:dlq}
+      DLQ_CHECK_INTERVAL: ${DLQ_CHECK_INTERVAL:-30}
+      DLQ_BATCH_SIZE: ${DLQ_BATCH_SIZE:-100}
+      DLQ_MAX_STREAM_LENGTH: ${DLQ_MAX_STREAM_LENGTH:-100000}
+      DLQ_CONSUMER_GROUP: ${DLQ_CONSUMER_GROUP:-dlq_recovery}
+      DLQ_MAX_RETRY_COUNT: ${DLQ_MAX_RETRY_COUNT:-10}
+      DLQ_MAX_AGE_DAYS: ${DLQ_MAX_AGE_DAYS:-7}
+      DLQ_BLOCK_MS: ${DLQ_BLOCK_MS:-2000}
+      # Snowflake Timeouts
+      SNOWFLAKE_CONNECT_TIMEOUT: ${SNOWFLAKE_CONNECT_TIMEOUT:-30.0}
+      SNOWFLAKE_READ_TIMEOUT: ${SNOWFLAKE_READ_TIMEOUT:-300.0}
+      SNOWFLAKE_WRITE_TIMEOUT: ${SNOWFLAKE_WRITE_TIMEOUT:-60.0}
+      SNOWFLAKE_POOL_TIMEOUT: ${SNOWFLAKE_POOL_TIMEOUT:-10.0}
+      SNOWFLAKE_BATCH_TIMEOUT_BASE: ${SNOWFLAKE_BATCH_TIMEOUT_BASE:-300}
+      SNOWFLAKE_BATCH_TIMEOUT_MAX: ${SNOWFLAKE_BATCH_TIMEOUT_MAX:-600}
+      # Timezone — IANA timezone for TZ-aware timestamp conversion
+      TZ: Asia/Jakarta
+      ROSETTA_TIMEZONE: ${ROSETTA_TIMEZONE:-Asia/Jakarta}
+    depends_on:
+      rosetta-postgres:
+        condition: service_healthy
+    volumes:
+      - rosetta_compute_data:/app/tmp
+    networks:
+      - rosetta-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  rosetta-web:
+    image: rosetta-etl:1.0.0-web
+    container_name: rosetta-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5173}:80"
+    environment:
+      MODE: web
+      COMPUTE_NODE_URL: http://rosetta-compute-node:8001
+      # Database Configuration
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://postgres:postgres@rosetta-postgres:5432/postgres}
+      # Database Connection Pool
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-3600}
+      # Application Configuration
+      APP_NAME: ${APP_NAME:-Rosetta ETL Platform}
+      APP_ENV: ${APP_ENV:-production}
+      DEBUG: ${DEBUG:-False}
+      LOG_LEVEL: ${LOG_LEVEL:-ERROR}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      HOST: 0.0.0.0
+      PORT: 8000
+      # Security (SECRET_KEY must be at least 32 characters)
+      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key-in-production-now}
+      API_KEY: ${API_KEY:-change-this-api-key-in-production}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["*"]}
+      # Background Tasks
+      BACKGROUND_TASK_ENABLED: ${BACKGROUND_TASK_ENABLED:-True}
+      SCHEDULER_TIMEZONE: Asia/Jakarta
+      # WAL Monitor
+      WAL_MONITOR_ENABLED: ${WAL_MONITOR_ENABLED:-True}
+      WAL_MONITOR_INTERVAL_SECONDS: ${WAL_MONITOR_INTERVAL_SECONDS:-60}
+      WAL_MONITOR_TIMEOUT_SECONDS: ${WAL_MONITOR_TIMEOUT_SECONDS:-60}
+      WAL_MONITOR_MAX_RETRIES: ${WAL_MONITOR_MAX_RETRIES:-3}
+      # Optional: Run migrations on startup
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
+      # Timezone
+      TZ: Asia/Jakarta
+      # Worker Configuration
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-8}
+      CREDENTIAL_ENCRYPTION_KEY: Wn5x7y9z1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8=
+      REDIS_URL: ${REDIS_URL:-redis://rosetta-redis:6379/0}
+      CELERY_BROKER_URL: redis://rosetta-redis:6379/1
+      CELERY_RESULT_BACKEND: redis://rosetta-redis:6379/2
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      WORKER_HEALTH_URL: ${WORKER_HEALTH_URL:-http://rosetta-worker:8002}
+
+    depends_on:
+      rosetta-postgres:
+        condition: service_healthy
+      rosetta-redis:
+        condition: service_started
+      rosetta-compute-node:
+        condition: service_healthy
+      rosetta-worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - rosetta-network
+
+  rosetta-postgres:
+    image: postgres:16
+    container_name: rosetta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+      TZ: Asia/Jakarta
+    ports:
+      - "5453:5432"
+    volumes:
+      - rosetta_postgres_data:/var/lib/postgresql/data
+    command: >
+      postgres 
+      -c wal_level=logical 
+      -c max_replication_slots=10 
+      -c max_wal_senders=10
+      -c timezone='Asia/Jakarta'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rosetta-network
+
+  rosetta-redis:
+    image: redis:7
+    command: ["redis-server", "--port", "6379"]
+    volumes:
+      - rosetta_redis_data:/data
+    networks:
+      - rosetta-network
+    restart: unless-stopped
+
+  # ===========================================================================
+  # WORKER - Celery Background Task Processor (HIGH PERFORMANCE)
+  # ===========================================================================
+  rosetta-worker:
+    image: rosetta-etl:1.0.0-worker
+    container_name: rosetta-worker
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      # Database (Config DB - same as backend)
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@rosetta-postgres:5432/postgres}
+      # Connection Pool
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      # Redis
+      REDIS_URL: ${REDIS_URL:-redis://rosetta-redis:6379/0}
+      CELERY_BROKER_URL: redis://rosetta-redis:6379/1
+      CELERY_RESULT_BACKEND: redis://rosetta-redis:6379/2
+      REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-20}
+      # Security (must match backend)
+      CREDENTIAL_ENCRYPTION_KEY: Wn5x7y9z1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8=
+      # Worker Settings
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
+      TASK_SOFT_TIME_LIMIT: ${TASK_SOFT_TIME_LIMIT:-120}
+      TASK_HARD_TIME_LIMIT: ${TASK_HARD_TIME_LIMIT:-180}
+      PREVIEW_ROW_LIMIT: ${PREVIEW_ROW_LIMIT:-500}
+      # DuckDB Settings
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-2GB}
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
+      DUCKDB_MAX_CONCURRENT: ${DUCKDB_MAX_CONCURRENT:-4}
+      # Memory Management
+      MEMORY_WARNING_MB: ${MEMORY_WARNING_MB:-4096}
+      # Linked Task
+      LINKED_TASK_MAX_PARALLEL_STEPS: ${LINKED_TASK_MAX_PARALLEL_STEPS:-3}
+      # Health Server
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8002
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      # Timezone
+      TZ: Asia/Jakarta
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPU_LIMIT:-4}"
+          memory: ${WORKER_MEMORY_LIMIT:-4G}
+        reservations:
+          cpus: "1"
+          memory: 1G
+    depends_on:
+      rosetta-postgres:
+        condition: service_healthy
+      rosetta-redis:
+        condition: service_started
+    networks:
+      - rosetta-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+networks:
+  rosetta-network:
+    driver: bridge
+    name: rosetta-network
+
+volumes:
+  rosetta_postgres_data:
+  rosetta_redis_data:
+  rosetta_compute_data:
+
+# =============================================================================
+# USAGE
+# =============================================================================
+# 1. Build images first:
+#    ./build.sh
+#
+# 2. Start services:
+#    docker compose -f docker-compose-app.yml up -d
+#
+# 3. View logs:
+#    docker compose -f docker-compose-app.yml logs -f
+#
+# 4. Stop services:
+#    docker compose -f docker-compose-app.yml down
+# =============================================================================
