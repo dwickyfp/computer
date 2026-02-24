@@ -115,7 +115,15 @@ export const linkedTasksColumns: ColumnDef<LinkedTask>[] = [
                             : 'Never executed'}
                     </span>
                     {lastRunStatus && (
-                        <Badge variant="secondary" className="w-fit text-[10px]">
+                        <Badge 
+                            variant="outline" 
+                            className={`w-fit text-[10px] ${
+                                lastRunStatus === 'SUCCESS' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/25 border-transparent' :
+                                lastRunStatus === 'FAILED' ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400 hover:bg-rose-500/25 border-transparent' :
+                                lastRunStatus === 'RUNNING' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 hover:bg-blue-500/25 border-transparent' :
+                                'bg-muted text-muted-foreground hover:bg-muted/80 border-transparent'
+                            }`}
+                        >
                             {lastRunStatus}
                         </Badge>
                     )}
