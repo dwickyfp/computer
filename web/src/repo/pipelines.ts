@@ -4,7 +4,9 @@ import { api } from './client'
 export interface Pipeline {
   id: number
   name: string
-  source_id: number
+  source_id: number | null
+  source_type?: string
+  chain_client_id?: number | null
   destination_id: number
   status: 'START' | 'PAUSE' | 'REFRESH'
   ready_refresh?: boolean
@@ -42,7 +44,9 @@ export interface Pipeline {
 
 export interface CreatePipelineRequest {
   name: string
-  source_id: number
+  source_id?: number
+  source_type?: string
+  chain_client_id?: number
   status?: string
 }
 

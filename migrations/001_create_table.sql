@@ -906,3 +906,52 @@ CREATE INDEX IF NOT EXISTS idx_credit_snowflake_dest_date
 CREATE INDEX IF NOT EXISTS idx_queue_backfill_data_executing
     ON queue_backfill_data(updated_at) WHERE status = 'EXECUTING';
 
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Rosetta Chain — Inter-instance streaming configuration
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Chain configuration for this Rosetta instance (single-row)
+CREATE TABLE IF NOT EXISTS rosetta_chain_config (
+    id SERIAL PRIMARY KEY,
+    chain_key TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Remote Rosetta instance registrations
+CREATE TABLE IF NOT EXISTS rosetta_chain_clients (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    url VARCHAR(500) NOT NULL,
+    port INTEGER NOT NULL DEFAULT 8001,
+    chain_key TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_connected_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Virtual tables from remote Rosetta instances
+CREATE TABLE IF NOT EXISTS rosetta_chain_tables (
+    id SERIAL PRIMARY KEY,
+    chain_client_id INTEGER NOT NULL REFERENCES rosetta_chain_clients(id) ON DELETE CASCADE,
+    table_name VARCHAR(255) NOT NULL,
+    schema_json JSONB NOT NULL DEFAULT '{}',
+    source_chain_id VARCHAR(255) NULL,
+    record_count BIGINT NOT NULL DEFAULT 0,
+    last_synced_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(chain_client_id, table_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rosetta_chain_tables_client
+    ON rosetta_chain_tables(chain_client_id);
+
+-- Add source_type and chain_client_id to pipelines
+ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS source_type VARCHAR(20) NOT NULL DEFAULT 'POSTGRES';
+ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL;
+ALTER TABLE pipelines ALTER COLUMN source_id DROP NOT NULL;
+

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 
 from core.engine import PipelineEngine
+from core.chain_engine import ChainPipelineEngine
 from core.repository import PipelineRepository, PipelineMetadataRepository
 from core.database import init_connection_pool, close_connection_pool
 
@@ -78,15 +79,23 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
 
     engine = None
     try:
-        engine = PipelineEngine(pipeline_id)
-        # engine.initialize() # Moved inside run or handled by engine
-        # Verify engine initialization
+        # Determine engine type based on pipeline source_type
+        # Chain (ROSETTA) pipelines use ChainPipelineEngine which reads from Redis Streams
+        # Regular (POSTGRES) pipelines use PipelineEngine which reads from Debezium CDC
+        pipeline_data = PipelineRepository.get_by_id(pipeline_id)
+        source_type = (
+            getattr(pipeline_data, "source_type", "POSTGRES")
+            if pipeline_data
+            else "POSTGRES"
+        )
 
-        # Run until stop event is set
-        # We need to run the engine in a non-blocking way or handle stop signals
-        # Since Debezium engine blocks, we rely on the process termination for now
-        # OR if PipelineEngine supports a stop check.
-        # Assuming PipelineEngine.run() is blocking but we can stop it via terminate
+        if source_type == "ROSETTA":
+            subprocess_logger.info(
+                f"Starting chain pipeline engine for pipeline {pipeline_id}"
+            )
+            engine = ChainPipelineEngine(pipeline_id)
+        else:
+            engine = PipelineEngine(pipeline_id)
 
         engine.initialize()
         engine.run()

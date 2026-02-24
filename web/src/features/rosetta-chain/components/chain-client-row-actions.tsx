@@ -1,0 +1,68 @@
+import { DotsHorizontalIcon } from '@radix-ui/react-icons'
+import { type Row } from '@tanstack/react-table'
+import { Pencil, Trash2, Zap } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { type ChainClient, chainClientSchema } from '../data/schema'
+import { useChain } from './chain-provider'
+
+interface ChainClientRowActionsProps {
+  row: Row<ChainClient>
+}
+
+export function ChainClientRowActions({ row }: ChainClientRowActionsProps) {
+  const client = chainClientSchema.parse(row.original)
+  const { setOpen, setCurrentRow } = useChain()
+
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant='ghost'
+          className='flex h-8 w-8 p-0 data-[state=open]:bg-muted'
+        >
+          <DotsHorizontalIcon className='h-4 w-4' />
+          <span className='sr-only'>Open menu</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end' className='w-[160px]'>
+        <DropdownMenuItem
+          onClick={() => {
+            setCurrentRow(client)
+            setOpen('test')
+          }}
+        >
+          <Zap className='mr-2 h-4 w-4' />
+          Test Connection
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => {
+            setCurrentRow(client)
+            setOpen('update')
+          }}
+        >
+          <Pencil className='mr-2 h-4 w-4' />
+          Edit
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className='text-destructive focus:text-destructive'
+          onClick={() => {
+            setCurrentRow(client)
+            setOpen('delete')
+          }}
+        >
+          <Trash2 className='mr-2 h-4 w-4' />
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}

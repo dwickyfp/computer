@@ -421,7 +421,7 @@ export function PipelinesSidebar() {
   // Extract unique source IDs
   const sourceIds = useMemo(() => {
     return Array.from(new Set(pipelines.map((p) => p.source_id))).filter(
-      (id) => typeof id === 'number' && !isNaN(id)
+      (id): id is number => typeof id === 'number' && !isNaN(id)
     )
   }, [pipelines])
 
@@ -480,7 +480,10 @@ export function PipelinesSidebar() {
         }
 
         // Check Source Tables
-        const sourceDetails = sourceDetailsMap.get(pipeline.source_id)
+        const sourceDetails =
+          pipeline.source_id !== null
+            ? sourceDetailsMap.get(pipeline.source_id)
+            : undefined
         if (sourceDetails?.tables) {
           const matchingTables = sourceDetails.tables.filter((t) =>
             t.table_name.toLowerCase().includes(lowerQuery)
@@ -718,9 +721,11 @@ export function PipelinesSidebar() {
                       <div className='border-l border-border/40 pl-2'>
                         <PipelineItem
                           pipeline={pipeline}
-                          sourceDetails={sourceDetailsMap.get(
-                            pipeline.source_id
-                          )}
+                          sourceDetails={
+                            pipeline.source_id !== null
+                              ? sourceDetailsMap.get(pipeline.source_id)
+                              : undefined
+                          }
                           checkExpanded={internalExpansionMap.get(pipeline.id)}
                           searchQuery={searchQuery}
                           selectedSyncId={selection.syncId}

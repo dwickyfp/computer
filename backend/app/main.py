@@ -68,7 +68,9 @@ async def lifespan(app: FastAPI):
                 else:
                     logger.info("Database health check passed")
             except Exception as e:
-                logger.error("Error during startup health check", extra={"error": str(e)})
+                logger.error(
+                    "Error during startup health check", extra={"error": str(e)}
+                )
 
         asyncio.create_task(_startup_health_check())
 
@@ -78,24 +80,28 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to start application", extra={"error": str(e)})
         raise
 
-    yield
-
-    # Shutdown
-    logger.info("Shutting down Rosetta ETL Platform")
-
     try:
-        # Stop background scheduler
-        background_scheduler.stop()
-        logger.info("Background scheduler stopped")
+        yield
+    except asyncio.CancelledError:
+        # Normal during Ctrl-C / SIGTERM — do not re-raise so shutdown runs cleanly
+        pass
+    finally:
+        # Shutdown
+        logger.info("Shutting down Rosetta ETL Platform")
 
-        # Close database connections
-        db_manager.close()
-        logger.info("Database connections closed")
+        try:
+            # Stop background scheduler
+            background_scheduler.stop()
+            logger.info("Background scheduler stopped")
 
-        logger.info("Application shutdown completed successfully")
+            # Close database connections
+            db_manager.close()
+            logger.info("Database connections closed")
 
-    except Exception as e:
-        logger.error("Error during application shutdown", extra={"error": str(e)})
+            logger.info("Application shutdown completed successfully")
+
+        except Exception as e:
+            logger.error("Error during application shutdown", extra={"error": str(e)})
 
 
 # Create FastAPI application
@@ -225,12 +231,19 @@ async def check_compute_health() -> bool:
         async with httpx.AsyncClient(timeout=5.0) as client:
             logger.info(f"Checking compute health at: {url}")
             response = await client.get(url)
-            is_healthy = response.status_code == 200 and response.json().get("status") == "healthy"
+            is_healthy = (
+                response.status_code == 200
+                and response.json().get("status") == "healthy"
+            )
             if not is_healthy:
-                logger.warning(f"Compute health check returned {response.status_code}: {response.text}")
+                logger.warning(
+                    f"Compute health check returned {response.status_code}: {response.text}"
+                )
             return is_healthy
     except Exception as e:
-        logger.error(f"Compute health check failed for {url}: {e.__class__.__name__}: {e}")
+        logger.error(
+            f"Compute health check failed for {url}: {e.__class__.__name__}: {e}"
+        )
         return False
 
 
@@ -249,7 +262,7 @@ async def health_check():
     """
     db_healthy = await asyncio.to_thread(check_database_health)
     compute_healthy = await check_compute_health()
-    
+
     # Overall is healthy if DB is healthy. Compute can be down without affecting API.
     # But usually we want to know if everything is up.
     overall_status = "healthy" if db_healthy else "unhealthy"
@@ -266,6 +279,7 @@ async def health_check():
 
 
 # ─── D5: WebSocket Real-Time Pipeline Metrics Stream ──────────────────────────
+
 
 class MetricsConnectionManager:
     """Manages WebSocket connections for real-time metrics streaming."""
@@ -332,7 +346,9 @@ def _collect_pipeline_metrics() -> dict:
                 system_metrics = {
                     "cpu_percent": sys_row.cpu_percent,
                     "memory_percent": sys_row.memory_percent,
-                    "collected_at": sys_row.created_at.isoformat() if sys_row.created_at else None,
+                    "collected_at": (
+                        sys_row.created_at.isoformat() if sys_row.created_at else None
+                    ),
                 }
 
             # WAL size
@@ -400,10 +416,12 @@ async def websocket_metrics(websocket: WebSocket):
                     if parsed.get("action") == "set_interval":
                         new_interval = int(parsed.get("interval", 5))
                         push_interval = max(1, min(60, new_interval))
-                        await websocket.send_json({
-                            "type": "config_ack",
-                            "interval": push_interval,
-                        })
+                        await websocket.send_json(
+                            {
+                                "type": "config_ack",
+                                "interval": push_interval,
+                            }
+                        )
                 except (json.JSONDecodeError, ValueError):
                     pass
             except asyncio.TimeoutError:

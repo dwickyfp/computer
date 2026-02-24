@@ -150,7 +150,7 @@ export default function PipelineDetailsPage() {
   // 2. Fetch Source Details using pipeline.source_id
   const { data: sourceDetails, isLoading: isSourceLoading } = useQuery({
     queryKey: ['source-details', pipeline?.source_id],
-    queryFn: () => sourcesRepo.getDetails(pipeline!.source_id),
+    queryFn: () => sourcesRepo.getDetails(pipeline!.source_id!),
     enabled: !!pipeline?.source_id,
   })
 
@@ -194,7 +194,9 @@ export default function PipelineDetailsPage() {
   const handleRefresh = async () => {
     if (!pipeline) return
     await pipelinesRepo.refresh(id)
-    await sourcesRepo.refreshSource(pipeline.source_id)
+    if (pipeline.source_id !== null) {
+      await sourcesRepo.refreshSource(pipeline.source_id)
+    }
     toast.success('Pipeline and Source restarted successfully')
   }
 
@@ -763,7 +765,7 @@ export default function PipelineDetailsPage() {
             ) : pipeline ? (
               <BackfillDataTab
                 pipelineId={pipeline.id}
-                sourceId={pipeline.source_id}
+                sourceId={pipeline.source_id ?? 0}
                 pipeline={pipeline}
               />
             ) : (

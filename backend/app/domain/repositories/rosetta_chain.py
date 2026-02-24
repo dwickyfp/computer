@@ -1,0 +1,166 @@
+"""
+Rosetta Chain repository for chain configuration, clients, and tables.
+
+Provides data access for inter-instance streaming configuration.
+"""
+
+from datetime import datetime
+from typing import Optional
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.logging import get_logger
+from app.domain.models.rosetta_chain import (
+    RosettaChainClient,
+    RosettaChainConfig,
+    RosettaChainTable,
+)
+from app.domain.repositories.base import BaseRepository
+
+logger = get_logger(__name__)
+
+
+class RosettaChainConfigRepository:
+    """Repository for chain instance configuration (single-row table)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get(self) -> Optional[RosettaChainConfig]:
+        """Get the chain config (there should be at most one row)."""
+        stmt = select(RosettaChainConfig).limit(1)
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def upsert(self, chain_key: str, is_active: bool = True) -> RosettaChainConfig:
+        """Create or update the chain config."""
+        existing = self.get()
+        if existing:
+            existing.chain_key = chain_key
+            existing.is_active = is_active
+            existing.updated_at = datetime.now(ZoneInfo("Asia/Jakarta"))
+            self.db.flush()
+            self.db.refresh(existing)
+            return existing
+        else:
+            config = RosettaChainConfig(
+                chain_key=chain_key,
+                is_active=is_active,
+            )
+            self.db.add(config)
+            self.db.flush()
+            self.db.refresh(config)
+            return config
+
+    def set_active(self, is_active: bool) -> Optional[RosettaChainConfig]:
+        """Toggle the active state."""
+        existing = self.get()
+        if existing:
+            existing.is_active = is_active
+            existing.updated_at = datetime.now(ZoneInfo("Asia/Jakarta"))
+            self.db.flush()
+            self.db.refresh(existing)
+        return existing
+
+
+class RosettaChainClientRepository(BaseRepository[RosettaChainClient]):
+    """Repository for remote Rosetta instance registrations."""
+
+    def __init__(self, db: Session):
+        super().__init__(RosettaChainClient, db)
+
+    def get_active_clients(self) -> list[RosettaChainClient]:
+        """Get all active chain clients."""
+        stmt = (
+            select(RosettaChainClient)
+            .where(RosettaChainClient.is_active.is_(True))
+            .order_by(RosettaChainClient.name)
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
+    def update_last_connected(self, client_id: int) -> None:
+        """Update the last_connected_at timestamp."""
+        stmt = select(RosettaChainClient).where(RosettaChainClient.id == client_id)
+        client = self.db.execute(stmt).scalar_one_or_none()
+        if client:
+            client.last_connected_at = datetime.now(ZoneInfo("Asia/Jakarta"))
+            self.db.flush()
+
+
+class RosettaChainTableRepository:
+    """Repository for virtual chain tables."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_client(self, chain_client_id: int) -> list[RosettaChainTable]:
+        """Get all tables for a specific chain client."""
+        stmt = (
+            select(RosettaChainTable)
+            .where(RosettaChainTable.chain_client_id == chain_client_id)
+            .order_by(RosettaChainTable.table_name)
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
+    def get_by_client_and_name(
+        self, chain_client_id: int, table_name: str
+    ) -> Optional[RosettaChainTable]:
+        """Get a specific table by client and name."""
+        stmt = select(RosettaChainTable).where(
+            RosettaChainTable.chain_client_id == chain_client_id,
+            RosettaChainTable.table_name == table_name,
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def upsert(
+        self,
+        chain_client_id: int,
+        table_name: str,
+        table_schema: dict,
+        source_chain_id: Optional[str] = None,
+    ) -> RosettaChainTable:
+        """Create or update a chain table entry."""
+        existing = self.get_by_client_and_name(chain_client_id, table_name)
+        now = datetime.now(ZoneInfo("Asia/Jakarta"))
+
+        if existing:
+            existing.table_schema = table_schema
+            if source_chain_id:
+                existing.source_chain_id = source_chain_id
+            existing.last_synced_at = now
+            existing.updated_at = now
+            self.db.flush()
+            self.db.refresh(existing)
+            return existing
+        else:
+            table = RosettaChainTable(
+                chain_client_id=chain_client_id,
+                table_name=table_name,
+                table_schema=table_schema,
+                source_chain_id=source_chain_id,
+                last_synced_at=now,
+            )
+            self.db.add(table)
+            self.db.flush()
+            self.db.refresh(table)
+            return table
+
+    def delete_by_client(self, chain_client_id: int) -> int:
+        """Delete all tables for a client. Returns count deleted."""
+        tables = self.get_by_client(chain_client_id)
+        count = len(tables)
+        for table in tables:
+            self.db.delete(table)
+        self.db.flush()
+        return count
+
+    def update_record_count(
+        self, chain_client_id: int, table_name: str, count: int
+    ) -> None:
+        """Update the record count for a table."""
+        table = self.get_by_client_and_name(chain_client_id, table_name)
+        if table:
+            table.record_count = count
+            table.updated_at = datetime.now(ZoneInfo("Asia/Jakarta"))
+            self.db.flush()

@@ -207,6 +207,7 @@ export function DestinationsMutateDrawer({
                           Postgre<span style={{ color: '#316192' }}>SQL</span>
                         </span>
                       </SelectItem>
+                      <SelectItem value='ROSETTA'>Rosetta Chain</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -476,6 +477,43 @@ export function DestinationsMutateDrawer({
                           type='password'
                           {...field}
                           placeholder='password'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
+            {form.watch('type') === 'ROSETTA' && (
+              <>
+                <FormField
+                  control={form.control}
+                  name='config.url'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Remote Compute URL</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder='http://remote-host:8001'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='config.chain_key'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Chain Key</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='password'
+                          {...field}
+                          placeholder='Remote instance chain key'
                         />
                       </FormControl>
                       <FormMessage />

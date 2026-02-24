@@ -48,6 +48,11 @@ from app.domain.models.schedule import (
 )
 from app.domain.models.flow_task_graph_version import FlowTaskGraphVersion
 from app.domain.models.flow_task_watermark import FlowTaskWatermark
+from app.domain.models.rosetta_chain import (
+    RosettaChainConfig,
+    RosettaChainClient,
+    RosettaChainTable,
+)
 
 
 __all__ = [
@@ -83,4 +88,7 @@ __all__ = [
     "ScheduleRunStatus",
     "FlowTaskGraphVersion",
     "FlowTaskWatermark",
+    "RosettaChainConfig",
+    "RosettaChainClient",
+    "RosettaChainTable",
 ]

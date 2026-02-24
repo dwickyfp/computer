@@ -7,7 +7,7 @@ Defines schemas for creating, updating, and retrieving pipeline configurations.
 from datetime import datetime
 
 from pydantic import Field, validator
-from typing import List
+from typing import List, Optional
 
 from app.domain.models.pipeline import PipelineMetadataStatus, PipelineStatus
 from app.domain.schemas.common import BaseSchema, TimestampSchema
@@ -32,14 +32,48 @@ class PipelineCreate(PipelineBase):
     Schema for creating a new pipeline.
     """
 
-    source_id: int = Field(
-        ..., ge=1, description="ID of the source database", examples=[1, 42]
+    source_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="ID of the source database (required for POSTGRES source_type)",
+        examples=[1, 42],
+    )
+    source_type: str = Field(
+        default="POSTGRES",
+        description="Source type: POSTGRES or ROSETTA",
+        examples=["POSTGRES", "ROSETTA"],
+    )
+    chain_client_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Chain client ID (required for ROSETTA source_type)",
     )
     status: PipelineStatus = Field(
         default=PipelineStatus.START,
         description="Initial pipeline status",
         examples=["START", "PAUSE"],
     )
+
+    @validator("source_type")
+    def validate_source_type(cls, v: str) -> str:
+        allowed = ["POSTGRES", "ROSETTA"]
+        if v.upper() not in allowed:
+            raise ValueError(f"source_type must be one of {allowed}")
+        return v.upper()
+
+    @validator("source_id", always=True)
+    def validate_source_id(cls, v, values):
+        source_type = values.get("source_type", "POSTGRES")
+        if source_type == "POSTGRES" and v is None:
+            raise ValueError("source_id is required when source_type is POSTGRES")
+        return v
+
+    @validator("chain_client_id", always=True)
+    def validate_chain_client_id(cls, v, values):
+        source_type = values.get("source_type", "POSTGRES")
+        if source_type == "ROSETTA" and v is None:
+            raise ValueError("chain_client_id is required when source_type is ROSETTA")
+        return v
 
     @validator("name")
     def validate_name(cls, v: str) -> str:

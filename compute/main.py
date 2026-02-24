@@ -57,7 +57,7 @@ def run_migration(logger: logging.Logger) -> None:
 
     conn = None
     try:
-        with open(migration_file, "r") as f:
+        with open(migration_file, "r", encoding="utf-8") as f:
             sql_script = f.read()
 
         conn = get_db_connection()

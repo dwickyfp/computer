@@ -27,6 +27,7 @@ from sources.postgresql import PostgreSQLSource
 from destinations.base import BaseDestination
 from destinations.snowflake import SnowflakeDestination
 from destinations.postgresql import PostgreSQLDestination
+from destinations.rosetta import RosettaDestination
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,8 @@ class PipelineEngine:
             return SnowflakeDestination(config, timeout_config=timeout_config)
         elif destination_type.upper() == DestinationType.POSTGRES.value:
             return PostgreSQLDestination(config, source_config=source_config)
+        elif destination_type.upper() == DestinationType.ROSETTA.value:
+            return RosettaDestination(config)
         else:
             raise PipelineException(
                 f"Unsupported destination type: {destination_type}",
@@ -334,8 +337,12 @@ class PipelineEngine:
                             f"Schema compatibility WARNING: {issue.message}"
                         )
 
-                error_count = sum(1 for i in schema_result.issues if i.severity == "ERROR")
-                warn_count = sum(1 for i in schema_result.issues if i.severity == "WARNING")
+                error_count = sum(
+                    1 for i in schema_result.issues if i.severity == "ERROR"
+                )
+                warn_count = sum(
+                    1 for i in schema_result.issues if i.severity == "WARNING"
+                )
                 self._logger.info(
                     f"Schema validation: {schema_result.tables_checked} tables checked, "
                     f"{error_count} errors, {warn_count} warnings"

@@ -159,6 +159,19 @@ class SnowflakeConfig:
 
 
 @dataclass
+class ChainConfig:
+    """Rosetta Chain configuration for Arrow IPC ingestion."""
+
+    enabled: bool = False
+    redis_stream_prefix: str = "rosetta:chain"
+    max_stream_length: int = 100000  # MAXLEN cap per chain stream
+    consumer_group: str = "chain_pipeline"
+    batch_size: int = 100  # Records per XREADGROUP batch
+    block_ms: int = 2000  # XREADGROUP block timeout
+    auth_enabled: bool = True  # Validate X-Chain-Key header
+
+
+@dataclass
 class Config:
     """
     Central configuration for Rosetta Compute Engine.
@@ -173,6 +186,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     dlq: DLQConfig = field(default_factory=DLQConfig)
     snowflake: SnowflakeConfig = field(default_factory=SnowflakeConfig)
+    chain: ChainConfig = field(default_factory=ChainConfig)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -228,6 +242,15 @@ class Config:
                     os.getenv("SNOWFLAKE_BATCH_TIMEOUT_BASE", "300")
                 ),
                 batch_timeout_max=int(os.getenv("SNOWFLAKE_BATCH_TIMEOUT_MAX", "600")),
+            ),
+            chain=ChainConfig(
+                enabled=os.getenv("CHAIN_ENABLED", "false").lower() == "true",
+                redis_stream_prefix=os.getenv("CHAIN_REDIS_PREFIX", "rosetta:chain"),
+                max_stream_length=int(os.getenv("CHAIN_MAX_STREAM_LENGTH", "100000")),
+                consumer_group=os.getenv("CHAIN_CONSUMER_GROUP", "chain_pipeline"),
+                batch_size=int(os.getenv("CHAIN_BATCH_SIZE", "100")),
+                block_ms=int(os.getenv("CHAIN_BLOCK_MS", "2000")),
+                auth_enabled=os.getenv("CHAIN_AUTH_ENABLED", "true").lower() == "true",
             ),
         )
 

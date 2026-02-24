@@ -80,9 +80,27 @@ class Pipeline(Base, TimestampMixin):
     source_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("sources.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
-        comment="Reference to source configuration",
+        comment="Reference to source configuration (NULL for ROSETTA source_type)",
+    )
+
+    # Source Type — determines which engine to use
+    source_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="POSTGRES",
+        server_default="POSTGRES",
+        comment="Source type: POSTGRES (CDC via Debezium) or ROSETTA (chain streaming)",
+    )
+
+    # Chain Client Reference (only for source_type=ROSETTA)
+    chain_client_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("rosetta_chain_clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Reference to chain client (only when source_type=ROSETTA)",
     )
 
     # Pipeline Status
