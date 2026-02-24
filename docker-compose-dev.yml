@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  rosetta-postgres:
+  rosetta-postgres-dev:
     image: postgres:16
-    container_name: rosetta-postgres
+    container_name: rosetta-postgres-dev
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -14,7 +14,7 @@ services:
     ports:
       - "5421:5432"
     volumes:
-      - rosetta_postgres_data:/var/lib/postgresql/data
+      - rosetta_postgres_data_dev:/var/lib/postgresql/data
     command: >
       postgres 
       -c wal_level=logical 
@@ -27,24 +27,24 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - rosetta-network
+      - rosetta-network-dev
 
-  rosetta-redis:
+  rosetta-redis-dev:
     image: redis:7
     command: ["redis-server", "--port", "6379"]
     ports:
       - "7371:6379"
     volumes:
-      - rosetta_redis_data:/data
+      - rosetta_redis_data_dev:/data
     networks:
-      - rosetta-network
+      - rosetta-network-dev
     restart: unless-stopped
 
 networks:
-  rosetta-network:
+  rosetta-network-dev:
     driver: bridge
-    name: rosetta-network
+    name: rosetta-network-dev
 
 volumes:
-  rosetta_postgres_data:
-  rosetta_redis_data:
+  rosetta_postgres_data_dev:
+  rosetta_redis_data_dev:
