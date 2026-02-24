@@ -52,13 +52,15 @@ export function ChainClientMutateDrawer({
       ? {
           name: currentRow.name,
           url: currentRow.url,
-          chain_key: currentRow.chain_key,
-          description: currentRow.description ?? '',
+          port: currentRow.port ?? 8001,
+          chain_key: '',
+          description: '',
           is_active: currentRow.is_active,
         }
       : {
           name: '',
           url: '',
+          port: 8001,
           chain_key: '',
           description: '',
           is_active: true,
@@ -151,15 +153,35 @@ export function ChainClientMutateDrawer({
 
             <FormField
               control={form.control}
+              name='port'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Port</FormLabel>
+                  <FormControl>
+                    <Input {...field} type='number' placeholder='8001' />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name='chain_key'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Chain Key</FormLabel>
+                  <FormLabel>
+                    Chain Key{isUpdate && ' (leave blank to keep existing)'}
+                  </FormLabel>
                   <FormControl>
                     <Input
                       {...field}
                       type='password'
-                      placeholder='Remote instance chain key'
+                      placeholder={
+                        isUpdate
+                          ? 'Leave blank to keep existing'
+                          : 'Remote instance chain key'
+                      }
                     />
                   </FormControl>
                   <FormMessage />

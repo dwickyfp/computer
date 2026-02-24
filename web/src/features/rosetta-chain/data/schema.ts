@@ -18,11 +18,10 @@ export const chainClientSchema = z.object({
   id: z.number(),
   name: z.string(),
   url: z.string(),
-  chain_key: z.string(),
-  description: z.string().nullable(),
+  port: z.number().default(8001),
   is_active: z.boolean(),
-  last_connected_at: z.string().nullable(),
-  tables: z.array(chainTableSchema),
+  last_connected_at: z.string().nullable().optional(),
+  tables: z.array(chainTableSchema).default([]),
   created_at: z.string(),
   updated_at: z.string(),
 })
@@ -40,7 +39,8 @@ export const chainClientFormSchema = z.object({
     .string()
     .min(1, 'URL is required')
     .url('Must be a valid URL (e.g., http://host:8001)'),
-  chain_key: z.string().min(1, 'Chain key is required'),
+  port: z.coerce.number().int().min(1).max(65535).default(8001),
+  chain_key: z.string().optional(),
   description: z.string().optional(),
   is_active: z.boolean().optional().default(true),
 })
