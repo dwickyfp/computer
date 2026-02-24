@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+  rosetta-postgres:
+    image: postgres:16
+    container_name: rosetta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+      TZ: Asia/Jakarta
+    ports:
+      - "5453:5432"
+    volumes:
+      - rosetta_postgres_data:/var/lib/postgresql/data
+    command: >
+      postgres 
+      -c wal_level=logical 
+      -c max_replication_slots=10 
+      -c max_wal_senders=10
+      -c timezone='Asia/Jakarta'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rosetta-network
+
+  rosetta-redis:
+    image: redis:7
+    command: ["redis-server", "--port", "6379"]
+    volumes:
+      - rosetta_redis_data:/data
+    networks:
+      - rosetta-network
+    restart: unless-stopped
+
+networks:
+  rosetta-network:
+    driver: bridge
+    name: rosetta-network
+
+volumes:
+  rosetta_postgres_data:
+  rosetta_redis_data:
