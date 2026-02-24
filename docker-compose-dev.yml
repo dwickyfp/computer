@@ -12,7 +12,7 @@ services:
       POSTGRES_HOST_AUTH_METHOD: trust
       TZ: Asia/Jakarta
     ports:
-      - "5453:5432"
+      - "5421:5432"
     volumes:
       - rosetta_postgres_data:/var/lib/postgresql/data
     command: >
@@ -32,6 +32,8 @@ services:
   rosetta-redis:
     image: redis:7
     command: ["redis-server", "--port", "6379"]
+    ports:
+      - "7371:6379"
     volumes:
       - rosetta_redis_data:/data
     networks:
