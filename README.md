@@ -62,7 +62,7 @@ The platform consists of three independent services:
 - **Pipeline Integration**: ROSETTA is a first-class source type — create pipelines with `source_type=ROSETTA` and choose a chain client instead of a PostgreSQL source
 - **ROSETTA Destination**: Add a ROSETTA-type destination to any pipeline to push CDC changes to a remote instance
 - **Schema Sync**: Table schemas are automatically pushed to the receiving instance on first connection
-- **Managed via UI**: Configure chain keys, register remote clients, test connectivity, and browse remote tables from the *Rosetta Chain* page in the dashboard
+- **Managed via UI**: Configure chain keys, register remote clients, test connectivity, and browse remote tables from the _Rosetta Chain_ page in the dashboard
 - **Environment**: Enable with `CHAIN_ENABLED=true`; server host/port controlled by `SERVER_HOST`/`SERVER_PORT`
 
 ### 📦 Backfill Feature

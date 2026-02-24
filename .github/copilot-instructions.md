@@ -87,11 +87,13 @@ components/ui/                  # shadcn/ui primitives
 Rosetta can stream CDC data directly to another Rosetta instance over Arrow IPC without any message broker.
 
 **Sender side** (outbound):
+
 - `RosettaDestination` serialises CDC batches → Arrow IPC → `POST /chain/ingest` on the remote compute
 - Remote URL + chain key stored in `destinations` table (`destination_type = ROSETTA`)
 - Schema pushed once via `POST /chain/schema`
 
 **Receiver side** (inbound):
+
 - `compute/server.py` exposes `/chain/ingest`, `/chain/schema`, `/chain/tables`, `/chain/health` endpoints
 - `chain/auth.py` — validates `X-Chain-Key` header against AES-256-GCM key stored in `rosetta_chain_config`
 - `chain/ingest.py` (`ChainIngestManager`) — deserialises Arrow IPC → `XADD` to Redis Stream `rosetta:chain:{chain_client_id}:{table}`
@@ -100,6 +102,7 @@ Rosetta can stream CDC data directly to another Rosetta instance over Arrow IPC 
 - Enable with env var `CHAIN_ENABLED=true`; server bind via `SERVER_HOST` / `SERVER_PORT`
 
 **Backend models/API** (`backend/app/domain/`):
+
 - `RosettaChainConfig` — stores AES-256-GCM encrypted chain key + `is_active` flag
 - `RosettaChainClient` — registered remote Rosetta instances (url, port, encrypted chain_key)
 - `RosettaChainTable` — table schemas synced from remote clients
@@ -108,12 +111,14 @@ Rosetta can stream CDC data directly to another Rosetta instance over Arrow IPC 
 - `PATCH /chain/toggle-active` accepts `{ is_active: bool }` JSON body (`ChainToggleActiveRequest`)
 
 **Pipeline integration**:
+
 - `Pipeline.source_type` — `"POSTGRES"` (default) or `"ROSETTA"` (reads from Redis Stream via ChainPipelineEngine)
 - `Pipeline.chain_client_id` — FK to `RosettaChainClient` (used when `source_type = ROSETTA`)
 - `Pipeline.source_id` — nullable (null for ROSETTA source pipelines)
 - `PipelineManager._run_pipeline_process()` dispatches to `ChainPipelineEngine` when `source_type == "ROSETTA"`
 
 **Web UI** (`web/src/features/rosetta-chain/`):
+
 - `ChainKeyCard` — display/reveal/copy/regenerate chain key; one-time raw key dialog after generation
 - `ChainClientTable` — DataTable of registered remote clients with test/edit/delete row actions
 - `ChainClientMutateDrawer` — form: name, url, port, chain_key (optional on update), is_active
