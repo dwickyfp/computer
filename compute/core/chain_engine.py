@@ -388,12 +388,22 @@ class ChainPipelineEngine:
                     if records:
                         self._write_to_destinations(records)
 
-                        # Acknowledge processed entries
+                        # Acknowledge processed entries then delete them
+                        # XACK removes from PEL; XDEL removes from the stream body
+                        # so consumed data does not linger in Redis.
                         if entry_ids:
                             try:
                                 self._redis.xack(stream_key, group_name, *entry_ids)
                             except Exception as e:
                                 self._logger.error(f"XACK failed for {stream_key}: {e}")
+
+                            try:
+                                self._redis.xdel(stream_key, *entry_ids)
+                            except Exception as e:
+                                self._logger.warning(
+                                    f"XDEL failed for {stream_key} "
+                                    f"({len(entry_ids)} entries): {e}"
+                                )
 
         except Exception as e:
             self._logger.error(

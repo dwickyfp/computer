@@ -169,6 +169,10 @@ class ChainConfig:
     batch_size: int = 100  # Records per XREADGROUP batch
     block_ms: int = 2000  # XREADGROUP block timeout
     auth_enabled: bool = True  # Validate X-Chain-Key header
+    stream_retention_days: int = 7  # Days to keep unconsumed entries in stream
+    trim_interval_seconds: int = (
+        3600  # How often the cleanup job runs (default: 1 hour)
+    )
 
 
 @dataclass
@@ -251,6 +255,12 @@ class Config:
                 batch_size=int(os.getenv("CHAIN_BATCH_SIZE", "100")),
                 block_ms=int(os.getenv("CHAIN_BLOCK_MS", "2000")),
                 auth_enabled=os.getenv("CHAIN_AUTH_ENABLED", "true").lower() == "true",
+                stream_retention_days=int(
+                    os.getenv("CHAIN_STREAM_RETENTION_DAYS", "7")
+                ),
+                trim_interval_seconds=int(
+                    os.getenv("CHAIN_TRIM_INTERVAL_SECONDS", "3600")
+                ),
             ),
         )
 

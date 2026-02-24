@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react'
-import { type Pipeline, type TableWithSyncInfo, tableSyncRepo } from '@/repo/pipelines'
+import {
+  type Pipeline,
+  type TableWithSyncInfo,
+  tableSyncRepo,
+} from '@/repo/pipelines'
 import { Loader2, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
@@ -11,12 +15,13 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet'
 import { PostgresTableConfig } from '@/features/pipelines/components/postgres-table-config'
+import { PrimaryKeyDrawer } from '@/features/pipelines/components/primary-key-drawer'
+import { RosettaTableConfig } from '@/features/pipelines/components/rosetta-table-config'
 import { SnowflakeTableConfig } from '@/features/pipelines/components/snowflake-table-config'
 import { TableCustomSqlCard } from '@/features/pipelines/components/table-custom-sql-card'
 import { TableFilterCard } from '@/features/pipelines/components/table-filter-card'
 import { TableTargetNameCard } from '@/features/pipelines/components/table-target-name-card'
 import { TagDrawer } from '@/features/pipelines/components/tag-drawer'
-import { PrimaryKeyDrawer } from '@/features/pipelines/components/primary-key-drawer'
 
 interface SourceTableDrawerProps {
   open: boolean
@@ -216,7 +221,7 @@ export function SourceTableDrawer({
       })
       // Don't close drawer here, let the component handle it
       // Wait 300ms for DB commit before reloading
-      await new Promise(resolve => setTimeout(resolve, 300))
+      await new Promise((resolve) => setTimeout(resolve, 300))
       loadTables()
     } catch (error) {
       throw error // Re-throw so drawer can handle error display
@@ -268,7 +273,7 @@ export function SourceTableDrawer({
               <SheetDescription>
                 Configure table synchronization for{' '}
                 <span className='font-medium text-foreground'>
-                  {pipeline.source?.name}
+                  {pipeline.source?.name ?? 'Rosetta Chain'}
                 </span>
               </SheetDescription>
             </SheetHeader>
@@ -295,6 +300,13 @@ export function SourceTableDrawer({
                   </div>
                 ) : destinationType === 'SNOWFLAKE' ? (
                   <SnowflakeTableConfig
+                    tables={filteredTables}
+                    pipelineId={pipeline.id}
+                    pipelineDestinationId={selectedDestinationId!}
+                    onRefresh={loadTables}
+                  />
+                ) : destinationType === 'ROSETTA' ? (
+                  <RosettaTableConfig
                     tables={filteredTables}
                     pipelineId={pipeline.id}
                     pipelineDestinationId={selectedDestinationId!}
@@ -406,15 +418,18 @@ export function SourceTableDrawer({
         />
       )}
 
-      {open && activeMode === 'primary-keys' && activeSyncConfig && activeTable && (
-        <PrimaryKeyDrawer
-          syncConfig={activeSyncConfig}
-          columns={activeTable.columns}
-          open={true}
-          onClose={() => setActiveMode(null)}
-          onSave={handleSavePrimaryKeys}
-        />
-      )}
+      {open &&
+        activeMode === 'primary-keys' &&
+        activeSyncConfig &&
+        activeTable && (
+          <PrimaryKeyDrawer
+            syncConfig={activeSyncConfig}
+            columns={activeTable.columns}
+            open={true}
+            onClose={() => setActiveMode(null)}
+            onSave={handleSavePrimaryKeys}
+          />
+        )}
     </>
   )
 }

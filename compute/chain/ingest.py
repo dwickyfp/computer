@@ -7,6 +7,7 @@ deserializes them, and writes CDC records into Redis Streams.
 
 import json
 import logging
+import time
 from io import BytesIO
 from typing import Any, Optional
 
@@ -36,6 +37,7 @@ class ChainIngestManager:
         self._redis_url = redis_url or config.dlq.redis_url
         self._stream_prefix = stream_prefix or config.chain.redis_stream_prefix
         self._max_stream_length = max_stream_length or config.chain.max_stream_length
+        self._retention_days = config.chain.stream_retention_days
 
         self._redis = redis.Redis.from_url(
             self._redis_url,
@@ -44,6 +46,16 @@ class ChainIngestManager:
             socket_timeout=10,
             retry_on_timeout=True,
         )
+
+    def _retention_minid(self) -> str:
+        """
+        Compute the Redis Stream MINID corresponding to 'now minus retention_days'.
+
+        Redis IDs are '{unix_ms}-{seq}', so using just the timestamp prefix is
+        enough for XTRIM MINID to drop everything older than retention_days.
+        """
+        cutoff_ms = int((time.time() - self._retention_days * 86400) * 1000)
+        return str(cutoff_ms)
 
     def get_stream_key(self, chain_id: str, table_name: str) -> str:
         """Get Redis Stream key for a chain table."""
@@ -78,11 +90,12 @@ class ChainIngestManager:
                 records = self._batch_to_records(
                     batch, schema, table_name, operation_type
                 )
+                minid = self._retention_minid()
                 for record in records:
                     self._redis.xadd(
                         stream_key,
                         record,
-                        maxlen=self._max_stream_length,
+                        minid=minid,
                         approximate=True,
                     )
                     record_count += 1
@@ -114,6 +127,7 @@ class ChainIngestManager:
         """
         stream_key = self.get_stream_key(chain_id, table_name)
         count = 0
+        minid = self._retention_minid()
 
         for record in records:
             entry = {
@@ -127,7 +141,7 @@ class ChainIngestManager:
             self._redis.xadd(
                 stream_key,
                 entry,
-                maxlen=self._max_stream_length,
+                minid=minid,
                 approximate=True,
             )
             count += 1
@@ -201,6 +215,51 @@ class ChainIngestManager:
             return self._redis.xlen(stream_key)
         except Exception:
             return 0
+
+    def trim_all_streams(self) -> int:
+        """
+        Trim all chain streams to remove entries older than retention_days.
+
+        Called periodically by a background thread to enforce time-based
+        retention on streams that may not receive new writes for a while.
+
+        Returns:
+            Total number of entries trimmed across all streams.
+        """
+        minid = self._retention_minid()
+        pattern = f"{self._stream_prefix}:*".encode()
+        total_trimmed = 0
+
+        try:
+            cursor = 0
+            while True:
+                cursor, keys = self._redis.scan(cursor, match=pattern, count=200)
+                for key in keys:
+                    try:
+                        before = self._redis.xlen(key)
+                        self._redis.xtrim(key, minid=minid, approximate=True)
+                        after = self._redis.xlen(key)
+                        trimmed = before - after
+                        if trimmed > 0:
+                            key_str = key.decode() if isinstance(key, bytes) else key
+                            logger.debug(
+                                f"Trimmed {trimmed} old entries from stream {key_str}"
+                            )
+                            total_trimmed += trimmed
+                    except Exception as e:
+                        key_str = key.decode() if isinstance(key, bytes) else key
+                        logger.warning(f"Failed to trim stream {key_str}: {e}")
+                if cursor == 0:
+                    break
+        except Exception as e:
+            logger.error(f"trim_all_streams failed: {e}")
+
+        if total_trimmed > 0:
+            logger.info(
+                f"Chain stream cleanup: trimmed {total_trimmed} entries older than "
+                f"{self._retention_days} day(s) (minid={minid})"
+            )
+        return total_trimmed
 
     def list_streams(self, chain_id: Optional[str] = None) -> list[str]:
         """List all chain streams, optionally filtered by chain_id."""

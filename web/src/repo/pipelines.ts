@@ -225,6 +225,18 @@ export const tableSyncRepo = {
     return response.data
   },
 
+  saveTableSyncBulk: async (
+    pipelineId: number,
+    pipelineDestinationId: number,
+    tableNames: string[]
+  ): Promise<TableSyncConfig[]> => {
+    const response: AxiosResponse<TableSyncConfig[]> = await api.post(
+      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables/bulk`,
+      { tables: tableNames.map((name) => ({ table_name: name })) }
+    )
+    return response.data
+  },
+
   deleteTableSync: async (
     pipelineId: number,
     pipelineDestinationId: number,

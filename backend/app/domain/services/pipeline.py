@@ -41,7 +41,10 @@ import json
 import re
 import base64
 from app.infrastructure.redis import get_redis
-from app.domain.schemas.pipeline_preview import PipelinePreviewRequest, PipelinePreviewResponse
+from app.domain.schemas.pipeline_preview import (
+    PipelinePreviewRequest,
+    PipelinePreviewResponse,
+)
 
 logger = get_logger(__name__)
 
@@ -239,12 +242,14 @@ class PipelineService:
         # Remove destination (CASCADE will delete table_syncs and tag associations)
         self.db.delete(existing)
         self.db.commit()
-        
+
         # Cleanup unused tags after deletion
         if tag_ids:
-            logger.info(f"Checking {len(tag_ids)} tags for cleanup after removing destination from pipeline")
+            logger.info(
+                f"Checking {len(tag_ids)} tags for cleanup after removing destination from pipeline"
+            )
             self._cleanup_unused_tags(tag_ids)
-        
+
         self.db.refresh(pipeline)
 
         # Mark for refresh
@@ -371,29 +376,42 @@ class PipelineService:
 
                     cursor.execute(
                         query,
-                        (pg_schema, table_name, table_name, table_name, table_name, pg_schema)
+                        (
+                            pg_schema,
+                            table_name,
+                            table_name,
+                            table_name,
+                            table_name,
+                            pg_schema,
+                        ),
                     )
                     result = cursor.fetchone()
                     exists = result[0] if result else False
                     other_schema = result[1] if result and len(result) > 1 else None
 
                     if exists:
-                        logger.info(f"Table '{table_name}' FOUND in schema '{pg_schema}'")
+                        logger.info(
+                            f"Table '{table_name}' FOUND in schema '{pg_schema}'"
+                        )
                         return TableValidationResponse(
                             valid=True,
                             exists=True,
                             message=f"Table '{table_name}' already exists in DESTINATION database '{actual_db}' schema '{pg_schema}'. It will be used as target.",
                         )
                     else:
-                        logger.warning(f"Table '{table_name}' NOT FOUND in schema '{pg_schema}'")
-                        
+                        logger.warning(
+                            f"Table '{table_name}' NOT FOUND in schema '{pg_schema}'"
+                        )
+
                         # Build helpful message
                         msg = f"Table '{table_name}' does not exist in DESTINATION database '{actual_db}' schema '{pg_schema}' and will be created."
-                        
+
                         if other_schema:
                             msg += f" (Note: Table exists in schema '{other_schema}' - check your destination schema configuration)"
-                            logger.warning(f"Table found in OTHER schema: '{other_schema}'")
-                        
+                            logger.warning(
+                                f"Table found in OTHER schema: '{other_schema}'"
+                            )
+
                         return TableValidationResponse(
                             valid=False,
                             exists=False,
@@ -575,22 +593,24 @@ class PipelineService:
 
         # Verify pipeline exists before deletion and collect tag IDs
         pipeline = self.repository.get_by_id(pipeline_id)
-        
+
         # Collect all tag IDs from all table syncs across all destinations
         from app.domain.models.tag import PipelineDestinationTableSyncTag
-        
+
         tag_ids = set()
         for destination in pipeline.destinations:
             for table_sync in destination.table_syncs:
                 for tag_assoc in table_sync.tag_associations:
                     tag_ids.add(tag_assoc.tag_id)
-        
+
         # Delete pipeline (metadata will cascade)
         self.repository.delete(pipeline_id)
-        
+
         # Cleanup unused tags after deletion
         if tag_ids:
-            logger.info(f"Checking {len(tag_ids)} tags for cleanup after pipeline deletion")
+            logger.info(
+                f"Checking {len(tag_ids)} tags for cleanup after pipeline deletion"
+            )
             self._cleanup_unused_tags(list(tag_ids))
 
         logger.info("Pipeline deleted successfully", extra={"pipeline_id": pipeline_id})
@@ -1505,10 +1525,6 @@ class PipelineService:
                 entity_type="PipelineDestination", entity_id=pipeline_destination_id
             )
 
-        # 1. Get List of all tables from source metadata
-        tm_repo = TableMetadataRepository(self.db)
-        all_tables_meta = tm_repo.get_by_source_id(pipeline.source_id)
-
         # 2. Get existing sync configurations for this destination
         syncs = (
             self.db.query(PipelineDestinationTableSync)
@@ -1522,20 +1538,35 @@ class PipelineService:
             syncs_map[s.table_name].append(s)
 
         response_list = []
-        for table_meta in all_tables_meta:
-            # Parse schema
-            columns = []
-            if table_meta.schema_table:
-                # Handle both list (older format) and dict (newer format) schemas
-                schema_items = table_meta.schema_table
-                if isinstance(schema_items, dict):
-                    schema_items = schema_items.values()
 
-                for col in schema_items:
+        if pipeline.source_type == "ROSETTA":
+            # 1a. For ROSETTA source, get tables from chain client
+            from app.domain.models.rosetta_chain import RosettaChainTable
+
+            chain_tables = (
+                self.db.query(RosettaChainTable)
+                .filter_by(chain_client_id=pipeline.chain_client_id)
+                .order_by(RosettaChainTable.table_name)
+                .all()
+            )
+
+            for chain_table in chain_tables:
+                # Parse columns from chain table schema_json
+                columns = []
+                schema_data = chain_table.table_schema or {}
+                # schema_json may be {"columns": [...]} or a flat dict of col defs
+                col_list = (
+                    schema_data.get("columns")
+                    if isinstance(schema_data, dict)
+                    else None
+                )
+                if col_list is None and isinstance(schema_data, dict):
+                    col_list = list(schema_data.values())
+                for col in col_list or []:
                     if isinstance(col, dict):
                         columns.append(
                             ColumnSchemaResponse(
-                                column_name=col.get("column_name", ""),
+                                column_name=col.get("column_name", col.get("name", "")),
                                 data_type=col.get("real_data_type")
                                 or col.get("data_type", ""),
                                 real_data_type=col.get("real_data_type"),
@@ -1547,12 +1578,9 @@ class PipelineService:
                                     if col.get("default_value") is not None
                                     else None
                                 ),
-                                numeric_scale=col.get("numeric_scale"),
-                                numeric_precision=col.get("numeric_precision"),
                             )
                         )
                     elif isinstance(col, str):
-                        # Handle case where schema might be list of strings logic
                         columns.append(
                             ColumnSchemaResponse(
                                 column_name=col,
@@ -1562,27 +1590,90 @@ class PipelineService:
                             )
                         )
 
-            # Convert sync configs (list)
-            current_syncs = syncs_map[table_meta.table_name]
-            sync_configs_response = [
-                PipelineDestinationTableSyncResponse.from_orm(s) for s in current_syncs
-            ]
+                current_syncs = syncs_map[chain_table.table_name]
+                sync_configs_response = [
+                    PipelineDestinationTableSyncResponse.from_orm(s)
+                    for s in current_syncs
+                ]
 
-            response_list.append(
-                TableWithSyncInfoResponse(
-                    table_name=table_meta.table_name,
-                    columns=columns,
-                    sync_configs=sync_configs_response,
-                    is_exists_table_landing=any(
-                        s.is_exists_table_landing for s in current_syncs
-                    ),
-                    is_exists_stream=any(s.is_exists_stream for s in current_syncs),
-                    is_exists_task=any(s.is_exists_task for s in current_syncs),
-                    is_exists_table_destination=any(
-                        s.is_exists_table_destination for s in current_syncs
-                    ),
+                response_list.append(
+                    TableWithSyncInfoResponse(
+                        table_name=chain_table.table_name,
+                        columns=columns,
+                        sync_configs=sync_configs_response,
+                        is_exists_table_landing=False,
+                        is_exists_stream=False,
+                        is_exists_task=False,
+                        is_exists_table_destination=False,
+                    )
                 )
-            )
+        else:
+            # 1b. For regular POSTGRES source, get tables from source metadata
+            tm_repo = TableMetadataRepository(self.db)
+            all_tables_meta = tm_repo.get_by_source_id(pipeline.source_id)
+
+            for table_meta in all_tables_meta:
+                # Parse schema
+                columns = []
+                if table_meta.schema_table:
+                    # Handle both list (older format) and dict (newer format) schemas
+                    schema_items = table_meta.schema_table
+                    if isinstance(schema_items, dict):
+                        schema_items = schema_items.values()
+
+                    for col in schema_items:
+                        if isinstance(col, dict):
+                            columns.append(
+                                ColumnSchemaResponse(
+                                    column_name=col.get("column_name", ""),
+                                    data_type=col.get("real_data_type")
+                                    or col.get("data_type", ""),
+                                    real_data_type=col.get("real_data_type"),
+                                    is_nullable=col.get("is_nullable") in [True, "YES"],
+                                    is_primary_key=col.get("is_primary_key", False),
+                                    has_default=col.get("has_default", False),
+                                    default_value=(
+                                        str(col.get("default_value"))
+                                        if col.get("default_value") is not None
+                                        else None
+                                    ),
+                                    numeric_scale=col.get("numeric_scale"),
+                                    numeric_precision=col.get("numeric_precision"),
+                                )
+                            )
+                        elif isinstance(col, str):
+                            # Handle case where schema might be list of strings logic
+                            columns.append(
+                                ColumnSchemaResponse(
+                                    column_name=col,
+                                    data_type="UNKNOWN",
+                                    is_nullable=True,
+                                    is_primary_key=False,
+                                )
+                            )
+
+                # Convert sync configs (list)
+                current_syncs = syncs_map[table_meta.table_name]
+                sync_configs_response = [
+                    PipelineDestinationTableSyncResponse.from_orm(s)
+                    for s in current_syncs
+                ]
+
+                response_list.append(
+                    TableWithSyncInfoResponse(
+                        table_name=table_meta.table_name,
+                        columns=columns,
+                        sync_configs=sync_configs_response,
+                        is_exists_table_landing=any(
+                            s.is_exists_table_landing for s in current_syncs
+                        ),
+                        is_exists_stream=any(s.is_exists_stream for s in current_syncs),
+                        is_exists_task=any(s.is_exists_task for s in current_syncs),
+                        is_exists_table_destination=any(
+                            s.is_exists_table_destination for s in current_syncs
+                        ),
+                    )
+                )
 
         return [r.dict() for r in response_list]
 
@@ -1640,7 +1731,9 @@ class PipelineService:
 
             existing.custom_sql = table_sync_data.custom_sql
             existing.filter_sql = table_sync_data.filter_sql
-            existing.primary_key_column_target = table_sync_data.primary_key_column_target
+            existing.primary_key_column_target = (
+                table_sync_data.primary_key_column_target
+            )
             if table_sync_data.table_name_target:
                 existing.table_name_target = table_sync_data.table_name_target
 
@@ -1661,7 +1754,7 @@ class PipelineService:
 
             # Optional: Check uniqueness of target for this source
             # ...
-            
+
             if table_sync_data.custom_sql:
                 self._validate_custom_sql(table_sync_data.custom_sql)
 
@@ -1740,10 +1833,8 @@ class PipelineService:
 
         if sync:
             # Get associated tag IDs before deletion for cleanup
-            tag_ids = [
-                assoc.tag_id for assoc in sync.tag_associations
-            ]
-            
+            tag_ids = [assoc.tag_id for assoc in sync.tag_associations]
+
             self.db.delete(sync)
             self.db.commit()
 
@@ -1794,9 +1885,7 @@ class PipelineService:
             )
 
         # Get associated tag IDs before deletion for cleanup
-        tag_ids = [
-            assoc.tag_id for assoc in sync.tag_associations
-        ]
+        tag_ids = [assoc.tag_id for assoc in sync.tag_associations]
 
         self.db.delete(sync)
         self.db.commit()
@@ -1885,10 +1974,10 @@ class PipelineService:
     def _validate_custom_sql(self, sql: str) -> None:
         """
         Validate custom SQL for forbidden keywords.
-        
+
         Args:
             sql: SQL string to validate
-            
+
         Raises:
             ValueError: If SQL contains forbidden keywords
         """
@@ -1898,10 +1987,19 @@ class PipelineService:
         # List of forbidden keywords for custom SQL
         # We only allow SELECT statements basically
         forbidden_keywords = [
-            "UPDATE", "DELETE", "TRUNCATE", "DROP", "ALTER", "GRANT", "REVOKE", 
-            "INSERT", "CREATE", "REPLACE", "MERGE"
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "DROP",
+            "ALTER",
+            "GRANT",
+            "REVOKE",
+            "INSERT",
+            "CREATE",
+            "REPLACE",
+            "MERGE",
         ]
-        
+
         # Simple regex check - word boundary to avoid partial matches
         # We check case-insensitive
         for keyword in forbidden_keywords:
@@ -1916,11 +2014,11 @@ class PipelineService:
     def _filter_sql_to_where_clause(filter_sql: str) -> str:
         """
         Convert a filter_sql string (v2 JSON or legacy semicolon format) to a SQL WHERE clause.
-        
+
         Supports:
         - V2 JSON: {"version": 2, "groups": [...], "interLogic": [...]}
         - Legacy: "column operator value;column2 operator value2"
-        
+
         Returns:
             SQL WHERE clause string (without the WHERE keyword), or empty string.
         """
@@ -1947,7 +2045,9 @@ class PipelineService:
                 vals = [v.strip() for v in value.split(",") if v.strip()]
                 if not vals:
                     return ""
-                quoted = ", ".join(v if re.match(r"^-?\d+(\.\d+)?$", v) else f"'{v}'" for v in vals)
+                quoted = ", ".join(
+                    v if re.match(r"^-?\d+(\.\d+)?$", v) else f"'{v}'" for v in vals
+                )
                 return f"{column} IN ({quoted})"
             is_num = bool(re.match(r"^-?\d+(\.\d+)?$", value))
             quoted_value = value if is_num else f"'{value}'"
@@ -1982,17 +2082,19 @@ class PipelineService:
         parts = [s.strip() for s in filter_sql.split(";") if s.strip()]
         return " AND ".join(parts)
 
-    def preview_custom_sql(self, request: PipelinePreviewRequest) -> PipelinePreviewResponse:
+    def preview_custom_sql(
+        self, request: PipelinePreviewRequest
+    ) -> PipelinePreviewResponse:
         """
         Preview table data using DuckDB with attached Postgres databases.
-        
+
         When custom SQL is provided, it is rewritten to qualify table names.
         When no custom SQL is provided, a direct query is built from the table name.
         If filter_sql is present, it is added as a WHERE clause.
-        
+
         Args:
             request: Preview request containing table context and optional SQL/filter
-            
+
         Returns:
             Preview response with data and columns
         """
@@ -2009,7 +2111,7 @@ class PipelineService:
             input_string = f"{sql_str}{request.source_id}{request.destination_id}{request.table_name}{filter_str}"
             query_hash = hashlib.sha256(input_string.encode()).hexdigest()
             cache_key = f"preview:{query_hash}"
-            
+
             # 2. Check Redis Cache
             redis_client = None
             try:
@@ -2025,37 +2127,49 @@ class PipelineService:
                             logger.warning(f"Failed to parse cached preview: {e}")
             except Exception as e:
                 logger.warning(f"Redis error during preview cache check: {e}")
-                
+
             # 3. Get Source and Destination Configuration
             try:
                 from app.domain.repositories.source import SourceRepository
+
                 source_repo = SourceRepository(self.db)
                 source_details = source_repo.get_by_id(request.source_id)
                 if not source_details:
                     raise ValueError(f"Source {request.source_id} not found")
-                
+
                 from app.domain.models.destination import Destination
-                dest = self.db.query(Destination).filter(Destination.id == request.destination_id).first()
+
+                dest = (
+                    self.db.query(Destination)
+                    .filter(Destination.id == request.destination_id)
+                    .first()
+                )
                 if not dest:
                     raise ValueError(f"Destination {request.destination_id} not found")
-                
+
                 # Decrypt passwords
                 src_pass = decrypt_value(source_details.pg_password)
                 src_conn_str = f"postgresql://{source_details.pg_username}:{src_pass}@{source_details.pg_host}:{source_details.pg_port}/{source_details.pg_database}"
-                
+
                 dest_config = dest.config
                 dest_pass = decrypt_value(dest_config.get("password", ""))
                 dest_conn_str = f"postgresql://{dest_config.get('user')}:{dest_pass}@{dest_config.get('host')}:{dest_config.get('port')}/{dest_config.get('database')}"
-                
+
             except Exception as e:
                 logger.error(f"Failed to retrieve connection details: {e}")
-                return PipelinePreviewResponse(columns=[], data=[], error=f"Failed to retrieve connection details: {str(e)}")
+                return PipelinePreviewResponse(
+                    columns=[],
+                    data=[],
+                    error=f"Failed to retrieve connection details: {str(e)}",
+                )
 
             # 4. Build Query
             # Sanitized alias names (must match what we use in ATTACH below)
-            sanitized_source_name = re.sub(r"[^a-zA-Z0-9_]", "_", source_details.name.lower())
+            sanitized_source_name = re.sub(
+                r"[^a-zA-Z0-9_]", "_", source_details.name.lower()
+            )
             source_prefix = f"pg_src_{sanitized_source_name}"
-            
+
             sanitized_dest_name = re.sub(r"[^a-zA-Z0-9_]", "_", dest.name.lower())
             dest_prefix = f"pg_{sanitized_dest_name}"
 
@@ -2072,18 +2186,16 @@ class PipelineService:
                 #
                 # Build a CTE "filtered_source" from the raw table with filter & limit,
                 # then rewrite the custom SQL to reference that CTE instead of the raw table.
-                filtered_source_cte = (
-                    f"SELECT * FROM {source_prefix}.{request.table_name}{where_clause} LIMIT 100"
-                )
+                filtered_source_cte = f"SELECT * FROM {source_prefix}.{request.table_name}{where_clause} LIMIT 100"
 
                 # Rewrite table references in custom SQL to point to the filtered CTE
                 rewritten_sql = request.sql
                 table_pattern = re.compile(
                     rf'(?<![\.\w"]){re.escape(request.table_name)}(?![\.\w"])',
-                    re.IGNORECASE
+                    re.IGNORECASE,
                 )
                 rewritten_sql = table_pattern.sub("filtered_source", rewritten_sql)
-                rewritten_sql = rewritten_sql.strip().rstrip(';')
+                rewritten_sql = rewritten_sql.strip().rstrip(";")
 
                 final_query = (
                     f"WITH filtered_source AS ({filtered_source_cte}) "
@@ -2093,34 +2205,38 @@ class PipelineService:
                 # Direct table query mode: SELECT * FROM pg_src_<source_name>.<table_name>
                 base_query = f"SELECT * FROM {source_prefix}.{request.table_name}"
                 final_query = f"{base_query}{where_clause} LIMIT 100"
-            
+
             logger.info(f"Executing preview query: {final_query}")
-            
+
             # 5. Execute in DuckDB
             con = duckdb.connect(":memory:")
             # Set memory limit to avoid OOM
             con.execute("SET memory_limit='1GB'")
-            
+
             # Install & Load Postgres Extension
             con.execute("INSTALL postgres;")
             con.execute("LOAD postgres;")
-            
+
             # Attach databases
             try:
-                con.execute(f"ATTACH '{src_conn_str}' AS {source_prefix} (TYPE postgres, READ_ONLY);")
+                con.execute(
+                    f"ATTACH '{src_conn_str}' AS {source_prefix} (TYPE postgres, READ_ONLY);"
+                )
             except Exception as e:
                 logger.error(f"Failed to attach source DB: {e}")
                 raise ValueError(f"Could not connect to source database: {e}")
-                
+
             try:
-                con.execute(f"ATTACH '{dest_conn_str}' AS {dest_prefix} (TYPE postgres, READ_ONLY);")
+                con.execute(
+                    f"ATTACH '{dest_conn_str}' AS {dest_prefix} (TYPE postgres, READ_ONLY);"
+                )
             except Exception as e:
                 logger.warning(f"Failed to attach destination DB: {e}")
                 # We continue even if dest fails, as query might only need source
-            
+
             # Execute Query
             result = con.execute(final_query).fetch_arrow_table()
-            
+
             # Process Results
             columns = result.column_names
             data = result.to_pylist()
@@ -2129,15 +2245,15 @@ class PipelineService:
             column_types = []
             for field in result.schema:
                 dtype = str(field.type).lower()
-                if any(t in dtype for t in ['int', 'float', 'decimal', 'double']):
-                    column_types.append('number')
-                elif 'bool' in dtype:
-                    column_types.append('boolean')
-                elif any(t in dtype for t in ['date', 'time', 'timestamp']):
-                    column_types.append('date')
+                if any(t in dtype for t in ["int", "float", "decimal", "double"]):
+                    column_types.append("number")
+                elif "bool" in dtype:
+                    column_types.append("boolean")
+                elif any(t in dtype for t in ["date", "time", "timestamp"]):
+                    column_types.append("date")
                 else:
-                    column_types.append('text')
-            
+                    column_types.append("text")
+
             # Serialize special types
             serialized_data = []
             for row in data:
@@ -2146,13 +2262,15 @@ class PipelineService:
                     if isinstance(v, (datetime, date)):
                         new_row[k] = v.isoformat()
                     elif isinstance(v, (bytes, bytearray)):
-                         new_row[k] = base64.b64encode(v).decode('utf-8')
+                        new_row[k] = base64.b64encode(v).decode("utf-8")
                     else:
                         new_row[k] = v
                 serialized_data.append(new_row)
-            
-            response = PipelinePreviewResponse(columns=columns, column_types=column_types, data=serialized_data)
-            
+
+            response = PipelinePreviewResponse(
+                columns=columns, column_types=column_types, data=serialized_data
+            )
+
             # 6. Cache Result
             try:
                 if redis_client:
@@ -2160,15 +2278,17 @@ class PipelineService:
                     redis_client.setex(cache_key, 300, response.json())
             except Exception as e:
                 logger.warning(f"Failed to cache preview result: {e}")
-                
+
             return response
-            
+
         except Exception as e:
             logger.error(f"Preview execution failed: {e}", exc_info=True)
             # Return error in response rather than 500
-            return PipelinePreviewResponse(columns=[], column_types=[], data=[], error=str(e))
+            return PipelinePreviewResponse(
+                columns=[], column_types=[], data=[], error=str(e)
+            )
         finally:
-            if 'con' in locals():
+            if "con" in locals():
                 try:
                     con.close()
                 except:
