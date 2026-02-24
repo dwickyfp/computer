@@ -5,7 +5,7 @@
 Rosetta is a real-time ETL platform with a **four-service architecture**:
 
 - **Backend** (FastAPI/Python): Configuration API — Clean Architecture with DDD, sync SQLAlchemy 2.0, APScheduler background jobs
-- **Compute** (Python/Debezium): CDC engine — process-isolated pipelines replicating PostgreSQL → Snowflake/PostgreSQL
+- **Compute** (Python/Debezium): CDC engine — process-isolated pipelines replicating PostgreSQL → Snowflake/PostgreSQL/Rosetta; also hosts Arrow IPC ingestion endpoints for Rosetta Chain
 - **Worker** (Celery/Python): Background task processor — DuckDB-based SQL preview execution with thread pool
 - **Web** (React/TypeScript/Vite): Admin dashboard — TanStack ecosystem (Router/Query/Table), shadcn/ui
 
@@ -76,11 +76,49 @@ components/ui/                  # shadcn/ui primitives
 
 - `PipelineManager` polls DB every 10s, spawns `multiprocessing.Process` per pipeline via `PipelineEngine`
 - Each process gets its own connection pool (`PIPELINE_POOL_MAX_CONN`, default 20)
-- Destinations: `PostgreSQLDestination` (DuckDB `MERGE INTO`), `SnowflakeDestination` (Snowpipe Streaming REST + JWT)
+- Destinations: `PostgreSQLDestination` (DuckDB `MERGE INTO`), `SnowflakeDestination` (Snowpipe Streaming REST + JWT), `RosettaDestination` (Arrow IPC HTTP POST to remote `/chain/ingest`)
 - `CDCRecord` operations: `c`=create, `u`=update, `d`=delete, `r`=read/snapshot
 - `BackfillManager` polls `queue_backfill_data` every 5s, runs in separate threads
 - DLQ: Redis Streams per table/destination — `dlq:{source_id}:{table}:{dest_id}`
 - Runs `migrations/001_create_table.sql` on startup
+
+### Rosetta Chain — Inter-Instance Streaming (`compute/chain/`, `compute/core/chain_engine.py`)
+
+Rosetta can stream CDC data directly to another Rosetta instance over Arrow IPC without any message broker.
+
+**Sender side** (outbound):
+- `RosettaDestination` serialises CDC batches → Arrow IPC → `POST /chain/ingest` on the remote compute
+- Remote URL + chain key stored in `destinations` table (`destination_type = ROSETTA`)
+- Schema pushed once via `POST /chain/schema`
+
+**Receiver side** (inbound):
+- `compute/server.py` exposes `/chain/ingest`, `/chain/schema`, `/chain/tables`, `/chain/health` endpoints
+- `chain/auth.py` — validates `X-Chain-Key` header against AES-256-GCM key stored in `rosetta_chain_config`
+- `chain/ingest.py` (`ChainIngestManager`) — deserialises Arrow IPC → `XADD` to Redis Stream `rosetta:chain:{chain_client_id}:{table}`
+- `chain/schema.py` (`ChainSchemaManager`) — stores/retrieves table schemas via raw psycopg2
+- `core/chain_engine.py` (`ChainPipelineEngine`) — `XREADGROUP` consumer loop; converts stream entries to `CDCRecord`s and routes to destination
+- Enable with env var `CHAIN_ENABLED=true`; server bind via `SERVER_HOST` / `SERVER_PORT`
+
+**Backend models/API** (`backend/app/domain/`):
+- `RosettaChainConfig` — stores AES-256-GCM encrypted chain key + `is_active` flag
+- `RosettaChainClient` — registered remote Rosetta instances (url, port, encrypted chain_key)
+- `RosettaChainTable` — table schemas synced from remote clients
+- 10 REST endpoints under `/api/v1/chain/`: key management, client CRUD, connection test, table sync
+- `GET /chain/key` → masked key; `GET /chain/key/reveal` → full decrypted key (one-time reveal)
+- `PATCH /chain/toggle-active` accepts `{ is_active: bool }` JSON body (`ChainToggleActiveRequest`)
+
+**Pipeline integration**:
+- `Pipeline.source_type` — `"POSTGRES"` (default) or `"ROSETTA"` (reads from Redis Stream via ChainPipelineEngine)
+- `Pipeline.chain_client_id` — FK to `RosettaChainClient` (used when `source_type = ROSETTA`)
+- `Pipeline.source_id` — nullable (null for ROSETTA source pipelines)
+- `PipelineManager._run_pipeline_process()` dispatches to `ChainPipelineEngine` when `source_type == "ROSETTA"`
+
+**Web UI** (`web/src/features/rosetta-chain/`):
+- `ChainKeyCard` — display/reveal/copy/regenerate chain key; one-time raw key dialog after generation
+- `ChainClientTable` — DataTable of registered remote clients with test/edit/delete row actions
+- `ChainClientMutateDrawer` — form: name, url, port, chain_key (optional on update), is_active
+- Route: `/_authenticated/rosetta-chain/` — sidebar under Integrations with Unplug icon
+- `chain_key` and `description` are **not** returned in `ChainClientResponse` (backend keeps key encrypted); form always clears `chain_key` on edit
 
 ### Worker: Celery Task Processor (`worker/`)
 
@@ -167,6 +205,7 @@ All services share PostgreSQL config tables (schema in `migrations/001_create_ta
 - `CREDENTIAL_ENCRYPTION_KEY` — AES-256-GCM shared secret between Backend and Worker (must match)
 - Format: `base64(12-byte nonce || ciphertext)` — see `backend/app/core/security.py`
 - Snowflake uses RSA key-pair auth (PKCS#8 encrypted private keys, not passwords)
+- Chain key stored encrypted in `rosetta_chain_config`; only revealed via `GET /chain/key/reveal`
 
 ## Common Pitfalls
 
@@ -178,6 +217,10 @@ All services share PostgreSQL config tables (schema in `migrations/001_create_ta
 6. **Compute**: Config changes need Compute restart (polls DB, doesn't receive push notifications)
 7. **Compute**: Snowflake destination uses Snowpipe Streaming REST API (not Snowflake connector) — see `compute/destinations/snowflake/`
 8. **Compute**: PostgreSQL destination replication uses DuckDB `MERGE INTO` — not direct SQL inserts
+9. **Chain**: `ChainClientResponse` does NOT include `chain_key` or `description` — never add them to the Zod schema or TypeScript interface
+10. **Chain**: `PATCH /chain/toggle-active` expects a JSON body `{ "is_active": bool }` via `ChainToggleActiveRequest` — not a query param
+11. **Chain**: `GET /chain/key` returns `chain_key_masked` (partial mask); `GET /chain/key/reveal` returns the full raw key
+12. **Chain**: `Pipeline.source_id` is nullable — ROSETTA source pipelines have `source_id = null`; always null-guard before passing to `sourcesRepo`
 
 ## Key Dependencies
 
