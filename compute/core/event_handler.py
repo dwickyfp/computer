@@ -6,6 +6,7 @@ Parses Debezium events and routes them to appropriate destinations.
 
 import json
 import logging
+import time as _time
 from typing import Any, Optional
 from dataclasses import dataclass
 
@@ -202,13 +203,22 @@ class CDCEventHandler(BasePythonChangeHandler):
             # Extract schema if available
             schema = value_obj.get("schema")
 
+            # Use Debezium source timestamp (ts_ms) as version marker.
+            # Falls back to current time if not available.
+            # This timestamp is stored in CDCRecord.timestamp and used by the
+            # engine-level version tracker (Redis) to prevent stale DLQ records
+            # from overwriting newer data during recovery.
+            ts_ms = payload.get("ts_ms")
+            if ts_ms is None:
+                ts_ms = int(_time.time() * 1000)
+
             return CDCRecord(
                 operation=op or "u",
                 table_name=table_name,
                 key=key if isinstance(key, dict) else {},
                 value=value if isinstance(value, dict) else {},
                 schema=schema,
-                timestamp=payload.get("ts_ms"),
+                timestamp=ts_ms,
             )
 
         except Exception as e:
@@ -311,6 +321,19 @@ class CDCEventHandler(BasePythonChangeHandler):
 
             # Write to destination - this is where connection/table errors can occur
             written = routing.destination.write_batch(records, routing.table_sync)
+
+            # Track written versions in Redis for version-aware DLQ recovery.
+            # This allows the engine to skip stale DLQ records whose timestamp
+            # is older than what has already been successfully written.
+            if written > 0 and self._dlq_manager:
+                try:
+                    self._dlq_manager.track_written_versions(
+                        destination_id=routing.destination.destination_id,
+                        table_name=table_name,
+                        records=records,
+                    )
+                except Exception:
+                    pass  # best-effort, logged inside track_written_versions
 
             # Update data flow monitoring
             if written > 0:
@@ -439,8 +462,16 @@ class CDCEventHandler(BasePythonChangeHandler):
         """
         Enqueue failed records to dead letter queue.
 
+        IMPORTANT: Records stored in DLQ are RAW CDC records — before any
+        filter_sql or custom_sql transformations. Transformations are applied
+        during DLQ recovery by calling write_batch() with the latest
+        table_sync config from the database. This ensures:
+        1. DLQ preserves the original source data
+        2. Updated filter/custom SQL rules apply during recovery
+        3. CDCRecord.timestamp enables engine-level version-aware recovery
+
         Args:
-            records: CDC records that failed to write
+            records: CDC records that failed to write (raw, pre-transformation)
             routing: Routing information
             error_message: Error message describing the failure
         """

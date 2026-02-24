@@ -41,17 +41,17 @@ core/security.py           # AES-256-GCM encrypt_value()/decrypt_value()
 
 9 jobs run via `BackgroundScheduler` at startup (`infrastructure/tasks/scheduler.py`):
 
-| Job | Interval | Purpose |
-|-----|----------|---------|
-| `wal_monitor` | 60s (configurable) | WAL size monitoring |
-| `replication_monitor` | 60s | Source replication status |
-| `schema_monitor` | 60s | Schema change detection |
-| `credit_monitor` | 1 hour | Snowflake credit usage |
-| `table_list_refresh` | 5 min | Auto-refresh available tables |
-| `system_metric_collection` | 5s | CPU/memory metrics |
-| `notification_sender` | 30s | Webhook/Telegram notifications |
-| `worker_health_check` | 10s | Poll worker health (if `worker_enabled`) |
-| `pipeline_refresh_check` | 10s | Auto-refresh flagged pipelines |
+| Job                        | Interval           | Purpose                                  |
+| -------------------------- | ------------------ | ---------------------------------------- |
+| `wal_monitor`              | 60s (configurable) | WAL size monitoring                      |
+| `replication_monitor`      | 60s                | Source replication status                |
+| `schema_monitor`           | 60s                | Schema change detection                  |
+| `credit_monitor`           | 1 hour             | Snowflake credit usage                   |
+| `table_list_refresh`       | 5 min              | Auto-refresh available tables            |
+| `system_metric_collection` | 5s                 | CPU/memory metrics                       |
+| `notification_sender`      | 30s                | Webhook/Telegram notifications           |
+| `worker_health_check`      | 10s                | Poll worker health (if `worker_enabled`) |
+| `pipeline_refresh_check`   | 10s                | Auto-refresh flagged pipelines           |
 
 ### Web: Feature-Based Organization (`web/src/`)
 
@@ -138,17 +138,17 @@ docker-compose up -d    # 5 containers: config DB (5433), source DB (5434), targ
 
 ## Port Reference
 
-| Service | Port | Notes |
-|---------|------|-------|
-| Backend | 8000 | FastAPI + APScheduler |
-| Compute | 8001 | CDC engine + health API |
-| Worker | 8002 | Celery + health API |
-| Web | 5173 | Vite dev server |
-| Config DB | 5433 | Shared PostgreSQL (`wal_level=logical`) |
-| Source DB | 5434 | PostGIS CDC source |
-| Target DB 1 | 5435 | PostgreSQL destination |
-| Target DB 2 | 5436 | PostgreSQL destination |
-| Redis | 6379 | db0=cache, db1=Celery broker, db2=Celery results |
+| Service     | Port | Notes                                            |
+| ----------- | ---- | ------------------------------------------------ |
+| Backend     | 8000 | FastAPI + APScheduler                            |
+| Compute     | 8001 | CDC engine + health API                          |
+| Worker      | 8002 | Celery + health API                              |
+| Web         | 5173 | Vite dev server                                  |
+| Config DB   | 5433 | Shared PostgreSQL (`wal_level=logical`)          |
+| Source DB   | 5434 | PostGIS CDC source                               |
+| Target DB 1 | 5435 | PostgreSQL destination                           |
+| Target DB 2 | 5436 | PostgreSQL destination                           |
+| Redis       | 6379 | db0=cache, db1=Celery broker, db2=Celery results |
 
 ## Shared Config Database
 

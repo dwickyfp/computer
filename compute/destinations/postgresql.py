@@ -487,6 +487,7 @@ class PostgreSQLDestination(BaseDestination):
         # Try JSON v2 format first
         try:
             import json
+
             parsed = json.loads(filter_sql)
             if isinstance(parsed, dict) and parsed.get("version") == 2:
                 # V2 format - return empty list (use _build_where_clause_v2 instead)
@@ -502,7 +503,7 @@ class PostgreSQLDestination(BaseDestination):
         """
         Build a complete WHERE clause string from filter_sql.
 
-        Supports both legacy semicolon format and JSON v2 format with 
+        Supports both legacy semicolon format and JSON v2 format with
         AND/OR logic, grouping, and IN operator.
 
         Args:
@@ -517,6 +518,7 @@ class PostgreSQLDestination(BaseDestination):
         # Try JSON v2 format first
         try:
             import json
+
             parsed = json.loads(filter_sql)
             if isinstance(parsed, dict) and parsed.get("version") == 2:
                 return self._build_where_clause_v2(parsed)
@@ -589,7 +591,9 @@ class PostgreSQLDestination(BaseDestination):
 
         return result
 
-    def _build_single_clause(self, column: str, operator: str, value: str, value2: str = "") -> str:
+    def _build_single_clause(
+        self, column: str, operator: str, value: str, value2: str = ""
+    ) -> str:
         """
         Build a single SQL clause from filter components.
 
@@ -634,9 +638,7 @@ class PostgreSQLDestination(BaseDestination):
         except (ValueError, TypeError):
             return f"'{value}'"
 
-    def _parse_debezium_field_types(
-        self, schema: Optional[dict]
-    ) -> dict[str, dict]:
+    def _parse_debezium_field_types(self, schema: Optional[dict]) -> dict[str, dict]:
         """
         Parse the Debezium envelope schema to extract column type metadata.
 
@@ -748,9 +750,7 @@ class PostgreSQLDestination(BaseDestination):
                             int_val = int.from_bytes(
                                 decoded, byteorder="big", signed=True
                             )
-                            result.append(
-                                float(Decimal(int_val) / Decimal(10**scale))
-                            )
+                            result.append(float(Decimal(int_val) / Decimal(10**scale)))
                         except Exception:
                             result.append(None)
                 else:
@@ -761,8 +761,7 @@ class PostgreSQLDestination(BaseDestination):
         if dbz_name == "io.debezium.time.Date":
             epoch = datetime.date(1970, 1, 1)
             return [
-                (epoch + datetime.timedelta(days=v))
-                if isinstance(v, int) else v
+                (epoch + datetime.timedelta(days=v)) if isinstance(v, int) else v
                 for v in values
             ]
 
@@ -782,9 +781,7 @@ class PostgreSQLDestination(BaseDestination):
                             epoch + datetime.timedelta(microseconds=v // 1000)
                         )
                     else:
-                        result.append(
-                            epoch + datetime.timedelta(microseconds=v)
-                        )
+                        result.append(epoch + datetime.timedelta(microseconds=v))
                 else:
                     result.append(v)
             return result
@@ -793,8 +790,11 @@ class PostgreSQLDestination(BaseDestination):
         if dbz_name == "io.debezium.time.Timestamp":
             epoch = datetime.datetime(1970, 1, 1)
             return [
-                (epoch + datetime.timedelta(milliseconds=v))
-                if isinstance(v, int) else v
+                (
+                    (epoch + datetime.timedelta(milliseconds=v))
+                    if isinstance(v, int)
+                    else v
+                )
                 for v in values
             ]
 
@@ -907,9 +907,7 @@ class PostgreSQLDestination(BaseDestination):
 
             if dbz_info:
                 # Schema-aware coercion (primary path)
-                arrays[col] = self._coerce_values_for_duckdb(
-                    raw_values, dbz_info, col
-                )
+                arrays[col] = self._coerce_values_for_duckdb(raw_values, dbz_info, col)
             elif not debezium_types:
                 # No schema at all — try auto-detecting numeric strings
                 arrays[col] = self._auto_coerce_numeric_column(raw_values)
@@ -1037,6 +1035,7 @@ class PostgreSQLDestination(BaseDestination):
         # For v2 format, try to use DuckDB filtering
         try:
             import json
+
             parsed = json.loads(filter_sql)
             if isinstance(parsed, dict) and parsed.get("version") == 2:
                 # V2 format - fall through to DuckDB-based filtering
@@ -1382,7 +1381,9 @@ class PostgreSQLDestination(BaseDestination):
                 except Exception:
                     # Schema might have changed, recreate
                     self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {temp_source}")
-                    self._duckdb_conn.execute(f"CREATE TABLE {temp_source} ({col_def_str})")
+                    self._duckdb_conn.execute(
+                        f"CREATE TABLE {temp_source} ({col_def_str})"
+                    )
             else:
                 self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {temp_source}")
                 self._duckdb_conn.execute(f"CREATE TABLE {temp_source} ({col_def_str})")
@@ -1392,7 +1393,10 @@ class PostgreSQLDestination(BaseDestination):
             placeholders = ", ".join(["?" for _ in columns])
 
             # Convert all records first, then bulk insert
-            all_values = [convert_record(record, log_first=(i == 0)) for i, record in enumerate(records)]
+            all_values = [
+                convert_record(record, log_first=(i == 0))
+                for i, record in enumerate(records)
+            ]
             self._duckdb_conn.executemany(
                 f"INSERT INTO {temp_source} VALUES ({placeholders})", all_values
             )
@@ -1651,10 +1655,10 @@ class PostgreSQLDestination(BaseDestination):
             # Force send notification
             try:
                 notification_repo = NotificationLogRepository()
-                
+
                 # Sanitize error message before sending to notification
                 sanitized_error = sanitize_for_db(e, self._config.name, "POSTGRES")
-                
+
                 notification_repo.upsert_notification_by_key(
                     NotificationLogCreate(
                         key_notification=f"destination_connection_error_{self.destination_id}",

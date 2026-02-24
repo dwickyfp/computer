@@ -33,6 +33,16 @@ class DLQRecoveryWorker:
     Monitors all DLQ queues for a pipeline and attempts to replay messages
     when destinations are healthy and reachable. Uses Redis Streams consumer
     groups — unacknowledged messages are automatically retried on next cycle.
+
+    Version-aware recovery (engine-level):
+        The DLQManager tracks the latest successfully-written timestamp
+        per (destination, table, primary-key) in Redis.  Before replaying
+        a batch, ``filter_stale_records()`` removes DLQ records whose
+        ``CDCRecord.timestamp`` is older than the tracked version.  This
+        prevents the following scenario without modifying destination tables:
+          1. Update A (ts=T2) → DLQ (destination disconnected)
+          2. Update A (ts=T3) → succeeds directly, version tracked in Redis
+          3. DLQ replays T2   → SKIPPED by engine, T3 preserved in destination
     """
 
     def __init__(
@@ -596,14 +606,33 @@ class DLQRecoveryWorker:
                 cdc_records = [msg.cdc_record for _, msg in op_messages]
                 msg_ids = [msg_id for msg_id, _ in op_messages]
 
+                # ── Version-aware filtering ──
+                # Drop records whose timestamp is older than what has
+                # already been written to this destination (tracked in Redis).
+                fresh_records = self._dlq_manager.filter_stale_records(
+                    destination_id, table_name, cdc_records
+                )
+                stale_count = len(cdc_records) - len(fresh_records)
+
+                if not fresh_records:
+                    # All records are stale — ACK them without writing
+                    all_success_ids.extend(msg_ids)
+                    if stale_count > 0:
+                        self._logger.info(
+                            f"Skipped entire op={op} batch ({stale_count} stale "
+                            f"records) for {table_name} on {destination.name}"
+                        )
+                    continue
+
                 try:
-                    written = destination.write_batch(cdc_records, table_sync)
+                    written = destination.write_batch(fresh_records, table_sync)
                     total_written += written
                     all_success_ids.extend(msg_ids)
 
                     self._logger.debug(
-                        f"Batched replay op={op}: {written}/{len(cdc_records)} records "
+                        f"Batched replay op={op}: {written}/{len(fresh_records)} records "
                         f"to {destination.name} for table {table_name}"
+                        + (f" ({stale_count} stale skipped)" if stale_count else "")
                     )
                 except Exception as batch_e:
                     self._logger.warning(
@@ -619,14 +648,22 @@ class DLQRecoveryWorker:
                 cdc_records = [msg.cdc_record for _, msg in op_messages]
                 msg_ids = [msg_id for msg_id, _ in op_messages]
 
+                # ── Version-aware filtering (same as above) ──
+                fresh_records = self._dlq_manager.filter_stale_records(
+                    destination_id, table_name, cdc_records
+                )
+                stale_count = len(cdc_records) - len(fresh_records)
+
+                if not fresh_records:
+                    all_success_ids.extend(msg_ids)
+                    continue
+
                 try:
-                    written = destination.write_batch(cdc_records, table_sync)
+                    written = destination.write_batch(fresh_records, table_sync)
                     total_written += written
                     all_success_ids.extend(msg_ids)
                 except Exception as batch_e:
-                    self._logger.warning(
-                        f"Batch replay failed for op={op}: {batch_e}"
-                    )
+                    self._logger.warning(f"Batch replay failed for op={op}: {batch_e}")
                     all_failed.extend(op_messages)
 
             if all_success_ids:

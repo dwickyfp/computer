@@ -615,10 +615,10 @@ class SnowflakeDestination(BaseDestination):
             # Notify on error
             try:
                 notification_repo = NotificationLogRepository()
-                
+
                 # Sanitize error message before sending to notification
                 sanitized_error = sanitize_for_db(e, self._config.name, "SNOWFLAKE")
-                
+
                 is_force_sent = (
                     "connection" in str(e).lower() or "authentication" in str(e).lower()
                 )

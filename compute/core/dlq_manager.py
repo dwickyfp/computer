@@ -7,6 +7,7 @@ Redis Streams with consumer groups for at-least-once delivery.
 """
 
 import json
+import hashlib
 import logging
 import re
 import time
@@ -67,7 +68,9 @@ class DLQMessage:
         self.cdc_record = cdc_record
         self.table_sync_config = table_sync_config
         self.retry_count = retry_count
-        self.first_failed_at = first_failed_at or datetime.now(timezone(timedelta(hours=7))).isoformat()
+        self.first_failed_at = (
+            first_failed_at or datetime.now(timezone(timedelta(hours=7))).isoformat()
+        )
 
     def to_dict(self) -> dict[str, str]:
         """Serialize message to dict for Redis Stream XADD."""
@@ -275,13 +278,23 @@ class DLQManager:
         """
         Add CDC record to dead letter queue via Redis Stream XADD.
 
+        IMPORTANT: The cdc_record stored here is the RAW record — before any
+        filter_sql or custom_sql transformations. Transformations are re-applied
+        during DLQ recovery when write_batch() is called with the latest
+        table_sync config from the database.
+
+        Version-aware recovery is handled at the engine level: the DLQManager
+        tracks the latest written timestamp per (destination, table, PK) in
+        Redis.  During replay, ``filter_stale_records()`` drops records whose
+        ``CDCRecord.timestamp`` is older than the tracked version.
+
         Args:
             pipeline_id: Pipeline ID
             source_id: Source database ID
             destination_id: Destination database ID
             table_name: Source table name
             table_name_target: Target table name
-            cdc_record: CDC record that failed to write
+            cdc_record: Raw CDC record that failed to write (pre-transformation)
             table_sync: Table sync configuration
             error_message: Optional error message
 
@@ -631,7 +644,9 @@ class DLQManager:
 
             from datetime import timedelta
 
-            cutoff_date = datetime.now(timezone(timedelta(hours=7))) - timedelta(days=max_age_days)
+            cutoff_date = datetime.now(timezone(timedelta(hours=7))) - timedelta(
+                days=max_age_days
+            )
             ids_to_purge = []
 
             # Read all entries with XRANGE (non-destructive)
@@ -798,6 +813,152 @@ class DLQManager:
             self._logger.info("Closed DLQ Redis connection")
         except Exception as e:
             self._logger.warning(f"Error closing DLQ Redis connection: {e}")
+
+    # ── Engine-level version tracking ──────────────────────────────────────
+    #
+    # Tracks the latest successfully-written timestamp (ts_ms) per record
+    # primary key in Redis.  During DLQ recovery the tracker is consulted
+    # to skip records whose version is older than what was already written
+    # to the destination — preventing the classic stale-overwrite scenario:
+    #
+    #   1. Update A (ts=T2) → DLQ (destination disconnected)
+    #   2. Update A (ts=T3) → succeeds (destination reconnected)
+    #      → track_written_versions stores T3 for PK(A)
+    #   3. DLQ replays T2   → filter_stale_records removes it (T2 < T3)
+    #
+    # All state lives in Redis with a configurable TTL (default 24 h)
+    # so there's zero schema change on destination tables.
+
+    _VERSION_KEY_PREFIX = "rosetta:ver"
+    _VERSION_TTL = 86400  # 24 hours
+
+    @staticmethod
+    def _pk_hash(record_key: dict) -> str:
+        """
+        Deterministic hash of a CDC record's primary-key dict.
+
+        Uses MD5 (truncated to 16 hex chars) of the sorted JSON serialisation;
+        collisions are extremely unlikely within the short TTL window.
+        """
+        raw = json.dumps(record_key, sort_keys=True, default=str)
+        return hashlib.md5(raw.encode()).hexdigest()[:16]
+
+    def _version_key(self, destination_id: int, table_name: str, pk_hash: str) -> str:
+        """Build Redis key for a single record version entry."""
+        return f"{self._VERSION_KEY_PREFIX}:{destination_id}:{table_name}:{pk_hash}"
+
+    def track_written_versions(
+        self,
+        destination_id: int,
+        table_name: str,
+        records: list[CDCRecord],
+        ttl: int | None = None,
+    ) -> None:
+        """
+        Record the latest written timestamp for each record's primary key.
+
+        Called after a successful ``write_batch`` on the hot path.  Uses a
+        Redis pipeline so the round-trip cost is a single network call.
+
+        Args:
+            destination_id: Destination that received the records.
+            table_name:     Source table name (same key space used by DLQ).
+            records:        CDC records that were successfully written.
+            ttl:            Per-key expiry in seconds (default 24 h).
+        """
+        if not records:
+            return
+
+        _ttl = ttl or self._VERSION_TTL
+        try:
+            pipe = self._redis.pipeline(transaction=False)
+            for record in records:
+                ts = record.timestamp
+                if ts is None:
+                    continue
+                pk_h = self._pk_hash(record.key)
+                rkey = self._version_key(destination_id, table_name, pk_h)
+                # SET only if new value is >= existing (NX handles first write)
+                # We use a Lua script for atomic compare-and-set.
+                pipe.eval(
+                    """
+                    local cur = redis.call('GET', KEYS[1])
+                    if cur == false or tonumber(ARGV[1]) >= tonumber(cur) then
+                        redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+                    end
+                    return 1
+                    """,
+                    1,
+                    rkey,
+                    str(ts),
+                    str(_ttl),
+                )
+            pipe.execute()
+        except Exception as e:
+            # Version tracking is best-effort — never fail the write path
+            self._logger.debug(f"Version tracking failed (non-fatal): {e}")
+
+    def filter_stale_records(
+        self,
+        destination_id: int,
+        table_name: str,
+        records: list[CDCRecord],
+    ) -> list[CDCRecord]:
+        """
+        Remove records whose timestamp is older than the tracked version.
+
+        Called during DLQ recovery **before** ``write_batch`` so that stale
+        records are silently dropped without touching the destination.
+
+        Args:
+            destination_id: Destination ID for the replay.
+            table_name:     Source table name.
+            records:        DLQ records about to be replayed.
+
+        Returns:
+            A list containing only the records that should still be written
+            (i.e. no newer version has been tracked).
+        """
+        if not records:
+            return records
+
+        try:
+            keys = [
+                self._version_key(destination_id, table_name, self._pk_hash(r.key))
+                for r in records
+            ]
+            stored = self._redis.mget(keys)
+
+            fresh: list[CDCRecord] = []
+            skipped = 0
+            for record, stored_ver in zip(records, stored):
+                if stored_ver is None:
+                    # No tracked version → safe to write
+                    fresh.append(record)
+                else:
+                    stored_ts = int(stored_ver)
+                    record_ts = record.timestamp or 0
+                    if record_ts >= stored_ts:
+                        # Record is same age or newer → write it
+                        fresh.append(record)
+                    else:
+                        skipped += 1
+
+            if skipped > 0:
+                self._logger.info(
+                    f"Version filter: skipped {skipped}/{len(records)} stale "
+                    f"DLQ record(s) for d{destination_id}:t{table_name} — "
+                    f"destination already has newer data"
+                )
+
+            return fresh
+
+        except Exception as e:
+            # On Redis failure, allow all records through (safe fallback)
+            self._logger.warning(
+                f"Version filter failed, allowing all records through: {e}"
+            )
+            return records
 
     def ping(self) -> bool:
         """Check if Redis connection is alive."""
