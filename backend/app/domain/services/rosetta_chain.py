@@ -19,6 +19,7 @@ from app.domain.models.rosetta_chain import (
     RosettaChainConfig,
     RosettaChainTable,
 )
+from app.domain.models.destination import Destination
 from app.domain.repositories.rosetta_chain import (
     RosettaChainClientRepository,
     RosettaChainConfigRepository,
@@ -114,6 +115,11 @@ class RosettaChainService:
             chain_key=encrypted_key,
             is_active=True,
         )
+
+        # Auto-create a linked ROSETTA destination so it appears in the
+        # pipeline "Add Destination" list without manual setup.
+        self._create_linked_destination(client, encrypted_key)
+
         return ChainClientResponse.from_orm(client)
 
     def update_client(
@@ -127,10 +133,17 @@ class RosettaChainService:
             update_data["chain_key"] = encrypt_value(update_data["chain_key"])
 
         client = self._client_repo.update(client_id, **update_data)
+
+        # Sync the linked destination with the updated connection details
+        self._sync_linked_destination(client)
+
         return ChainClientResponse.from_orm(client)
 
     def delete_client(self, client_id: int) -> None:
         """Remove a remote Rosetta instance (cascades to tables)."""
+        # Delete the linked ROSETTA destination first so pipelines aren't
+        # left with a dangling destination reference.
+        self._delete_linked_destination(client_id)
         self._client_repo.delete(client_id)
 
     # ─── Connectivity Testing ───────────────────────────────────────────────
@@ -240,3 +253,116 @@ class RosettaChainService:
             logger.error(f"Failed to sync tables from {client.name}: {e}")
 
         return self.get_client_tables(client_id)
+
+    # ─── Linked Destination Helpers ────────────────────────────────────────
+
+    def _destination_name(self, client_name: str) -> str:
+        """Canonical name for the auto-created ROSETTA destination."""
+        return f"chain-{client_name}"
+
+    def _create_linked_destination(
+        self, client: RosettaChainClient, encrypted_key: str
+    ) -> None:
+        """
+        Create a ROSETTA Destination record linked to this chain client.
+
+        The destination appears automatically in the pipeline
+        'Add Destination' modal without any extra manual step.
+        """
+        try:
+            dest_name = self._destination_name(client.name)
+            # Guard: don't create duplicates (e.g. if retried)
+            existing = (
+                self.db.query(Destination).filter_by(chain_client_id=client.id).first()
+            )
+            if existing:
+                return
+
+            dest = Destination(
+                name=dest_name,
+                type="ROSETTA",
+                config={
+                    "url": client.url,
+                    "port": client.port,
+                    "chain_key": encrypted_key,
+                },
+                list_tables=[],
+                total_tables=0,
+                chain_client_id=client.id,
+            )
+            self.db.add(dest)
+            self.db.commit()
+            logger.info(
+                f"Auto-created ROSETTA destination '{dest_name}' "
+                f"for chain client '{client.name}'"
+            )
+        except Exception as e:
+            self.db.rollback()
+            logger.warning(
+                f"Could not auto-create destination for chain client "
+                f"'{client.name}': {e}"
+            )
+
+    def _sync_linked_destination(self, client: RosettaChainClient) -> None:
+        """Keep the linked ROSETTA destination in sync with the chain client."""
+        try:
+            dest = (
+                self.db.query(Destination).filter_by(chain_client_id=client.id).first()
+            )
+            if not dest:
+                # Destination doesn't exist yet — create it now (handles clients
+                # registered before this feature was added).
+                self._create_linked_destination(client, client.chain_key)
+                return
+
+            # Sync name, URL and port; keep chain_key unchanged (already encrypted)
+            new_name = self._destination_name(client.name)
+            dest.name = new_name
+            dest.config = {
+                **dest.config,
+                "url": client.url,
+                "port": client.port,
+            }
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.warning(
+                f"Could not sync destination for chain client " f"'{client.name}': {e}"
+            )
+
+    def _delete_linked_destination(self, client_id: int) -> None:
+        """Delete the ROSETTA destination linked to this chain client."""
+        try:
+            dest = (
+                self.db.query(Destination).filter_by(chain_client_id=client_id).first()
+            )
+            if dest:
+                self.db.delete(dest)
+                self.db.commit()
+                logger.info(
+                    f"Deleted linked ROSETTA destination '{dest.name}' "
+                    f"for chain client id={client_id}"
+                )
+        except Exception as e:
+            self.db.rollback()
+            logger.warning(
+                f"Could not delete destination for chain client " f"id={client_id}: {e}"
+            )
+
+    def sync_all_destinations(self) -> int:
+        """
+        Ensure every chain client has a linked ROSETTA destination.
+
+        Idempotent — safe to call repeatedly. Returns the number of
+        destinations newly created.
+        """
+        clients = self._client_repo.get_all()
+        created = 0
+        for client in clients:
+            existing = (
+                self.db.query(Destination).filter_by(chain_client_id=client.id).first()
+            )
+            if not existing:
+                self._create_linked_destination(client, client.chain_key)
+                created += 1
+        return created

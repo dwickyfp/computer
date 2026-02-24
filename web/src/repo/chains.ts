@@ -132,4 +132,11 @@ export const chainRepo = {
     )
     return data
   },
+
+  syncDestinations: async () => {
+    const { data } = await api.post<{ created: number; message: string }>(
+      '/chain/clients/sync-destinations'
+    )
+    return data
+  },
 }

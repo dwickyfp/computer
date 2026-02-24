@@ -955,3 +955,6 @@ ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS source_type VARCHAR(20) NOT NULL 
 ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL;
 ALTER TABLE pipelines ALTER COLUMN source_id DROP NOT NULL;
 
+-- Link destinations to chain clients (auto-created ROSETTA destinations)
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_destinations_chain_client ON destinations(chain_client_id) WHERE chain_client_id IS NOT NULL;

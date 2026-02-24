@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { chainRepo } from '@/repo/chains'
 import { destinationsRepo } from '@/repo/destinations'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { Check, Database, Search, Snowflake, Unplug } from 'lucide-react'
@@ -75,13 +76,27 @@ export function AddDestinationModal({
     }
   }
 
+  // When the modal opens, ensure every chain client has a linked ROSETTA
+  // destination so it appears in the list without manual setup.
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      chainRepo
+        .syncDestinations()
+        .then(({ created }) => {
+          if (created > 0) {
+            // New destinations were created — refresh the list
+            queryClient.invalidateQueries({ queryKey: ['destinations'] })
+          }
+        })
+        .catch(() => {
+          // Non-fatal — destinations list will still show whatever exists
+        })
+    } else {
       form.reset()
       setSearchQuery('')
       setSelectedDestId(null)
     }
-  }, [open, form])
+  }, [open, form, queryClient])
 
   // Filter out already added destinations and apply search
   const availableDestinations = destinations?.destinations
