@@ -9,14 +9,14 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { PipelineAnimatedArrow } from './pipeline-animated-arrow.tsx'
-import { PipelineRowActions } from './pipeline-row-actions.tsx'
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { PipelineAnimatedArrow } from './pipeline-animated-arrow.tsx'
+import { PipelineRowActions } from './pipeline-row-actions.tsx'
 
 export const pipelineColumns: ColumnDef<Pipeline>[] = [
   {
@@ -192,13 +192,14 @@ function PipelineDetailsButton({ pipelineId }: { pipelineId: number }) {
 function PipelineStatusSwitch({ pipeline }: { pipeline: Pipeline }) {
   const queryClient = useQueryClient()
   const isRunning = pipeline.status === 'START' || pipeline.status === 'REFRESH'
-  
+
   // Check if source has required configurations
   // ROSETTA source pipelines don't use PostgreSQL publication/replication slots
   const isRosettaSource = pipeline.source_type === 'ROSETTA'
   const isPublicationEnabled = pipeline.source?.is_publication_enabled ?? false
   const isReplicationEnabled = pipeline.source?.is_replication_enabled ?? false
-  const canActivate = isRosettaSource || (isPublicationEnabled && isReplicationEnabled)
+  const canActivate =
+    isRosettaSource || (isPublicationEnabled && isReplicationEnabled)
 
   const { mutate, isPending } = useMutation({
     mutationFn: async (checked: boolean) => {
@@ -207,14 +208,14 @@ function PipelineStatusSwitch({ pipeline }: { pipeline: Pipeline }) {
         const missingRequirements = []
         if (!isPublicationEnabled) missingRequirements.push('publication')
         if (!isReplicationEnabled) missingRequirements.push('replication slot')
-        
+
         toast.error(
           `Cannot activate pipeline: ${missingRequirements.join(' and ')} not configured on source database`,
           { duration: 4000 }
         )
         throw new Error('Source requirements not met')
       }
-      
+
       if (checked) {
         return pipelinesRepo.start(pipeline.id)
       } else {
@@ -231,7 +232,7 @@ function PipelineStatusSwitch({ pipeline }: { pipeline: Pipeline }) {
   })
 
   const switchElement = (
-    <div className="flex items-center gap-2">
+    <div className='flex items-center gap-2'>
       <Switch
         checked={isRunning}
         onCheckedChange={(checked) => mutate(checked)}
@@ -242,27 +243,25 @@ function PipelineStatusSwitch({ pipeline }: { pipeline: Pipeline }) {
       )}
     </div>
   )
-  
+
   // Wrap with tooltip if requirements not met
   if (!isRunning && !canActivate) {
     const missingRequirements = []
     if (!isPublicationEnabled) missingRequirements.push('Publication')
     if (!isReplicationEnabled) missingRequirements.push('Replication slot')
-    
+
     return (
       <TooltipProvider>
         <Tooltip>
-          <TooltipTrigger asChild>
-            {switchElement}
-          </TooltipTrigger>
+          <TooltipTrigger asChild>{switchElement}</TooltipTrigger>
           <TooltipContent>
-            <p className='font-semibold text-xs'>Cannot activate</p>
+            <p className='text-xs font-semibold'>Cannot activate</p>
             <p className='text-xs'>Missing: {missingRequirements.join(', ')}</p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
     )
   }
-  
+
   return switchElement
 }
