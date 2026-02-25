@@ -126,15 +126,16 @@ class PipelineService:
         """
         logger.info("Creating new pipeline", extra={"name": pipeline_data.name})
 
-        # Check if source is already used in another pipeline
-        existing_pipelines = self.repository.get_by_source_id(pipeline_data.source_id)
-        if existing_pipelines:
-            raise DuplicateEntityError(
-                entity_type="Pipeline",
-                field="source_id",
-                value=pipeline_data.source_id,
-                details={"message": "Source is already connected to a pipeline"},
-            )
+        # Check if source is already used in another pipeline (POSTGRES only)
+        if pipeline_data.source_id is not None:
+            existing_pipelines = self.repository.get_by_source_id(pipeline_data.source_id)
+            if existing_pipelines:
+                raise DuplicateEntityError(
+                    entity_type="Pipeline",
+                    field="source_id",
+                    value=pipeline_data.source_id,
+                    details={"message": "Source is already connected to a pipeline"},
+                )
 
         # Force status to PAUSE for initialization
         pipeline_data.status = PipelineStatus.PAUSE

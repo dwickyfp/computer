@@ -3,10 +3,9 @@ import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
-import { chainRepo } from '@/repo/chains'
+import { catalogRepo } from '@/repo/catalog'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { sourcesRepo } from '@/repo/sources'
-import { catalogRepo } from '@/repo/catalog'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,7 +45,6 @@ const formSchema = z
       ),
     source_type: z.enum(['POSTGRES', 'ROSETTA', 'CATALOG_TABLE']),
     source_id: z.string().optional(),
-    chain_client_id: z.string().optional(),
     catalog_database_id: z.string().optional(),
     catalog_table_id: z.string().optional(),
   })
@@ -56,13 +54,6 @@ const formSchema = z
         code: z.ZodIssueCode.custom,
         message: 'Source is required',
         path: ['source_id'],
-      })
-    }
-    if (data.source_type === 'ROSETTA' && !data.chain_client_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Chain client is required',
-        path: ['chain_client_id'],
       })
     }
     if (data.source_type === 'CATALOG_TABLE' && !data.catalog_table_id) {
@@ -90,7 +81,6 @@ export function PipelineCreateDrawer({
       name: '',
       source_type: 'POSTGRES',
       source_id: '',
-      chain_client_id: '',
     },
   })
 
@@ -105,11 +95,6 @@ export function PipelineCreateDrawer({
     queryKey: ['pipelines'],
     queryFn: pipelinesRepo.getAll,
   })
-  const { data: chainClients } = useQuery({
-    queryKey: ['chain-clients'],
-    queryFn: chainRepo.getClients,
-  })
-
   const usedSourceIds = new Set(
     pipelines?.pipelines.map((p) => p.source_id).filter(Boolean)
   )
@@ -122,8 +107,6 @@ export function PipelineCreateDrawer({
       }
       if (values.source_type === 'POSTGRES') {
         payload.source_id = parseInt(values.source_id!)
-      } else if (values.source_type === 'ROSETTA') {
-        payload.chain_client_id = parseInt(values.chain_client_id!)
       } else if (values.source_type === 'CATALOG_TABLE') {
         payload.catalog_table_id = parseInt(values.catalog_table_id!)
       }
@@ -241,41 +224,6 @@ export function PipelineCreateDrawer({
                 />
               )}
 
-              {sourceType === 'ROSETTA' && (
-                <FormField
-                  control={form.control}
-                  name='chain_client_id'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Chain Client</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger className='w-full'>
-                            <SelectValue placeholder='Select a chain client' />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {chainClients
-                            ?.filter((c) => c.is_active)
-                            .map((client) => (
-                              <SelectItem
-                                key={client.id}
-                                value={client.id.toString()}
-                              >
-                                {client.name} ({client.url})
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
               {sourceType === 'CATALOG_TABLE' && (
                 <>
                   <FormField
@@ -322,7 +270,11 @@ export function PipelineCreateDrawer({
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <CatalogTableSelectOptions dbId={parseInt(form.watch('catalog_database_id')!)} />
+                              <CatalogTableSelectOptions
+                                dbId={parseInt(
+                                  form.watch('catalog_database_id')!
+                                )}
+                              />
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -355,8 +307,18 @@ function CatalogDatabaseSelectOptions() {
     queryFn: catalogRepo.getDatabases,
   })
 
-  if (isLoading) return <SelectItem value="loading" disabled>Loading...</SelectItem>
-  if (!databases?.length) return <SelectItem value="empty" disabled>No databases found</SelectItem>
+  if (isLoading)
+    return (
+      <SelectItem value='loading' disabled>
+        Loading...
+      </SelectItem>
+    )
+  if (!databases?.length)
+    return (
+      <SelectItem value='empty' disabled>
+        No databases found
+      </SelectItem>
+    )
 
   return (
     <>
@@ -376,8 +338,18 @@ function CatalogTableSelectOptions({ dbId }: { dbId: number }) {
     enabled: !!dbId,
   })
 
-  if (isLoading) return <SelectItem value="loading" disabled>Loading...</SelectItem>
-  if (!tables?.length) return <SelectItem value="empty" disabled>No tables found</SelectItem>
+  if (isLoading)
+    return (
+      <SelectItem value='loading' disabled>
+        Loading...
+      </SelectItem>
+    )
+  if (!tables?.length)
+    return (
+      <SelectItem value='empty' disabled>
+        No tables found
+      </SelectItem>
+    )
 
   return (
     <>

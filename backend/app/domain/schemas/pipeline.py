@@ -32,21 +32,21 @@ class PipelineCreate(PipelineBase):
     Schema for creating a new pipeline.
     """
 
+    source_type: str = Field(
+        default="POSTGRES",
+        description="Source type: POSTGRES, ROSETTA, or CATALOG_TABLE",
+        examples=["POSTGRES", "ROSETTA", "CATALOG_TABLE"],
+    )
     source_id: Optional[int] = Field(
         default=None,
         ge=1,
         description="ID of the source database (required for POSTGRES source_type)",
         examples=[1, 42],
     )
-    source_type: str = Field(
-        default="POSTGRES",
-        description="Source type: POSTGRES, ROSETTA, or CATALOG_TABLE",
-        examples=["POSTGRES", "ROSETTA", "CATALOG_TABLE"],
-    )
     chain_client_id: Optional[int] = Field(
         default=None,
         ge=1,
-        description="Chain client ID (required for ROSETTA source_type)",
+        description="Chain client ID (optional, for ROSETTA source_type)",
     )
     catalog_table_id: Optional[int] = Field(
         default=None,
@@ -71,13 +71,6 @@ class PipelineCreate(PipelineBase):
         source_type = values.get("source_type", "POSTGRES")
         if source_type == "POSTGRES" and v is None:
             raise ValueError("source_id is required when source_type is POSTGRES")
-        return v
-
-    @validator("chain_client_id", always=True)
-    def validate_chain_client_id(cls, v, values):
-        source_type = values.get("source_type", "POSTGRES")
-        if source_type == "ROSETTA" and v is None:
-            raise ValueError("chain_client_id is required when source_type is ROSETTA")
         return v
 
     @validator("catalog_table_id", always=True)
@@ -402,7 +395,7 @@ class PipelineResponse(PipelineBase, TimestampSchema):
     """
 
     id: int = Field(..., description="Unique pipeline identifier", examples=[1, 42])
-    source_id: int = Field(..., description="ID of the source database")
+    source_id: Optional[int] = Field(default=None, description="ID of the source database")
     status: PipelineStatus = Field(..., description="Pipeline operational status")
     ready_refresh: bool = Field(
         default=False, description="Flag indicating pipeline needs refresh"

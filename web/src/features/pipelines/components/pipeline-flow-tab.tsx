@@ -119,21 +119,23 @@ export function PipelineFlowTab({
     const edges: Edge[] = []
 
     // Source Node
-    if (pipeline.source) {
-      nodes.push({
-        id: 'source',
-        type: 'pipelineNode', // Use custom type
-        position: { x: 50, y: 150 },
-        data: {
-          label: pipeline.source.name,
-          type: 'POSTGRESQL', // Assuming source is always Postgres for now
-          isSource: true,
-          status: pipeline.status
-        },
-        sourcePosition: Position.Right,
-        selectable: false, // Disable selection visual
-      })
-    }
+    // For Rosetta Chain sources, pipeline.source is null, so use fallback name and type
+    const sourceName = pipeline.source?.name || 'Rosetta Chain'
+    const sourceType = pipeline.source ? 'POSTGRESQL' : 'ROSETTA'
+    
+    nodes.push({
+      id: 'source',
+      type: 'pipelineNode', // Use custom type
+      position: { x: 50, y: 150 },
+      data: {
+        label: sourceName,
+        type: sourceType,
+        isSource: true,
+        status: pipeline.status
+      },
+      sourcePosition: Position.Right,
+      selectable: false, // Disable selection visual
+    })
 
     // Destination Nodes
     const destinationCount = pipeline.destinations?.length || 0
