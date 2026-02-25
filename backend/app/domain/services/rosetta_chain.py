@@ -259,12 +259,16 @@ class RosettaChainService:
 
     # ─── Database Discovery ──────────────────────────────────────────────────
 
-    def get_client_databases(self, client_id: int) -> list[RosettaChainDatabaseResponse]:
+    def get_client_databases(
+        self, client_id: int
+    ) -> list[RosettaChainDatabaseResponse]:
         """Get databases available on a chain client."""
         databases = self._database_repo.get_by_client(client_id)
         return [RosettaChainDatabaseResponse.from_orm(d) for d in databases]
 
-    def sync_client_databases(self, client_id: int) -> list[RosettaChainDatabaseResponse]:
+    def sync_client_databases(
+        self, client_id: int
+    ) -> list[RosettaChainDatabaseResponse]:
         """
         Fetch and sync database list from a remote Rosetta instance.
 
@@ -311,25 +315,27 @@ class RosettaChainService:
     def register_catalog_table(self, client_id: int, payload: dict) -> dict:
         """
         Register a table schema to a remote Rosetta instance's catalog.
-        
+
         Acts as a proxy: Rosetta A -> Rosetta B.
         """
         client = self._client_repo.get_by_id(client_id)
-        
+
         try:
             raw_key = decrypt_value(client.chain_key)
         except Exception:
             raise Exception("Failed to decrypt chain key")
-            
-        url = self._build_client_url(client, "/catalog/register")
-        
+
+        url = self._build_client_url(client, "/chain/schema")
+
         with httpx.Client(timeout=10.0) as http:
             resp = http.post(url, headers={"X-Chain-Key": raw_key}, json=payload)
-            
+
             if resp.status_code != 200:
-                logger.error(f"Catalog registration failed on {client.name}: {resp.text}")
+                logger.error(
+                    f"Catalog registration failed on {client.name}: {resp.text}"
+                )
                 raise Exception(f"Remote registration failed: {resp.status_code}")
-                
+
             return resp.json()
 
     # ─── Linked Destination Helpers ────────────────────────────────────────
