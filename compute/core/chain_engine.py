@@ -55,7 +55,7 @@ class ChainPipelineEngine:
 
     def _load_pipeline(self) -> Pipeline:
         """Load pipeline configuration from database."""
-        pipeline = PipelineRepository.get_pipeline(self._pipeline_id)
+        pipeline = PipelineRepository.get_by_id(self._pipeline_id, include_relations=True)
         if pipeline is None:
             raise PipelineException(
                 f"Pipeline {self._pipeline_id} not found",
