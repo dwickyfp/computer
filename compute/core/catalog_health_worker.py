@@ -23,26 +23,26 @@ class CatalogHealthWorker:
     def __init__(self, check_interval_seconds: int = 60):
         self.check_interval_seconds = check_interval_seconds
         self.config = get_config()
-        
-        # Initialize Redis connection
+
+        # Initialize Redis connection from DLQ redis_url
         try:
-            pool = redis.ConnectionPool(
-                host=self.config.redis.host,
-                port=self.config.redis.port,
-                db=self.config.redis.db,
-                password=self.config.redis.password,
+            self.redis_client = redis.Redis.from_url(
+                self.config.dlq.redis_url,
                 decode_responses=True,
                 socket_timeout=5.0,
             )
-            self.redis_client = redis.Redis(connection_pool=pool)
         except Exception as e:
-            logger.error(f"Failed to initialize Redis client in CatalogHealthWorker: {e}")
+            logger.error(
+                f"Failed to initialize Redis client in CatalogHealthWorker: {e}"
+            )
             self.redis_client = None
 
     def run(self, stop_event: threading.Event) -> None:
         """Run the health check loop."""
-        logger.info(f"Catalog health worker started (interval={self.check_interval_seconds}s)")
-        
+        logger.info(
+            f"Catalog health worker started (interval={self.check_interval_seconds}s)"
+        )
+
         if not self.redis_client:
             logger.error("Redis client not initialized, exiting CatalogHealthWorker")
             return
@@ -51,8 +51,10 @@ class CatalogHealthWorker:
             try:
                 self._check_health()
             except Exception as e:
-                logger.error(f"Error in Catalog health worker iteration: {e}", exc_info=True)
-            
+                logger.error(
+                    f"Error in Catalog health worker iteration: {e}", exc_info=True
+                )
+
             stop_event.wait(self.check_interval_seconds)
 
     def _check_health(self) -> None:
@@ -89,11 +91,9 @@ class CatalogHealthWorker:
                 logger.debug(f"Error checking stream {stream_name}: {e}")
                 status = "ERROR"
 
-            updates.append({
-                "status": status,
-                "last_health_check_at": now,
-                "table_id": table["id"]
-            })
+            updates.append(
+                {"status": status, "last_health_check_at": now, "table_id": table["id"]}
+            )
 
         if updates:
             try:
@@ -104,7 +104,7 @@ class CatalogHealthWorker:
                         SET status = %(status)s, last_health_check_at = %(last_health_check_at)s
                         WHERE id = %(table_id)s
                         """,
-                        updates
+                        updates,
                     )
             except Exception as e:
                 logger.error(f"Failed to update catalog tables health status: {e}")

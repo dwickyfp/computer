@@ -72,7 +72,15 @@ async def chain_health(x_chain_key: str = Header(default=None)):
         )
 
     # Validate key if auth is enabled
-    if config.chain.auth_enabled and x_chain_key:
+    if config.chain.auth_enabled:
+        if not x_chain_key:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "status": "unauthorized",
+                    "message": "X-Chain-Key header is required",
+                },
+            )
         from chain.auth import validate_chain_key
 
         try:
