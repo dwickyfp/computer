@@ -20,9 +20,11 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
   const isRunning = pipeline.status === 'START' || pipeline.status === 'REFRESH'
   
   // Check if source has required configurations
+  // ROSETTA source pipelines don't use PostgreSQL publication/replication slots
+  const isRosettaSource = pipeline.source_type === 'ROSETTA'
   const isPublicationEnabled = pipeline.source?.is_publication_enabled ?? false
   const isReplicationEnabled = pipeline.source?.is_replication_enabled ?? false
-  const canActivate = isPublicationEnabled && isReplicationEnabled
+  const canActivate = isRosettaSource || (isPublicationEnabled && isReplicationEnabled)
   
   // Optimistic state for immediate UI feedback
   const [optimisticState, setOptimisticState] = useState<boolean | null>(null)
@@ -63,7 +65,7 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
   const handleToggle = async () => {
     const newState = !displayState
     
-    // Prevent activation if source requirements not met
+    // Prevent activation if source requirements not met (only applies to POSTGRES sources)
     if (newState && !canActivate) {
       const missingRequirements = []
       if (!isPublicationEnabled) missingRequirements.push('publication')

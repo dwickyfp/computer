@@ -194,9 +194,11 @@ function PipelineStatusSwitch({ pipeline }: { pipeline: Pipeline }) {
   const isRunning = pipeline.status === 'START' || pipeline.status === 'REFRESH'
   
   // Check if source has required configurations
+  // ROSETTA source pipelines don't use PostgreSQL publication/replication slots
+  const isRosettaSource = pipeline.source_type === 'ROSETTA'
   const isPublicationEnabled = pipeline.source?.is_publication_enabled ?? false
   const isReplicationEnabled = pipeline.source?.is_replication_enabled ?? false
-  const canActivate = isPublicationEnabled && isReplicationEnabled
+  const canActivate = isRosettaSource || (isPublicationEnabled && isReplicationEnabled)
 
   const { mutate, isPending } = useMutation({
     mutationFn: async (checked: boolean) => {
