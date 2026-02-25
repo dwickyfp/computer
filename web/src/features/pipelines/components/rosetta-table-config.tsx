@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { type TableWithSyncInfo, tableSyncRepo } from '@/repo/pipelines'
-import { Loader2, Unplug, Settings2 } from 'lucide-react'
+import { type TableWithSyncInfo, tableSyncRepo, type TableSyncConfig } from '@/repo/pipelines'
+import { Loader2, Unplug, Settings2, Plus, Database, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -8,12 +8,17 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { RosettaSchemaRegistration } from './rosetta-schema-registration'
 import { Destination } from '@/repo/destinations'
+import { TableBranchNode } from './table-branch-node'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface RosettaTableConfigProps {
   tables: TableWithSyncInfo[]
@@ -21,6 +26,11 @@ interface RosettaTableConfigProps {
   pipelineDestinationId: number
   destination?: Destination
   onRefresh: () => void
+  onEditFilter: (table: TableWithSyncInfo, syncConfigId: number) => void
+  onEditCustomSql: (table: TableWithSyncInfo, syncConfigId: number) => void
+  onEditTargetName: (table: TableWithSyncInfo, syncConfigId: number) => void
+  onEditTags: (table: TableWithSyncInfo, syncConfigId: number) => void
+  onEditPrimaryKeys: (table: TableWithSyncInfo, syncConfigId: number) => void
 }
 
 export function RosettaTableConfig({
@@ -29,13 +39,25 @@ export function RosettaTableConfig({
   pipelineDestinationId,
   destination,
   onRefresh,
+  onEditFilter,
+  onEditCustomSql,
+  onEditTargetName,
+  onEditTags,
+  onEditPrimaryKeys
 }: RosettaTableConfigProps) {
   const [processingTable, setProcessingTable] = useState<string | null>(null)
   const [registeringAll, setRegisteringAll] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<{
+    table: TableWithSyncInfo
+    syncConfig: TableSyncConfig
+  } | null>(null)
   
   // Registration Modal State
   const [schemaModalOpen, setSchemaModalOpen] = useState(false)
   const [activeTableForSchema, setActiveTableForSchema] = useState<TableWithSyncInfo | null>(null)
+  // For branch specific registration
+  const [activeSyncConfigId, setActiveSyncConfigId] = useState<number | null>(null)
 
   const handleToggleSync = async (table: TableWithSyncInfo) => {
     const isSynced = table.sync_configs && table.sync_configs.length > 0
@@ -60,6 +82,51 @@ export function RosettaTableConfig({
       toast.error('Failed to update table sync')
     } finally {
       setProcessingTable(null)
+    }
+  }
+
+  const handleAddBranch = async (table: TableWithSyncInfo) => {
+    setProcessingTable(table.table_name)
+    const existingCount = table.sync_configs.length
+    const suffix = existingCount > 0 ? `_${existingCount + 1}` : ''
+    const targetName = `${table.table_name}${suffix}`
+
+    try {
+      await tableSyncRepo.saveTableSync(pipelineId, pipelineDestinationId, {
+        table_name: table.table_name,
+        table_name_target: targetName,
+        enabled: true
+      })
+      toast.success(`Added new branch for ${table.table_name}`)
+      onRefresh()
+    } catch (error) {
+      toast.error('Failed to add branch')
+    } finally {
+      setProcessingTable(null)
+    }
+  }
+
+  const handleDeleteBranch = async (table: TableWithSyncInfo, syncConfig: TableSyncConfig) => {
+    setPendingDelete({ table, syncConfig })
+    setDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+
+    const { table, syncConfig } = pendingDelete
+    setProcessingTable(table.table_name)
+    setDeleteConfirmOpen(false)
+
+    try {
+      await tableSyncRepo.deleteTableSyncById(pipelineId, pipelineDestinationId, syncConfig.id)
+      toast.success('Branch removed')
+      onRefresh()
+    } catch (error) {
+      toast.error('Failed to remove branch')
+    } finally {
+      setProcessingTable(null)
+      setPendingDelete(null)
     }
   }
 
@@ -89,12 +156,13 @@ export function RosettaTableConfig({
     }
   }
 
-  const openSchemaRegistration = (table: TableWithSyncInfo) => {
+  const openSchemaRegistration = (table: TableWithSyncInfo, configId: number) => {
     if (!destination?.chain_client_id) {
       toast.error("Destination does not have a linked chain client ID.")
       return
     }
     setActiveTableForSchema(table)
+    setActiveSyncConfigId(configId)
     setSchemaModalOpen(true)
   }
 
@@ -104,8 +172,8 @@ export function RosettaTableConfig({
 
   if (tables.length === 0) {
     return (
-      <div className='flex flex-col items-center justify-center py-12 text-center'>
-        <Unplug className='mb-3 h-8 w-8 text-muted-foreground' />
+      <div className='flex flex-col items-center justify-center py-12 text-center border-2 border-dashed rounded-lg'>
+        <AlertCircle className='mb-3 h-8 w-8 text-muted-foreground' />
         <p className='text-sm font-medium text-muted-foreground'>
           No chain tables available
         </p>
@@ -117,8 +185,17 @@ export function RosettaTableConfig({
     )
   }
 
+  // To properly handle registration when table name changes per branch
+  // we would construct a temporary copy of table modifying table_name to config.table_name_target
+  const activeTableWithBranchName = activeTableForSchema && activeSyncConfigId
+    ? {
+        ...activeTableForSchema,
+        table_name: activeTableForSchema.sync_configs.find(c => c.id === activeSyncConfigId)?.table_name_target || activeTableForSchema.table_name
+      }
+    : activeTableForSchema;
+
   return (
-    <div className='space-y-3'>
+    <div className='space-y-8'>
       {/* Header row with counts and Register All button */}
       <div className='flex items-center justify-between'>
         <div className='flex items-center gap-2'>
@@ -126,7 +203,7 @@ export function RosettaTableConfig({
             {registeredCount}/{tables.length} registered
           </span>
           {registeredCount === tables.length && (
-            <Badge variant='secondary' className='text-xs'>
+            <Badge variant='secondary' className='text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'>
               All synced
             </Badge>
           )}
@@ -148,85 +225,137 @@ export function RosettaTableConfig({
       </div>
 
       {/* Table list */}
-      {tables.map((table) => {
-        const isSynced = table.sync_configs && table.sync_configs.length > 0
-        const isProcessing = processingTable === table.table_name
+      <div className="space-y-6">
+        {[...tables]
+          .sort((a, b) => {
+            const aActive = a.sync_configs && a.sync_configs.length > 0
+            const bActive = b.sync_configs && b.sync_configs.length > 0
+            if (aActive === bActive) return 0
+            return aActive ? -1 : 1
+          })
+          .map((table) => {
+            const hasBranches = table.sync_configs && table.sync_configs.length > 0
+            const isProcessing = processingTable === table.table_name
 
-        return (
-          <div
-            key={table.table_name}
-            className={cn(
-              'flex flex-col gap-2 rounded-lg border px-3 py-2.5 transition-colors',
-              isSynced
-                ? 'border-primary/20 bg-primary/5'
-                : 'border-border bg-card'
-            )}
-          >
-            <div className='flex items-center justify-between'>
-              <div className='flex min-w-0 flex-1 items-center gap-2'>
-                <Unplug
-                  className={cn(
-                    'h-3.5 w-3.5 flex-shrink-0',
-                    isSynced ? 'text-primary' : 'text-muted-foreground'
+            return (
+              <div key={table.table_name} className="relative pl-4 border-l-2 border-muted hover:border-primary/50 transition-colors">
+                {/* Source Node */}
+                <div className="mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0">
+                      {isProcessing ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      ) : (
+                        <Switch
+                          checked={hasBranches}
+                          onCheckedChange={() => handleToggleSync(table)}
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Unplug className="h-4 w-4 text-muted-foreground" />
+                      <span className={cn("font-semibold text-sm font-mono", !hasBranches && "text-muted-foreground")}>
+                        {table.table_name}
+                      </span>
+                      {hasBranches && (
+                        <Badge variant="secondary" className="bg-green-100 text-green-800 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 text-[10px] h-5 px-1.5">
+                          Stream
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground font-mono mt-0.5 ml-14">
+                    {table.columns?.length || 0} columns • Source
+                  </div>
+                </div>
+
+                {/* Branches (Mindmap connections) */}
+                <div className="pl-6 space-y-3 relative">
+                  {/* Connection Lines Container */}
+                  {hasBranches && (
+                    <div className="absolute top-0 bottom-4 left-2 w-4 border-l border-b border-border rounded-bl-lg -translate-y-6 -z-10" />
                   )}
-                />
-                <span
-                  className={cn(
-                    'truncate font-mono text-sm',
-                    isSynced ? 'text-foreground' : 'text-muted-foreground'
-                  )}
-                >
-                  {table.table_name}
-                </span>
-                {table.columns && table.columns.length > 0 && (
-                  <span className='flex-shrink-0 text-xs text-muted-foreground'>
-                    {table.columns.length} cols
-                  </span>
-                )}
-              </div>
 
-              <div className='ml-3 flex-shrink-0 flex items-center space-x-3'>
-                {isSynced && destination?.chain_client_id && (
-                  <TooltipProvider delayDuration={300}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button 
-                          variant='ghost' 
-                          size='icon' 
-                          className='h-6 w-6'
-                          onClick={() => openSchemaRegistration(table)}
-                        >
-                          <Settings2 className='h-3.5 w-3.5 text-muted-foreground' />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Register Managed Destination</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
+                  {table.sync_configs?.map((config, idx) => (
+                    <div key={config.id || idx} className="relative">
+                      {/* SVG Connector for each branch */}
+                      <svg className="absolute -left-6 top-1/2 -translate-y-1/2 w-6 h-full pointer-events-none overflow-visible" style={{ height: '40px' }}>
+                        <path
+                          d="M -16 0 C -8 0, -8 20, 0 20"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          className="text-border"
+                          transform="translate(0, -20)"
+                        />
+                        <path d="M 0 0 L -4 -2 L -4 2 Z" fill="currentColor" className="text-border" />
+                      </svg>
 
-                {isProcessing ? (
-                  <Loader2 className='h-4 w-4 animate-spin text-muted-foreground' />
-                ) : (
-                  <Switch
-                    checked={isSynced}
-                    onCheckedChange={() => handleToggleSync(table)}
-                    aria-label={`Toggle sync for ${table.table_name}`}
-                  />
-                )}
+                      <TableBranchNode
+                        syncConfig={config}
+                        onEditFilter={() => onEditFilter(table, config.id)}
+                        onEditCustomSql={() => onEditCustomSql(table, config.id)}
+                        onEditTargetName={() => onEditTargetName(table, config.id)}
+                        onEditPrimaryKeys={() => onEditPrimaryKeys(table, config.id)}
+                        onEditTags={() => onEditTags(table, config.id)}
+                        onRegisterSchema={() => openSchemaRegistration(table, config.id)}
+                        onDelete={() => handleDeleteBranch(table, config)}
+                        isDeleting={isProcessing}
+                      />
+                    </div>
+                  ))}
+
+                  {/* Add Branch Button (Node) */}
+                  <div className="relative pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleAddBranch(table)}
+                      disabled={isProcessing}
+                      className="h-7 text-xs gap-1.5 border-dashed text-muted-foreground hover:text-primary hover:border-primary hover:bg-primary/5"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add Destination Target
+                    </Button>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        )
-      })}
+            )
+          })}
+      </div>
 
       <RosettaSchemaRegistration
         open={schemaModalOpen}
         onOpenChange={setSchemaModalOpen}
-        table={activeTableForSchema}
+        table={activeTableWithBranchName}
         chainId={destination?.chain_client_id as number}
       />
+      
+      {/* Delete Confirmation Modal */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Table Sync</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove the sync to {' '}
+              <span className="font-medium text-foreground">
+                {pendingDelete?.syncConfig.table_name_target}
+              </span>
+              {' '}? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

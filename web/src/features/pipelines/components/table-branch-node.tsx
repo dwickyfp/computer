@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { Filter, Code2, AlertCircle, Database, Trash2, Hash, Key } from 'lucide-react'
+import { Filter, Code2, AlertCircle, Database, Trash2, Hash, Key, Settings2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
     Popover,
@@ -17,6 +17,7 @@ interface TableBranchNodeProps {
     onEditTargetName: () => void
     onEditTags: () => void
     onEditPrimaryKeys: () => void
+    onRegisterSchema?: () => void
     onDelete: () => void
     isDeleting: boolean
 }
@@ -28,6 +29,7 @@ export function TableBranchNode({
     onEditTargetName,
     onEditTags,
     onEditPrimaryKeys,
+    onRegisterSchema,
     onDelete,
     isDeleting
 }: TableBranchNodeProps) {
@@ -70,6 +72,19 @@ export function TableBranchNode({
                     </Button>
 
                     <div className="w-px h-3 bg-border mx-0.5" />
+
+                    {onRegisterSchema && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); onRegisterSchema() }}
+                            className="h-6 px-1.5 text-[10px] gap-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+                            title="Register Managed Destination Target"
+                        >
+                            <Settings2 className="h-3 w-3" />
+                            Target Settings
+                        </Button>
+                    )}
 
                     <Button
                         variant="ghost"

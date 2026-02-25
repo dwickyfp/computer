@@ -18,6 +18,7 @@ from app.domain.schemas.rosetta_chain import (
     ChainClientUpdate,
     ChainKeyResponse,
     ChainTableResponse,
+    RosettaChainDatabaseResponse,
     ChainToggleActiveRequest,
 )
 from app.domain.services.rosetta_chain import RosettaChainService
@@ -204,3 +205,27 @@ def register_catalog_table(
     (Rosetta A -> B Handshake)
     """
     return service.register_catalog_table(client_id, payload)
+
+
+@router.get(
+    "/clients/{client_id}/catalog/databases",
+    response_model=list[RosettaChainDatabaseResponse],
+)
+def get_client_databases(
+    client_id: int,
+    service: RosettaChainService = Depends(get_chain_service_readonly),
+):
+    """Get logical databases available on a chain client."""
+    return service.get_client_databases(client_id)
+
+
+@router.post(
+    "/clients/{client_id}/catalog/databases/sync",
+    response_model=list[RosettaChainDatabaseResponse],
+)
+def sync_client_databases(
+    client_id: int,
+    service: RosettaChainService = Depends(get_chain_service),
+):
+    """Fetch and sync logical databases from a remote Rosetta instance."""
+    return service.sync_client_databases(client_id)

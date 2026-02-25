@@ -126,6 +126,13 @@ class RosettaChainClient(Base, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    
+    databases: Mapped[list["RosettaChainDatabase"]] = relationship(
+        "RosettaChainDatabase",
+        back_populates="chain_client",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return (
@@ -210,5 +217,58 @@ class RosettaChainTable(Base, TimestampMixin):
         return (
             f"RosettaChainTable(id={self.id}, "
             f"table_name={self.table_name!r}, "
+            f"chain_client_id={self.chain_client_id})"
+        )
+
+
+class RosettaChainDatabase(Base, TimestampMixin):
+    """
+    Virtual database received from a remote Rosetta instance.
+
+    Represents a database catalog that is discovered from another Rosetta
+    instance.
+    """
+
+    __tablename__ = "rosetta_chain_databases"
+    __table_args__ = (
+        UniqueConstraint(
+            "chain_client_id",
+            "name",
+            name="uq_rosetta_chain_databases_client_name",
+        ),
+        {"comment": "Virtual databases from remote Rosetta instances"},
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        comment="Unique database identifier",
+    )
+
+    chain_client_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("rosetta_chain_clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Reference to the chain client that owns this database",
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        comment="Name of the virtual database",
+    )
+
+    # Relationships
+    chain_client: Mapped["RosettaChainClient"] = relationship(
+        "RosettaChainClient",
+        back_populates="databases",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"RosettaChainDatabase(id={self.id}, "
+            f"name={self.name!r}, "
             f"chain_client_id={self.chain_client_id})"
         )

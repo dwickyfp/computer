@@ -312,6 +312,31 @@ export function SourceTableDrawer({
                     pipelineDestinationId={selectedDestinationId!}
                     destination={currentDestination?.destination as any}
                     onRefresh={loadTables}
+                    onEditFilter={(table: TableWithSyncInfo, id: number) => {
+                      setActiveTable(table)
+                      setActiveSyncConfigId(id)
+                      setActiveMode('filter')
+                    }}
+                    onEditCustomSql={(table: TableWithSyncInfo, id: number) => {
+                      setActiveTable(table)
+                      setActiveSyncConfigId(id)
+                      setActiveMode('custom')
+                    }}
+                    onEditTargetName={(table: TableWithSyncInfo, id: number) => {
+                      setActiveTable(table)
+                      setActiveSyncConfigId(id)
+                      setActiveMode('target')
+                    }}
+                    onEditTags={(table: TableWithSyncInfo, id: number) => {
+                      setActiveTable(table)
+                      setActiveSyncConfigId(id)
+                      setActiveMode('tags')
+                    }}
+                    onEditPrimaryKeys={(table: TableWithSyncInfo, id: number) => {
+                      setActiveTable(table)
+                      setActiveSyncConfigId(id)
+                      setActiveMode('primary-keys')
+                    }}
                   />
                 ) : (
                   <PostgresTableConfig

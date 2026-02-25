@@ -29,6 +29,14 @@ export interface ChainTable {
   updated_at: string
 }
 
+export interface ChainDatabase {
+  id: number
+  chain_client_id: number
+  name: string
+  created_at: string
+  updated_at: string
+}
+
 export interface ChainClient {
   id: number
   name: string
@@ -145,6 +153,20 @@ export const chainRepo = {
     const { data } = await api.post(
       `/chain/clients/${clientId}/catalog/register`,
       payload
+    )
+    return data
+  },
+
+  getClientDatabases: async (id: number) => {
+    const { data } = await api.get<ChainDatabase[]>(
+      `/chain/clients/${id}/catalog/databases`
+    )
+    return data
+  },
+
+  syncClientDatabases: async (id: number) => {
+    const { data } = await api.post<ChainDatabase[]>(
+      `/chain/clients/${id}/catalog/databases/sync`
     )
     return data
   },

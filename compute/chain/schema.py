@@ -188,6 +188,42 @@ class ChainSchemaManager:
             if conn:
                 return_db_connection(conn)
 
+    def list_databases(self) -> list[dict[str, Any]]:
+        """
+        List all logical databases from the local catalog.
+        
+        Used to serve remote Rosetta instances with available destinations.
+        """
+        conn = None
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id, name, description, created_at "
+                    "FROM catalog_databases "
+                    "ORDER BY name"
+                )
+                
+                rows = cursor.fetchall()
+                databases = []
+                for row in rows:
+                    databases.append(
+                        {
+                            "id": row[0],
+                            "name": row[1],
+                            "description": row[2] or "",
+                            "created_at": (row[3].isoformat() if row[3] else None),
+                        }
+                    )
+                return databases
+                
+        except Exception as e:
+            logger.error(f"Failed to list catalog databases: {e}")
+            return []
+        finally:
+            if conn:
+                return_db_connection(conn)
+
     def update_record_count(
         self, chain_client_id: int, table_name: str, count: int
     ) -> None:

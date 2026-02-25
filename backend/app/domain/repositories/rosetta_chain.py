@@ -16,6 +16,7 @@ from app.domain.models.rosetta_chain import (
     RosettaChainClient,
     RosettaChainConfig,
     RosettaChainTable,
+    RosettaChainDatabase,
 )
 from app.domain.repositories.base import BaseRepository
 
@@ -164,3 +165,62 @@ class RosettaChainTableRepository:
             table.record_count = count
             table.updated_at = datetime.now(ZoneInfo("Asia/Jakarta"))
             self.db.flush()
+
+
+class RosettaChainDatabaseRepository:
+    """Repository for virtual chain databases."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_client(self, chain_client_id: int) -> list[RosettaChainDatabase]:
+        """Get all databases for a specific chain client."""
+        stmt = (
+            select(RosettaChainDatabase)
+            .where(RosettaChainDatabase.chain_client_id == chain_client_id)
+            .order_by(RosettaChainDatabase.name)
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
+    def get_by_client_and_name(
+        self, chain_client_id: int, name: str
+    ) -> Optional[RosettaChainDatabase]:
+        """Get a specific database by client and name."""
+        stmt = select(RosettaChainDatabase).where(
+            RosettaChainDatabase.chain_client_id == chain_client_id,
+            RosettaChainDatabase.name == name,
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def upsert(
+        self,
+        chain_client_id: int,
+        name: str,
+    ) -> RosettaChainDatabase:
+        """Create or update a chain database entry."""
+        existing = self.get_by_client_and_name(chain_client_id, name)
+        now = datetime.now(ZoneInfo("Asia/Jakarta"))
+
+        if existing:
+            existing.updated_at = now
+            self.db.flush()
+            self.db.refresh(existing)
+            return existing
+        else:
+            database = RosettaChainDatabase(
+                chain_client_id=chain_client_id,
+                name=name,
+            )
+            self.db.add(database)
+            self.db.flush()
+            self.db.refresh(database)
+            return database
+
+    def delete_by_client(self, chain_client_id: int) -> int:
+        """Delete all databases for a client. Returns count deleted."""
+        databases = self.get_by_client(chain_client_id)
+        count = len(databases)
+        for database in databases:
+            self.db.delete(database)
+        self.db.flush()
+        return count

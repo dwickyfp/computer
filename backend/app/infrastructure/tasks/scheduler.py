@@ -380,6 +380,40 @@ class BackgroundScheduler:
                 "Error running pipeline refresh check task", extra={"error": str(e)}
             )
 
+    def _run_client_database_sync(self) -> None:
+        """
+        Synchronous wrapper for client database sync task.
+        Uses single DB session for both work and job metric recording.
+        """
+        try:
+            from app.core.database import db_manager
+            from app.domain.services.rosetta_chain import RosettaChainService
+            from app.domain.repositories.rosetta_chain import RosettaChainClientRepository
+
+            session_factory = db_manager.session_factory
+            db = session_factory()
+            try:
+                repo = RosettaChainClientRepository(db)
+                service = RosettaChainService(db)
+                
+                # We need to sync databases for all active clients
+                clients = repo.get_all(skip=0, limit=1000)
+                for client in clients:
+                    if client.is_active:
+                        try:
+                            # Note: sync_client_databases needs to be implemented in RosettaChainService
+                            service.sync_client_databases(client.id)
+                        except Exception as e:
+                            logger.error(f"Failed to sync databases for client {client.name}: {e}")
+                
+                self._record_job_metric("client_database_sync", db=db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(
+                "Error running client database sync task", extra={"error": str(e)}
+            )
+
     def start(self) -> None:
         """
         Start the background scheduler.
@@ -537,6 +571,17 @@ class BackgroundScheduler:
         # Start scheduler
         self.scheduler.start()
         logger.info("Background task scheduler started successfully")
+
+        # Schedule Client Database Sync (every 1 minute)
+        self.scheduler.add_job(
+            self._run_client_database_sync,
+            trigger=IntervalTrigger(minutes=1),
+            id="client_database_sync",
+            name="Client Database Sync",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
 
         # Load user-defined schedules from DB and register as CronTrigger jobs
         # This must run AFTER self.scheduler.start() so the scheduler is live

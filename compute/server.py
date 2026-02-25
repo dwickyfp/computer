@@ -248,6 +248,25 @@ async def chain_list_tables(
     return tables
 
 
+@app.get("/chain/databases")
+async def chain_list_databases(
+    x_chain_key: str = Header(default=None),
+):
+    """List all chain databases available on this instance."""
+    config = get_config()
+    if config.chain.auth_enabled and x_chain_key:
+        from chain.auth import validate_chain_key
+
+        try:
+            validate_chain_key(x_chain_key)
+        except Exception:
+            pass
+
+    schema_mgr = _get_schema_manager()
+    databases = schema_mgr.list_databases()
+    return databases
+
+
 def run_server(host: str, port: int) -> None:
     """
     Run FastAPI server using Uvicorn.

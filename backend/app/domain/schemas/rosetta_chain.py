@@ -166,6 +166,19 @@ class ChainTableResponse(BaseSchema):
         orm_mode = True
 
 
+class RosettaChainDatabaseResponse(BaseSchema):
+    """Response schema for a chain database."""
+    
+    id: int = Field(..., description="Unique database identifier")
+    chain_client_id: int = Field(..., description="Owning chain client ID")
+    name: str = Field(..., description="Database name")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+
+    class Config:
+        orm_mode = True
+
+
 class ChainClientResponse(ChainClientBase):
     """Response schema for a chain client with tables."""
 

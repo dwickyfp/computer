@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { catalogRepo, CatalogDatabase } from '@/repo/catalog'
-import { chainRepo } from '@/repo/chains'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { Loader2, Database } from 'lucide-react'
+import { chainRepo, ChainDatabase } from '@/repo/chains'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Loader2, Database, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,11 +43,25 @@ export function RosettaSchemaRegistration({
   // Track schema overrides
   const [schemaUpdates, setSchemaUpdates] = useState<Record<string, Partial<ColumnSchema>>>({})
 
-  // Fetch available databases on the destination
+  const queryClient = useQueryClient()
+
+  // Fetch available databases from the remote chain client
   const { data: databases, isLoading: loadingDbs } = useQuery({
-    queryKey: ['catalog-databases'],
-    queryFn: catalogRepo.getDatabases,
+    queryKey: ['chain-databases', chainId],
+    queryFn: () => chainRepo.getClientDatabases(chainId),
     enabled: open,
+  })
+
+  // Sync databases from the remote client manually
+  const syncMutation = useMutation({
+    mutationFn: () => chainRepo.syncClientDatabases(chainId),
+    onSuccess: () => {
+      toast.success('Databases refreshed from remote instance')
+      queryClient.invalidateQueries({ queryKey: ['chain-databases', chainId] })
+    },
+    onError: (err: any) => {
+      toast.error(`Failed to refresh databases: ${err.message || 'Unknown error'}`)
+    }
   })
 
   const registerMutation = useMutation({
@@ -135,21 +148,32 @@ export function RosettaSchemaRegistration({
                 </div>
               ) : (
                 <div className='flex items-center gap-2'>
-                  <Select value={dbName} onValueChange={setDbName}>
-                    <SelectTrigger className='w-full'>
-                      <SelectValue placeholder='Select or type database...' />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {databases?.map((db: CatalogDatabase) => (
-                        <SelectItem key={db.id} value={db.name}>
-                          <div className='flex items-center'>
-                            <Database className='w-4 h-4 mr-2 text-muted-foreground' />
-                            {db.name}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className='flex items-center gap-2 w-full'>
+                    <Select value={dbName} onValueChange={setDbName}>
+                      <SelectTrigger className='w-full'>
+                        <SelectValue placeholder='Select or type database...' />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {databases?.map((db: ChainDatabase) => (
+                          <SelectItem key={db.id} value={db.name}>
+                            <div className='flex items-center'>
+                              <Database className='w-4 h-4 mr-2 text-muted-foreground' />
+                              {db.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      variant='outline' 
+                      size='icon'
+                      disabled={syncMutation.isPending}
+                      onClick={() => syncMutation.mutate()}
+                      title="Sync from remote Rosetta"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+                    </Button>
+                  </div>
                   <span className='text-sm text-muted-foreground'>OR</span>
                   <Input 
                     placeholder='New DB Name' 

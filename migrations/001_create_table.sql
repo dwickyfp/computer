@@ -1000,3 +1000,25 @@ ADD COLUMN IF NOT EXISTS catalog_table_id INTEGER REFERENCES catalog_tables(id) 
 CREATE INDEX IF NOT EXISTS idx_pipelines_catalog_table_id ON pipelines(catalog_table_id);
 COMMENT ON COLUMN pipelines.catalog_table_id IS 'Reference to catalog table (only when source_type=CATALOG_TABLE)';
 
+-- Migration 010: Add rosetta_chain_databases table
+-- Creates a table to cache virtual databases from remote Rosetta clients
+
+CREATE TABLE IF NOT EXISTS public.rosetta_chain_databases (
+    id SERIAL PRIMARY KEY,
+    chain_client_id INTEGER NOT NULL REFERENCES public.rosetta_chain_clients(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
+    CONSTRAINT uq_rosetta_chain_databases_client_name UNIQUE (chain_client_id, name)
+);
+
+COMMENT ON TABLE public.rosetta_chain_databases IS 'Virtual databases from remote Rosetta instances';
+COMMENT ON COLUMN public.rosetta_chain_databases.id IS 'Unique database identifier';
+COMMENT ON COLUMN public.rosetta_chain_databases.chain_client_id IS 'Reference to the chain client that owns this database';
+COMMENT ON COLUMN public.rosetta_chain_databases.name IS 'Name of the virtual database';
+COMMENT ON COLUMN public.rosetta_chain_databases.created_at IS 'Timestamp of creation';
+COMMENT ON COLUMN public.rosetta_chain_databases.updated_at IS 'Timestamp of last update';
+
+CREATE INDEX IF NOT EXISTS ix_rosetta_chain_databases_chain_client_id ON public.rosetta_chain_databases (chain_client_id);
+
+

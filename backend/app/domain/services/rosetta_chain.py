@@ -24,6 +24,7 @@ from app.domain.repositories.rosetta_chain import (
     RosettaChainClientRepository,
     RosettaChainConfigRepository,
     RosettaChainTableRepository,
+    RosettaChainDatabaseRepository,
 )
 from app.domain.schemas.rosetta_chain import (
     ChainClientCreate,
@@ -32,6 +33,7 @@ from app.domain.schemas.rosetta_chain import (
     ChainClientUpdate,
     ChainKeyResponse,
     ChainTableResponse,
+    RosettaChainDatabaseResponse,
 )
 
 logger = get_logger(__name__)
@@ -45,6 +47,7 @@ class RosettaChainService:
         self._config_repo = RosettaChainConfigRepository(db)
         self._client_repo = RosettaChainClientRepository(db)
         self._table_repo = RosettaChainTableRepository(db)
+        self._database_repo = RosettaChainDatabaseRepository(db)
 
     # ─── Chain Key Management ───────────────────────────────────────────────
 
@@ -253,6 +256,57 @@ class RosettaChainService:
             logger.error(f"Failed to sync tables from {client.name}: {e}")
 
         return self.get_client_tables(client_id)
+
+    # ─── Database Discovery ──────────────────────────────────────────────────
+
+    def get_client_databases(self, client_id: int) -> list[RosettaChainDatabaseResponse]:
+        """Get databases available on a chain client."""
+        databases = self._database_repo.get_by_client(client_id)
+        return [RosettaChainDatabaseResponse.from_orm(d) for d in databases]
+
+    def sync_client_databases(self, client_id: int) -> list[RosettaChainDatabaseResponse]:
+        """
+        Fetch and sync database list from a remote Rosetta instance.
+
+        Calls the remote /chain/databases endpoint and upserts the results.
+        """
+        client = self._client_repo.get_by_id(client_id)
+
+        try:
+            raw_key = decrypt_value(client.chain_key)
+        except Exception:
+            logger.error(f"Failed to decrypt chain key for client {client_id}")
+            return []
+
+        url = self._build_client_url(client, "/chain/databases")
+
+        try:
+            with httpx.Client(timeout=15.0) as http:
+                resp = http.get(url, headers={"X-Chain-Key": raw_key})
+
+                if resp.status_code != 200:
+                    logger.error(
+                        f"Failed to fetch databases from {client.name}: "
+                        f"status {resp.status_code}"
+                    )
+                    return self.get_client_databases(client_id)
+
+                remote_databases = resp.json()
+
+                # Upsert each remote database
+                for db_info in remote_databases:
+                    self._database_repo.upsert(
+                        chain_client_id=client_id,
+                        name=db_info["name"],
+                    )
+
+                # Wait, updating last_connected is already done by table sync, or we can do it here too
+                self._client_repo.update_last_connected(client_id)
+
+        except Exception as e:
+            logger.error(f"Failed to sync databases from {client.name}: {e}")
+
+        return self.get_client_databases(client_id)
 
     def register_catalog_table(self, client_id: int, payload: dict) -> dict:
         """
