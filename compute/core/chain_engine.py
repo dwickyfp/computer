@@ -122,15 +122,16 @@ class ChainPipelineEngine:
         prefix = config.chain.redis_stream_prefix
         chain_client_id = self._pipeline.chain_client_id
 
-        if not chain_client_id:
-            raise PipelineException(
-                "Chain pipeline requires chain_client_id",
-                {"pipeline_id": self._pipeline_id},
-            )
+        if chain_client_id:
+            # Specific client: only read streams for that chain client
+            # Key format: {prefix}:{chain_client_id}:{table_name}
+            pattern = f"{prefix}:{chain_client_id}:*"
+        else:
+            # Self-stream mode: no specific client, read ALL ingested chain streams.
+            # This lets the local compute consume data it ingested itself via Arrow IPC
+            # without needing an explicit chain_client_id.
+            pattern = f"{prefix}:*"
 
-        # Pattern must match the key format used by ChainIngestManager.get_stream_key():
-        # f"{prefix}:{chain_id}:{table_name}" → e.g. "rosetta:chain:3:tbl_xxx"
-        pattern = f"{prefix}:{chain_client_id}:*"
         keys = []
         cursor = 0
         while True:
@@ -277,6 +278,113 @@ class ChainPipelineEngine:
         parts = stream_key.split(":")
         return parts[-1] if parts else "unknown"
 
+    # ------------------------------------------------------------------
+    # Auto-table-creation for ROSETTA chain pipelines
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _infer_pg_type(value) -> str:
+        """Infer a PostgreSQL column type from a Python value."""
+        if value is None:
+            return "TEXT"
+        if isinstance(value, bool):
+            return "BOOLEAN"
+        if isinstance(value, int):
+            return "BIGINT"
+        if isinstance(value, float):
+            return "DOUBLE PRECISION"
+        return "TEXT"
+
+    def _auto_create_chain_table(
+        self,
+        dest,
+        table_name: str,
+        records: list[CDCRecord],
+    ) -> bool:
+        """
+        Auto-create a destination table inferred from CDCRecord column values.
+
+        Used for ROSETTA chain pipelines so data can flow without requiring
+        the user to pre-create tables in the destination database.
+
+        - Column types are inferred from Python value types in the first batch.
+        - Primary key is taken from ``CDCRecord.key`` (if non-empty).
+        - All other columns default to TEXT for safety.
+
+        Returns True if the table was created, False if it already existed
+        or creation was not possible.
+        """
+        from destinations.postgresql import PostgreSQLDestination
+
+        if not isinstance(dest, PostgreSQLDestination):
+            return False
+
+        # Check if table already exists — avoid unnecessary DDL
+        try:
+            existing = dest._get_table_schema(table_name)
+            if existing:
+                return False
+        except Exception:
+            pass  # Proceed to attempt creation
+
+        # Collect all unique columns across the batch
+        all_columns: dict[str, str] = {}  # col → pg_type
+        pk_columns: list[str] = []
+
+        # Determine primary key columns from the first record that has key info
+        for record in records:
+            if record.key:
+                pk_columns = list(record.key.keys())
+                break
+
+        # Infer column types from all record values
+        for record in records:
+            for col, val in record.value.items():
+                if col not in all_columns:
+                    all_columns[col] = self._infer_pg_type(val)
+
+        if not all_columns:
+            self._logger.warning(
+                f"Cannot auto-create chain table '{table_name}': "
+                f"no columns found in first batch of records."
+            )
+            return False
+
+        schema = getattr(dest, "schema", "public")
+
+        # Build column definition list
+        col_defs: list[str] = []
+        single_pk = pk_columns[0] if len(pk_columns) == 1 else None
+        for col, pg_type in all_columns.items():
+            if col == single_pk:
+                col_defs.append(f'"{col}" {pg_type} PRIMARY KEY')
+            else:
+                col_defs.append(f'"{col}" {pg_type}')
+
+        # Composite primary key constraint
+        if len(pk_columns) > 1:
+            pk_str = ", ".join(f'"{c}"' for c in pk_columns)
+            col_defs.append(f"PRIMARY KEY ({pk_str})")
+
+        create_sql = (
+            f'CREATE TABLE IF NOT EXISTS "{schema}"."{table_name}" '
+            f"({', '.join(col_defs)})"
+        )
+
+        try:
+            with dest._pg_conn.cursor() as cur:
+                cur.execute(create_sql)
+            # Note: connection uses autocommit=True, no explicit commit needed
+            self._logger.info(
+                f"Auto-created chain table '{schema}.{table_name}' "
+                f"with columns {list(all_columns.keys())} "
+                f"and primary key {pk_columns or 'none'}."
+            )
+            return True
+        except Exception as e:
+            self._logger.error(f"Failed to auto-create chain table '{table_name}': {e}")
+            return False
+
     def _write_to_destinations(self, records: list[CDCRecord]) -> None:
         """
         Route CDC records to all configured destinations.
@@ -291,16 +399,34 @@ class ChainPipelineEngine:
         for r in records:
             by_table.setdefault(r.table_name, []).append(r)
 
+        is_rosetta_source = (
+            getattr(self._pipeline, "source_type", "POSTGRES") == "ROSETTA"
+        )
+
         for table_name, table_records in by_table.items():
             for dest_id, dest in self._destinations.items():
                 try:
                     # Find table_sync config for this destination/table
                     table_sync = self._find_table_sync(dest_id, table_name)
                     if table_sync:
+                        # For ROSETTA chain pipelines, ensure destination table exists
+                        # before trying to MERGE; auto-create it from record schema if needed.
+                        if is_rosetta_source:
+                            self._auto_create_chain_table(
+                                dest, table_sync.table_name_target, table_records
+                            )
                         dest.write_batch(table_records, table_sync)
                     else:
+                        # Gather configured table names for helpful diagnostics
+                        configured_tables = [
+                            ts.table_name
+                            for pd in self._pipeline.destinations
+                            if pd.destination_id == dest_id
+                            for ts in pd.table_syncs
+                        ]
                         self._logger.warning(
                             f"No table sync config for table '{table_name}' → dest {dest_id}. "
+                            f"Configured tables: {configured_tables or 'none'}. "
                             f"Add this table in the pipeline's table sync configuration."
                         )
                 except Exception as e:
@@ -323,12 +449,38 @@ class ChainPipelineEngine:
                                 self._logger.error(f"DLQ write failed: {dlq_err}")
 
     def _find_table_sync(self, dest_id: int, table_name: str):
-        """Find PipelineDestinationTableSync for a destination and table."""
+        """Find PipelineDestinationTableSync for a destination and table.
+
+        For ROSETTA chain source pipelines, if no explicit table_sync config
+        exists for the incoming table, an in-memory passthrough table_sync is
+        automatically created so data flows without requiring up-front table
+        configuration (zero-config chain streaming).
+        """
+        from core.models import PipelineDestinationTableSync as PDTS
+
         for pd in self._pipeline.destinations:
             if pd.destination_id == dest_id:
+                # Exact match — always preferred
                 for ts in pd.table_syncs:
                     if ts.table_name == table_name:
                         return ts
+
+                # No explicit config found — auto-passthrough for ROSETTA source
+                source_type = getattr(self._pipeline, "source_type", "POSTGRES")
+                if source_type == "ROSETTA":
+                    configured = [ts.table_name for ts in pd.table_syncs]
+                    self._logger.info(
+                        f"No explicit table_sync for '{table_name}' on dest {dest_id}. "
+                        f"Auto-passthrough enabled (configured: {configured or 'none'}). "
+                        f"Routing '{table_name}' → '{table_name}' in destination."
+                    )
+                    return PDTS(
+                        id=0,
+                        pipeline_destination_id=pd.id,
+                        table_name=table_name,
+                        table_name_target=table_name,
+                    )
+
         return None
 
     def run(self) -> None:

@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from functools import lru_cache
-from core.security import decrypt_value
 import logging
 
 # Try to load dotenv if available
@@ -46,7 +45,7 @@ class DatabaseConfig:
             "port": self.port,
             "dbname": self.database,
             "user": self.user,
-            "password": decrypt_value(self.password),
+            "password": self.password,
         }
 
 

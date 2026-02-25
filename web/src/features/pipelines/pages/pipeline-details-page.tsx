@@ -677,7 +677,7 @@ export default function PipelineDetailsPage() {
                   <div className='inline-flex items-center gap-2 rounded-sm bg-secondary/50 px-3 py-1.5 text-xs font-medium text-[#7b828f] ring-1 ring-gray-500/10 ring-inset dark:bg-[#0f161d] dark:text-[#7b828f]'>
                     <div className='flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100'>
                       <Database className='h-3.5 w-3.5' />
-                      <span>{pipeline?.source?.name}</span>
+                      <span>{pipeline?.source ? pipeline.source.name : 'Rosetta Chain'}</span>
                     </div>
                     <ArrowRight className='h-3 w-3 opacity-40' />
                     <div className='flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100'>

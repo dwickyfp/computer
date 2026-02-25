@@ -83,13 +83,6 @@ class PipelineCreate(PipelineBase):
             raise ValueError("source_id is required when source_type is POSTGRES")
         return v
 
-    @validator("chain_client_id", always=True)
-    def validate_chain_client_id(cls, v, values):
-        source_type = values.get("source_type", "POSTGRES")
-        if source_type == "ROSETTA" and v is None:
-            raise ValueError("chain_client_id is required when source_type is ROSETTA")
-        return v
-
     @validator("catalog_table_id", always=True)
     def validate_catalog_table_id(cls, v, values):
         source_type = values.get("source_type", "POSTGRES")

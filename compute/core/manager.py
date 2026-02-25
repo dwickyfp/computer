@@ -171,17 +171,6 @@ class PipelineManager:
             self._logger.error(f"Pipeline {pipeline_id} not found")
             return False
 
-        # Pre-flight: validate required config to avoid spawning a doomed process
-        if pipeline.source_type == "ROSETTA" and not pipeline.chain_client_id:
-            err = (
-                "Pipeline misconfigured: source_type=ROSETTA but chain_client_id is not set. "
-                "Update the pipeline to set a valid chain_client_id."
-            )
-            self._logger.error(f"Pipeline {pipeline.name}: {err}")
-            PipelineMetadataRepository.upsert(pipeline_id, "ERROR", err)
-            PipelineRepository.update_status(pipeline_id, "PAUSE")
-            return False
-
         # Create process wrapper
         stop_event = Event()
         proc = Process(
