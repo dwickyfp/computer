@@ -149,6 +149,10 @@ class RosettaChainService:
             is_active=True,
         )
 
+        # Commit client first so _create_linked_destination's rollback
+        # (on failure) doesn't undo the client record.
+        self.db.commit()
+
         # Auto-create a linked ROSETTA destination so it appears in the
         # pipeline "Add Destination" list without manual setup.
         self._create_linked_destination(client, encrypted_key)
@@ -166,6 +170,16 @@ class RosettaChainService:
             update_data["chain_key"] = encrypt_value(update_data["chain_key"])
 
         client = self._client_repo.update(client_id, **update_data)
+
+        # IMPORTANT: commit the client update FIRST so that a failure
+        # in _sync_linked_destination (which does its own rollback on
+        # error) does NOT silently roll back the chain_key change.
+        self.db.commit()
+
+        logger.info(
+            f"Chain client '{client.name}' (id={client_id}) updated. "
+            f"chain_key {'CHANGED' if 'chain_key' in update_data else 'unchanged'}."
+        )
 
         # Sync the linked destination with the updated connection details
         self._sync_linked_destination(client)
@@ -194,6 +208,33 @@ class RosettaChainService:
                 latency_ms=None,
             )
 
+        # ── Sanity check: detect obviously wrong keys ───────────────
+        import re
+        _ip_like = re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', raw_key)
+        if _ip_like:
+            logger.error(
+                f"Chain key for client '{client.name}' (id={client_id}) "
+                f"decrypted to an IP address ({raw_key[:12]}...). "
+                f"This usually means the URL was accidentally saved in "
+                f"the chain_key field. Please update the client with the "
+                f"correct chain key from the remote Rosetta instance."
+            )
+            return ChainClientTestResponse(
+                success=False,
+                message=(
+                    f"The stored chain key appears to be an IP address "
+                    f"({raw_key[:12]}...), not a valid chain key. "
+                    f"Please update this client with the correct key "
+                    f"from the remote Rosetta's Chain Key page."
+                ),
+                latency_ms=None,
+            )
+
+        logger.debug(
+            f"Testing connection to '{client.name}' — key first 8 chars: "
+            f"{raw_key[:8]}..., key length: {len(raw_key)}"
+        )
+
         url = self._build_client_url(client, "/chain/health")
         start = time.monotonic()
 
@@ -207,6 +248,17 @@ class RosettaChainService:
                     return ChainClientTestResponse(
                         success=True,
                         message="Connection successful",
+                        latency_ms=round(latency, 2),
+                    )
+                elif resp.status_code == 401:
+                    return ChainClientTestResponse(
+                        success=False,
+                        message=(
+                            f"Authentication failed (401). The chain key "
+                            f"stored for this client does not match the "
+                            f"remote instance's key. Regenerate or re-enter "
+                            f"the key. (sent key first 8: {raw_key[:8]}...)"
+                        ),
                         latency_ms=round(latency, 2),
                     )
                 else:
@@ -433,7 +485,12 @@ class RosettaChainService:
             )
 
     def _sync_linked_destination(self, client: RosettaChainClient) -> None:
-        """Keep the linked ROSETTA destination in sync with the chain client."""
+        """Keep the linked ROSETTA destination in sync with the chain client.
+
+        This runs in its own implicit transaction (the caller already
+        committed the client update).  A failure here is logged but
+        never rolls back the client record itself.
+        """
         try:
             dest = (
                 self.db.query(Destination).filter_by(chain_client_id=client.id).first()
@@ -449,7 +506,7 @@ class RosettaChainService:
             new_name = self._destination_name(client.name)
             dest.name = new_name
             dest.config = {
-                **dest.config,
+                **(dest.config or {}),
                 "url": client.url,
                 "port": client.port,
                 "chain_key": client.chain_key,  # already encrypted
@@ -458,7 +515,8 @@ class RosettaChainService:
         except Exception as e:
             self.db.rollback()
             logger.warning(
-                f"Could not sync destination for chain client " f"'{client.name}': {e}"
+                f"Could not sync destination for chain client '{client.name}': {e}. "
+                f"The client record itself was already saved."
             )
 
     def _delete_linked_destination(self, client_id: int) -> None:
