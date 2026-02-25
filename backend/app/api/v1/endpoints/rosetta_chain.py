@@ -98,6 +98,20 @@ def list_clients(
     return service.get_clients()
 
 
+@router.post("/clients/sync-destinations")
+def sync_destinations(
+    service: RosettaChainService = Depends(get_chain_service),
+):
+    """
+    Ensure every registered chain client has a linked ROSETTA destination.
+
+    Idempotent — safe to call at any time. Creates missing destinations for
+    clients that were registered before auto-creation was introduced.
+    """
+    created = service.sync_all_destinations()
+    return {"created": created, "message": f"Synced {created} destination(s)"}
+
+
 @router.get("/clients/{client_id}", response_model=ChainClientResponse)
 def get_client(
     client_id: int,
@@ -172,17 +186,3 @@ def sync_client_tables(
 ):
     """Fetch and sync table list from a remote Rosetta instance."""
     return service.sync_client_tables(client_id)
-
-
-@router.post("/clients/sync-destinations")
-def sync_destinations(
-    service: RosettaChainService = Depends(get_chain_service),
-):
-    """
-    Ensure every registered chain client has a linked ROSETTA destination.
-
-    Idempotent — safe to call at any time. Creates missing destinations for
-    clients that were registered before auto-creation was introduced.
-    """
-    created = service.sync_all_destinations()
-    return {"created": created, "message": f"Synced {created} destination(s)"}

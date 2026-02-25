@@ -80,7 +80,7 @@ export function ChainDialogs() {
             handleConfirm={() => testMutation.mutate(currentRow.id)}
             isLoading={testMutation.isPending}
             title={`Test "${currentRow.name}"?`}
-            desc={`This will test the connection to ${currentRow.url}.`}
+            desc={`This will test the connection to ${currentRow.url}${currentRow.port ? `:${currentRow.port}` : ''}.`}
             confirmText='Test Connection'
           />
         </>

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -67,6 +68,28 @@ export function ChainClientMutateDrawer({
         }) as any,
   })
 
+  useEffect(() => {
+    form.reset(
+      currentRow
+        ? {
+            name: currentRow.name,
+            url: currentRow.url,
+            port: currentRow.port ?? 8001,
+            chain_key: '',
+            description: '',
+            is_active: currentRow.is_active,
+          }
+        : {
+            name: '',
+            url: '',
+            port: 8001,
+            chain_key: '',
+            description: '',
+            is_active: true,
+          }
+    )
+  }, [currentRow, form])
+
   const createMutation = useMutation({
     mutationFn: chainRepo.createClient,
     onSuccess: async () => {
@@ -93,10 +116,16 @@ export function ChainClientMutateDrawer({
   })
 
   const onSubmit = (data: ChainClientForm) => {
+    const payload: any = { ...data }
+    if (!payload.chain_key) {
+      delete payload.chain_key
+    }
+    delete payload.description
+
     if (isUpdate) {
-      updateMutation.mutate(data)
+      updateMutation.mutate(payload)
     } else {
-      createMutation.mutate(data as any)
+      createMutation.mutate(payload)
     }
   }
 
