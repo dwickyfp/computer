@@ -14,6 +14,16 @@ export const chainTableSchema = z.object({
 
 export type ChainTable = z.infer<typeof chainTableSchema>
 
+export const chainDatabaseSchema = z.object({
+  id: z.number(),
+  chain_client_id: z.number(),
+  name: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+})
+
+export type ChainDatabase = z.infer<typeof chainDatabaseSchema>
+
 export const chainClientSchema = z.object({
   id: z.number(),
   name: z.string(),
@@ -23,6 +33,7 @@ export const chainClientSchema = z.object({
   description: z.string().nullable().optional(),
   last_connected_at: z.string().nullable().optional(),
   tables: z.array(chainTableSchema).default([]),
+  databases: z.array(chainDatabaseSchema).default([]),
   created_at: z.string(),
   updated_at: z.string(),
 })

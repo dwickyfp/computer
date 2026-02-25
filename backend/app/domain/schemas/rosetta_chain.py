@@ -190,6 +190,9 @@ class ChainClientResponse(ChainClientBase):
     tables: list[ChainTableResponse] = Field(
         default_factory=list, description="Tables available on this client"
     )
+    databases: list[RosettaChainDatabaseResponse] = Field(
+        default_factory=list, description="Databases available on this client"
+    )
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 

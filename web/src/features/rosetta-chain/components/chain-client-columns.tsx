@@ -51,14 +51,14 @@ export const chainClientColumns: ColumnDef<ChainClient>[] = [
     meta: { title: 'Status' },
   },
   {
-    id: 'tables',
+    id: 'databases',
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title='Tables' />
+      <DataTableColumnHeader column={column} title='Databases' />
     ),
     cell: ({ row }) => (
-      <span className='text-sm'>{row.original.tables?.length ?? 0}</span>
+      <span className='text-sm'>{row.original.databases?.length ?? 0}</span>
     ),
-    meta: { title: 'Tables' },
+    meta: { title: 'Databases' },
   },
   {
     id: 'last_connected',

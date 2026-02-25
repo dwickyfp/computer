@@ -200,7 +200,7 @@ export function RosettaSchemaRegistration({
             <div className='border rounded-md overflow-hidden'>
               <div className='max-h-[300px] overflow-auto'>
                 <table className='w-full text-sm text-left'>
-                  <thead className='text-xs text-muted-foreground bg-muted/50 sticky top-0'>
+                  <thead className='text-xs text-muted-foreground bg-muted sticky top-0 z-10'>
                     <tr>
                       <th className='px-4 py-2 font-medium'>Field Name</th>
                       <th className='px-4 py-2 font-medium'>Data Type</th>

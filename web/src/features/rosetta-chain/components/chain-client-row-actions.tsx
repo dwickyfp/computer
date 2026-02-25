@@ -1,6 +1,6 @@
 import { DotsHorizontalIcon } from '@radix-ui/react-icons'
 import { type Row } from '@tanstack/react-table'
-import { Pencil, Trash2, Zap } from 'lucide-react'
+import { Pencil, Trash2, Zap, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -11,6 +11,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { type ChainClient, chainClientSchema } from '../data/schema'
 import { useChain } from './chain-provider'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { chainRepo } from '@/repo/chains'
+import { toast } from 'sonner'
 
 interface ChainClientRowActionsProps {
   row: Row<ChainClient>
@@ -19,6 +22,18 @@ interface ChainClientRowActionsProps {
 export function ChainClientRowActions({ row }: ChainClientRowActionsProps) {
   const client = chainClientSchema.parse(row.original)
   const { setOpen, setCurrentRow } = useChain()
+  const queryClient = useQueryClient()
+
+  const syncMutation = useMutation({
+    mutationFn: () => chainRepo.syncClientDatabases(client.id),
+    onSuccess: () => {
+      toast.success(`Refreshed databases for ${client.name}`)
+      queryClient.invalidateQueries({ queryKey: ['chain-clients'] })
+    },
+    onError: (err: any) => {
+      toast.error(`Failed to refresh databases: ${err.message || 'Unknown error'}`)
+    }
+  })
 
   return (
     <DropdownMenu modal={false}>
@@ -40,6 +55,17 @@ export function ChainClientRowActions({ row }: ChainClientRowActionsProps) {
         >
           <Zap className='mr-2 h-4 w-4' />
           Test Connection
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.preventDefault()
+            syncMutation.mutate()
+          }}
+          disabled={syncMutation.isPending}
+        >
+          <RefreshCw className={`mr-2 h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+          Refresh Databases
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
