@@ -210,7 +210,8 @@ class RosettaChainService:
 
         # ── Sanity check: detect obviously wrong keys ───────────────
         import re
-        _ip_like = re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', raw_key)
+
+        _ip_like = re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", raw_key)
         if _ip_like:
             logger.error(
                 f"Chain key for client '{client.name}' (id={client_id}) "
