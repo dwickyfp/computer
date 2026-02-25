@@ -302,6 +302,9 @@ export function RosettaTableConfig({
                         onRegisterSchema={() => openSchemaRegistration(table, config.id)}
                         onDelete={() => handleDeleteBranch(table, config)}
                         isDeleting={isProcessing}
+                        hideFilter
+                        hideCustomSql
+                        hidePrimaryKeys
                       />
                     </div>
                   ))}
