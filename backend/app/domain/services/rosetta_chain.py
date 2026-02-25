@@ -167,7 +167,12 @@ class RosettaChainService:
 
         # If chain_key is being updated, encrypt it
         if "chain_key" in update_data and update_data["chain_key"] is not None:
-            update_data["chain_key"] = encrypt_value(update_data["chain_key"])
+            raw_preview = update_data["chain_key"]
+            logger.info(
+                f"Storing new chain_key for client id={client_id}: "
+                f"first 8 chars='{raw_preview[:8]}...', length={len(raw_preview)}"
+            )
+            update_data["chain_key"] = encrypt_value(raw_preview)
 
         client = self._client_repo.update(client_id, **update_data)
 

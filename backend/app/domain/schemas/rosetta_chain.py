@@ -76,8 +76,8 @@ class ChainClientCreate(ChainClientBase):
 
     chain_key: str = Field(
         ...,
-        min_length=1,
-        description="Chain credential key of the remote instance",
+        min_length=16,
+        description="Chain credential key of the remote instance (from the remote Rosetta's Chain Key page)",
     )
 
     @validator("name")
@@ -89,6 +89,22 @@ class ChainClientCreate(ChainClientBase):
                 "hyphens, and underscores"
             )
         return v.lower()
+
+    @validator("chain_key")
+    def validate_chain_key(cls, v: str) -> str:
+        """Reject obviously wrong values such as ISO dates or IP addresses."""
+        import re
+        if re.match(r'^\d{4}-\d{2}-\d{2}', v):
+            raise ValueError(
+                "chain_key looks like a date — paste the key from the remote "
+                "Rosetta's Chain Key page, not a timestamp."
+            )
+        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', v):
+            raise ValueError(
+                "chain_key looks like an IP address — paste the key from the "
+                "remote Rosetta's Chain Key page."
+            )
+        return v
 
     class Config:
         schema_extra = {
@@ -124,9 +140,27 @@ class ChainClientUpdate(BaseSchema):
     )
     chain_key: Optional[str] = Field(
         default=None,
-        min_length=1,
-        description="Chain credential key of the remote instance",
+        min_length=16,
+        description="Chain credential key of the remote instance (from the remote Rosetta's Chain Key page)",
     )
+
+    @validator("chain_key")
+    def validate_chain_key(cls, v: Optional[str]) -> Optional[str]:
+        """Reject obviously wrong values such as ISO dates or IP addresses."""
+        if v is None:
+            return v
+        import re
+        if re.match(r'^\d{4}-\d{2}-\d{2}', v):
+            raise ValueError(
+                "chain_key looks like a date — paste the key from the remote "
+                "Rosetta's Chain Key page, not a timestamp."
+            )
+        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', v):
+            raise ValueError(
+                "chain_key looks like an IP address — paste the key from the "
+                "remote Rosetta's Chain Key page."
+            )
+        return v
     is_active: Optional[bool] = Field(
         default=None,
         description="Whether this client connection is active",

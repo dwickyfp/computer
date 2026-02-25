@@ -205,11 +205,15 @@ export function ChainClientMutateDrawer({
                   <FormControl>
                     <Input
                       {...field}
-                      type='password'
+                      type='text'
+                      autoComplete='off'
+                      data-1p-ignore
+                      data-lpignore='true'
+                      data-form-type='other'
                       placeholder={
                         isUpdate
                           ? 'Leave blank to keep existing'
-                          : 'Remote instance chain key'
+                          : 'sk_rst_...'
                       }
                     />
                   </FormControl>
