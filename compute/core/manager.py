@@ -89,19 +89,6 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
             else "POSTGRES"
         )
 
-        # Pre-flight: validate required fields to avoid infinite crash-restart loop
-        if source_type == "ROSETTA" and pipeline_data:
-            if not pipeline_data.chain_client_id:
-                err = (
-                    "Pipeline misconfigured: source_type=ROSETTA but chain_client_id is not set. "
-                    "Update the pipeline to set a valid chain_client_id."
-                )
-                subprocess_logger.error(err)
-                PipelineMetadataRepository.upsert(pipeline_id, "ERROR", err)
-                # Auto-PAUSE so the manager stops restarting this pipeline
-                PipelineRepository.update_status(pipeline_id, "PAUSE")
-                return
-
         if source_type in ["ROSETTA", "CATALOG_TABLE"]:
             subprocess_logger.info(
                 f"Starting chain pipeline engine for pipeline {pipeline_id}"
@@ -182,6 +169,17 @@ class PipelineManager:
         pipeline = PipelineRepository.get_by_id(pipeline_id)
         if pipeline is None:
             self._logger.error(f"Pipeline {pipeline_id} not found")
+            return False
+
+        # Pre-flight: validate required config to avoid spawning a doomed process
+        if pipeline.source_type == "ROSETTA" and not pipeline.chain_client_id:
+            err = (
+                "Pipeline misconfigured: source_type=ROSETTA but chain_client_id is not set. "
+                "Update the pipeline to set a valid chain_client_id."
+            )
+            self._logger.error(f"Pipeline {pipeline.name}: {err}")
+            PipelineMetadataRepository.upsert(pipeline_id, "ERROR", err)
+            PipelineRepository.update_status(pipeline_id, "PAUSE")
             return False
 
         # Create process wrapper
