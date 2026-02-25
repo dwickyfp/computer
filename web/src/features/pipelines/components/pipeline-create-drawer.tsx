@@ -4,7 +4,6 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { catalogRepo } from '@/repo/catalog'
-import { chainRepo } from '@/repo/chains'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { sourcesRepo } from '@/repo/sources'
 import { toast } from 'sonner'
@@ -46,7 +45,6 @@ const formSchema = z
       ),
     source_type: z.enum(['POSTGRES', 'ROSETTA', 'CATALOG_TABLE']),
     source_id: z.string().optional(),
-    chain_client_id: z.string().optional(),
     catalog_database_id: z.string().optional(),
     catalog_table_id: z.string().optional(),
   })
@@ -56,13 +54,6 @@ const formSchema = z
         code: z.ZodIssueCode.custom,
         message: 'Source is required',
         path: ['source_id'],
-      })
-    }
-    if (data.source_type === 'ROSETTA' && !data.chain_client_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Chain client is required',
-        path: ['chain_client_id'],
       })
     }
     if (data.source_type === 'CATALOG_TABLE' && !data.catalog_table_id) {
@@ -100,11 +91,6 @@ export function PipelineCreateDrawer({
     queryKey: ['sources'],
     queryFn: sourcesRepo.getAll,
   })
-  const { data: chainClients } = useQuery({
-    queryKey: ['chain-clients'],
-    queryFn: chainRepo.getClients,
-    enabled: sourceType === 'ROSETTA',
-  })
   const { data: pipelines } = useQuery({
     queryKey: ['pipelines'],
     queryFn: pipelinesRepo.getAll,
@@ -121,8 +107,6 @@ export function PipelineCreateDrawer({
       }
       if (values.source_type === 'POSTGRES') {
         payload.source_id = parseInt(values.source_id!)
-      } else if (values.source_type === 'ROSETTA') {
-        payload.chain_client_id = parseInt(values.chain_client_id!)
       } else if (values.source_type === 'CATALOG_TABLE') {
         payload.catalog_table_id = parseInt(values.catalog_table_id!)
       }
@@ -204,44 +188,6 @@ export function PipelineCreateDrawer({
                   </FormItem>
                 )}
               />
-
-              {sourceType === 'ROSETTA' && (
-                <FormField
-                  control={form.control}
-                  name='chain_client_id'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Chain Client</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger className='w-full'>
-                            <SelectValue placeholder='Select a chain client' />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {chainClients?.map((client) => (
-                            <SelectItem
-                              key={client.id}
-                              value={client.id.toString()}
-                            >
-                              {client.name}
-                            </SelectItem>
-                          ))}
-                          {!chainClients?.length && (
-                            <SelectItem value='_' disabled>
-                              No chain clients registered
-                            </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
 
               {sourceType === 'POSTGRES' && (
                 <FormField
