@@ -166,13 +166,35 @@ class RosettaDestination(BaseDestination):
         """Force the next ``chain_key`` access to re-read from the database."""
         self._cached_chain_key = None
 
-    def initialize(self) -> None:
+    def initialize(self, force_reconnect: bool = False) -> None:
         """Initialize HTTP client for remote Rosetta connection.
 
-        Note: X-Chain-Key is NOT set as a default header here — it is
+        Args:
+            force_reconnect: Close and recreate the HTTP client even if
+                already initialized (used by DLQ recovery).
+
+        Note: X-Chain-Key is NOT baked into the default headers — it is
         injected per-request via ``_auth_headers()`` so that key
         rotations take effect without restarting the pipeline process.
+        On every initialize call we also flush the cached chain key so
+        any key stored since the pipeline started is picked up.
         """
+        # Always flush the in-memory key cache.  This ensures DLQ replay
+        # after a 401 sends the latest key from the DB, not the stale one.
+        self.refresh_chain_key()
+
+        if self._is_initialized and not force_reconnect:
+            # Already connected — no need to recreate the HTTP client.
+            return
+
+        # Close the existing client if present
+        if self._client:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+            self._client = None
+
         self._client = httpx.Client(
             base_url=self.base_url,
             timeout=httpx.Timeout(30.0, connect=10.0),
