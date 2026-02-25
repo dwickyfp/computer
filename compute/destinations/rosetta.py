@@ -59,8 +59,26 @@ class RosettaDestination(BaseDestination):
 
     @property
     def base_url(self) -> str:
-        """Get remote Rosetta compute URL."""
-        url = self._config.config["url"]
+        """Get remote Rosetta compute URL including port."""
+        url = self._config.config["url"].rstrip("/")
+        port = self._config.config.get("port")
+        if port:
+            # Strip any existing port from the URL, then append the configured one
+            # e.g. "http://172.16.122.180" + port 8001 → "http://172.16.122.180:8001"
+            from urllib.parse import urlparse, urlunparse
+
+            parsed = urlparse(url if "://" in url else f"http://{url}")
+            netloc = parsed.hostname or parsed.netloc
+            url = urlunparse(
+                (
+                    parsed.scheme or "http",
+                    f"{netloc}:{port}",
+                    parsed.path or "",
+                    "",
+                    "",
+                    "",
+                )
+            )
         return url.rstrip("/")
 
     @property
@@ -189,13 +207,15 @@ class RosettaDestination(BaseDestination):
             for col in all_columns:
                 columns[col].append(r.value.get(col) if r.value else None)
 
-        # Build Arrow arrays — use string type for all value columns
-        # The remote side will cast based on schema
+        # Build Arrow arrays — use string type for all value columns.
+        # Explicitly convert every non-None value to str so PyArrow doesn't
+        # choke on bools, dicts, lists, Decimals, etc.
         arrays = []
         field_names = []
 
         for col in all_columns:
-            arrays.append(pa.array(columns[col], type=pa.string()))
+            str_values = [str(v) if v is not None else None for v in columns[col]]
+            arrays.append(pa.array(str_values, type=pa.string()))
             field_names.append(col)
 
         # Add metadata columns

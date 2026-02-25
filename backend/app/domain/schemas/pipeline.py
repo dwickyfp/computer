@@ -77,7 +77,9 @@ class PipelineCreate(PipelineBase):
     def validate_catalog_table_id(cls, v, values):
         source_type = values.get("source_type", "POSTGRES")
         if source_type == "CATALOG_TABLE" and v is None:
-            raise ValueError("catalog_table_id is required when source_type is CATALOG_TABLE")
+            raise ValueError(
+                "catalog_table_id is required when source_type is CATALOG_TABLE"
+            )
         return v
 
     @validator("name")
@@ -395,7 +397,9 @@ class PipelineResponse(PipelineBase, TimestampSchema):
     """
 
     id: int = Field(..., description="Unique pipeline identifier", examples=[1, 42])
-    source_id: Optional[int] = Field(default=None, description="ID of the source database")
+    source_id: Optional[int] = Field(
+        default=None, description="ID of the source database"
+    )
     status: PipelineStatus = Field(..., description="Pipeline operational status")
     ready_refresh: bool = Field(
         default=False, description="Flag indicating pipeline needs refresh"

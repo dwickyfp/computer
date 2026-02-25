@@ -128,7 +128,9 @@ class PipelineService:
 
         # Check if source is already used in another pipeline (POSTGRES only)
         if pipeline_data.source_id is not None:
-            existing_pipelines = self.repository.get_by_source_id(pipeline_data.source_id)
+            existing_pipelines = self.repository.get_by_source_id(
+                pipeline_data.source_id
+            )
             if existing_pipelines:
                 raise DuplicateEntityError(
                     entity_type="Pipeline",
@@ -760,7 +762,7 @@ class PipelineService:
 
             # 2. Get Source Tables
             self._update_progress(progress, 10, "Fetching source tables", "IN_PROGRESS")
-            
+
             tables = []
             if pipeline.source_type == "POSTGRES":
                 source_service = SourceService(self.db)
@@ -768,6 +770,7 @@ class PipelineService:
                 tables = source_details.tables
             elif pipeline.source_type == "CATALOG_TABLE":
                 from app.domain.services.catalog import CatalogService
+
                 catalog_service = CatalogService(self.db)
                 catalog_table = catalog_service.get_table(pipeline.catalog_table_id)
                 if catalog_table:
@@ -776,10 +779,10 @@ class PipelineService:
                         {
                             "id": catalog_table.id,
                             "table_name": catalog_table.table_name,
-                            "schema_definition": catalog_table.schema_definition
+                            "schema_definition": catalog_table.schema_definition,
                         }
                     ]
-            
+
             if not tables:
                 self._update_progress(
                     progress, 100, "No tables to process", "COMPLETED"
