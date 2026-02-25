@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { chainRepo, ChainDatabase } from '@/repo/chains'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Database, RefreshCw } from 'lucide-react'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { Loader2, Database } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,25 +43,11 @@ export function RosettaSchemaRegistration({
   // Track schema overrides
   const [schemaUpdates, setSchemaUpdates] = useState<Record<string, Partial<ColumnSchema>>>({})
 
-  const queryClient = useQueryClient()
-
   // Fetch available databases from the remote chain client
   const { data: databases, isLoading: loadingDbs } = useQuery({
     queryKey: ['chain-databases', chainId],
     queryFn: () => chainRepo.getClientDatabases(chainId),
     enabled: open,
-  })
-
-  // Sync databases from the remote client manually
-  const syncMutation = useMutation({
-    mutationFn: () => chainRepo.syncClientDatabases(chainId),
-    onSuccess: () => {
-      toast.success('Databases refreshed from remote instance')
-      queryClient.invalidateQueries({ queryKey: ['chain-databases', chainId] })
-    },
-    onError: (err: any) => {
-      toast.error(`Failed to refresh databases: ${err.message || 'Unknown error'}`)
-    }
   })
 
   const registerMutation = useMutation({
@@ -82,6 +68,7 @@ export function RosettaSchemaRegistration({
   // Initialize form when table changes
   useState(() => {
     if (table) {
+      // The prop `table` inherently passes the "branch target name" via line 188 of rosetta-table-config.tsx
       setTableName(table.table_name)
     }
   })
@@ -139,7 +126,7 @@ export function RosettaSchemaRegistration({
         </DialogHeader>
 
         <div className='flex-1 overflow-auto space-y-6 py-4 px-1'>
-          <div className='grid grid-cols-2 gap-4'>
+          <div className='grid grid-cols-[1fr_1.5fr] gap-4'>
             <div className='space-y-2'>
               <Label>Destination Database</Label>
               {loadingDbs ? (
@@ -164,23 +151,7 @@ export function RosettaSchemaRegistration({
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button 
-                      variant='outline' 
-                      size='icon'
-                      disabled={syncMutation.isPending}
-                      onClick={() => syncMutation.mutate()}
-                      title="Sync from remote Rosetta"
-                    >
-                      <RefreshCw className={`w-4 h-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
-                    </Button>
                   </div>
-                  <span className='text-sm text-muted-foreground'>OR</span>
-                  <Input 
-                    placeholder='New DB Name' 
-                    value={dbName} 
-                    onChange={e => setDbName(e.target.value)}
-                    className='w-full'
-                  />
                 </div>
               )}
             </div>
