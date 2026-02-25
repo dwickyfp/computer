@@ -211,9 +211,7 @@ export function ChainClientMutateDrawer({
                       data-lpignore='true'
                       data-form-type='other'
                       placeholder={
-                        isUpdate
-                          ? 'Leave blank to keep existing'
-                          : 'sk_rst_...'
+                        isUpdate ? 'Leave blank to keep existing' : 'sk_rst_...'
                       }
                     />
                   </FormControl>

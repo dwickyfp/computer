@@ -50,9 +50,12 @@ export const chainClientFormSchema = z.object({
   url: z
     .string()
     .min(1, 'Host/IP is required')
-    .refine((val) => !val.startsWith('http://') && !val.startsWith('https://'), {
-      message: 'Do not include http:// or https://, just the host/IP',
-    }),
+    .refine(
+      (val) => !val.startsWith('http://') && !val.startsWith('https://'),
+      {
+        message: 'Do not include http:// or https://, just the host/IP',
+      }
+    ),
   port: z.coerce.number().int().min(1).max(65535).default(8001),
   chain_key: z
     .string()

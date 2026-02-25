@@ -94,12 +94,13 @@ class ChainClientCreate(ChainClientBase):
     def validate_chain_key(cls, v: str) -> str:
         """Reject obviously wrong values such as ISO dates or IP addresses."""
         import re
-        if re.match(r'^\d{4}-\d{2}-\d{2}', v):
+
+        if re.match(r"^\d{4}-\d{2}-\d{2}", v):
             raise ValueError(
                 "chain_key looks like a date — paste the key from the remote "
                 "Rosetta's Chain Key page, not a timestamp."
             )
-        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', v):
+        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", v):
             raise ValueError(
                 "chain_key looks like an IP address — paste the key from the "
                 "remote Rosetta's Chain Key page."
@@ -150,17 +151,19 @@ class ChainClientUpdate(BaseSchema):
         if v is None:
             return v
         import re
-        if re.match(r'^\d{4}-\d{2}-\d{2}', v):
+
+        if re.match(r"^\d{4}-\d{2}-\d{2}", v):
             raise ValueError(
                 "chain_key looks like a date — paste the key from the remote "
                 "Rosetta's Chain Key page, not a timestamp."
             )
-        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', v):
+        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", v):
             raise ValueError(
                 "chain_key looks like an IP address — paste the key from the "
                 "remote Rosetta's Chain Key page."
             )
         return v
+
     is_active: Optional[bool] = Field(
         default=None,
         description="Whether this client connection is active",
@@ -202,7 +205,7 @@ class ChainTableResponse(BaseSchema):
 
 class RosettaChainDatabaseResponse(BaseSchema):
     """Response schema for a chain database."""
-    
+
     id: int = Field(..., description="Unique database identifier")
     chain_client_id: int = Field(..., description="Owning chain client ID")
     name: str = Field(..., description="Database name")
