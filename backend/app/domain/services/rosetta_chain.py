@@ -85,7 +85,32 @@ class RosettaChainService:
         raw_key = secrets.token_urlsafe(32)
         encrypted_key = encrypt_value(raw_key)
         self._config_repo.upsert(chain_key=encrypted_key, is_active=True)
+
+        # Notify the local compute process to invalidate its cached key
+        # so incoming requests are validated against the new key immediately.
+        self._invalidate_compute_key_cache()
+
         return raw_key
+
+    def _invalidate_compute_key_cache(self) -> None:
+        """Tell the local compute node to drop its cached chain key."""
+        try:
+            from app.core.config import get_settings
+
+            settings = get_settings()
+            url = f"{settings.compute_node_url.rstrip('/')}/chain/invalidate-key-cache"
+            resp = httpx.post(url, timeout=5.0)
+            if resp.status_code == 200:
+                logger.info("Compute key cache invalidated successfully")
+            else:
+                logger.warning(
+                    f"Compute key cache invalidation returned {resp.status_code}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Could not notify compute to invalidate key cache: {e}. "
+                "The cache will expire automatically within 60 seconds."
+            )
 
     def set_chain_active(self, is_active: bool) -> Optional[ChainKeyResponse]:
         """Toggle chain ingestion active state."""
@@ -414,13 +439,15 @@ class RosettaChainService:
                 self._create_linked_destination(client, client.chain_key)
                 return
 
-            # Sync name, URL and port; keep chain_key unchanged (already encrypted)
+            # Sync name, URL, port **and** chain_key so that key rotations
+            # propagate to the compute engine without a manual restart.
             new_name = self._destination_name(client.name)
             dest.name = new_name
             dest.config = {
                 **dest.config,
                 "url": client.url,
                 "port": client.port,
+                "chain_key": client.chain_key,  # already encrypted
             }
             self.db.commit()
         except Exception as e:

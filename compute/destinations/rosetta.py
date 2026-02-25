@@ -45,6 +45,7 @@ class RosettaDestination(BaseDestination):
         self._chain_id = chain_id or str(config.id)
         self._client: Optional[httpx.Client] = None
         self._synced_schemas: set[str] = set()
+        self._cached_chain_key: Optional[str] = None
         self._validate_config()
 
     def _validate_config(self) -> None:
@@ -83,22 +84,72 @@ class RosettaDestination(BaseDestination):
 
     @property
     def chain_key(self) -> str:
-        """Get decrypted chain key."""
-        encrypted = self._config.config["chain_key"]
-        return decrypt_value(encrypted)
+        """Get decrypted chain key.
+
+        Reads the key fresh from the destination config (or falls back to
+        the rosetta_chain_clients table).  The result is cached in-memory
+        so that we only hit the DB once per pipeline process lifetime, but
+        ``refresh_chain_key()`` can force a re-read after a key rotation.
+        """
+        if self._cached_chain_key is not None:
+            return self._cached_chain_key
+
+        encrypted = self._config.config.get("chain_key", "")
+        decrypted = decrypt_value(encrypted)
+
+        # decrypt_value silently returns the original value on failure.
+        # If the result still looks like a base64 blob (same as input),
+        # try fetching the key from the chain client record instead.
+        if decrypted == encrypted and encrypted:
+            try:
+                from core.database import get_db_connection, return_db_connection
+
+                conn = get_db_connection()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT c.chain_key FROM rosetta_chain_clients c "
+                            "JOIN destinations d ON d.chain_client_id = c.id "
+                            "WHERE d.id = %s",
+                            (self._config.id,),
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            decrypted = decrypt_value(row[0])
+                finally:
+                    return_db_connection(conn)
+            except Exception as e:
+                self._logger.warning(
+                    f"Could not read chain_key from chain_clients table: {e}"
+                )
+
+        self._cached_chain_key = decrypted
+        return decrypted
+
+    def refresh_chain_key(self) -> None:
+        """Force the next ``chain_key`` access to re-read from the database."""
+        self._cached_chain_key = None
 
     def initialize(self) -> None:
-        """Initialize HTTP client for remote Rosetta connection."""
+        """Initialize HTTP client for remote Rosetta connection.
+
+        Note: X-Chain-Key is NOT set as a default header here — it is
+        injected per-request via ``_auth_headers()`` so that key
+        rotations take effect without restarting the pipeline process.
+        """
         self._client = httpx.Client(
             base_url=self.base_url,
             timeout=httpx.Timeout(30.0, connect=10.0),
             headers={
-                "X-Chain-Key": self.chain_key,
                 "X-Chain-ID": self._chain_id,
             },
         )
         self._is_initialized = True
         self._logger.info(f"Rosetta destination initialized: {self.base_url}")
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Return per-request auth headers with the current chain key."""
+        return {"X-Chain-Key": self.chain_key}
 
     def write_batch(
         self,
@@ -142,6 +193,7 @@ class RosettaDestination(BaseDestination):
                 "/chain/ingest",
                 content=ipc_buffer,
                 headers={
+                    **self._auth_headers(),
                     "Content-Type": "application/vnd.apache.arrow.stream",
                     "X-Table-Name": table_name,
                     "X-Operation-Type": "mixed",
@@ -157,6 +209,10 @@ class RosettaDestination(BaseDestination):
             return ingested
 
         except httpx.HTTPStatusError as e:
+            # If we get 401, the key may have been rotated — clear the
+            # cached key so the next attempt re-reads from DB.
+            if e.response.status_code == 401:
+                self.refresh_chain_key()
             raise DestinationException(
                 f"Remote Rosetta rejected data: {e.response.status_code} {e.response.text}",
                 {"destination_id": self._config.id, "table": table_name},
@@ -254,6 +310,7 @@ class RosettaDestination(BaseDestination):
                     "chain_client_id": self._config.id,
                     "source_chain_id": self._chain_id,
                 },
+                headers=self._auth_headers(),
             )
             if response.status_code == 200:
                 self._logger.info(f"Schema synced for {table_name}")
@@ -284,7 +341,10 @@ class RosettaDestination(BaseDestination):
 
         try:
             # Check if schema already exists
-            response = self._client.get(f"/chain/schema/{table_name}")
+            response = self._client.get(
+                f"/chain/schema/{table_name}",
+                headers=self._auth_headers(),
+            )
             if response.status_code == 200:
                 self._synced_schemas.add(table_name)
                 return False  # Already exists

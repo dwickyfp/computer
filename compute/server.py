@@ -98,6 +98,20 @@ async def chain_health(x_chain_key: str = Header(default=None)):
     }
 
 
+@app.post("/chain/invalidate-key-cache")
+async def chain_invalidate_key_cache():
+    """
+    Invalidate the cached chain key in the compute process.
+
+    Called by the backend after a key regeneration so that the new
+    key is picked up immediately instead of waiting for the TTL.
+    """
+    from chain.auth import invalidate_key_cache
+
+    invalidate_key_cache()
+    return {"status": "ok", "message": "Chain key cache invalidated"}
+
+
 @app.post("/chain/ingest")
 async def chain_ingest(
     request: Request,
