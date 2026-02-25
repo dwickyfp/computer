@@ -86,6 +86,11 @@ class RosettaChainService:
         encrypted_key = encrypt_value(raw_key)
         self._config_repo.upsert(chain_key=encrypted_key, is_active=True)
 
+        # IMPORTANT: Commit to DB BEFORE notifying the compute process.
+        # Otherwise the compute re-reads the OLD key because the
+        # transaction hasn't been committed yet.
+        self.db.commit()
+
         # Notify the local compute process to invalidate its cached key
         # so incoming requests are validated against the new key immediately.
         self._invalidate_compute_key_cache()

@@ -86,45 +86,81 @@ class RosettaDestination(BaseDestination):
     def chain_key(self) -> str:
         """Get decrypted chain key.
 
-        Reads the key fresh from the destination config (or falls back to
-        the rosetta_chain_clients table).  The result is cached in-memory
-        so that we only hit the DB once per pipeline process lifetime, but
-        ``refresh_chain_key()`` can force a re-read after a key rotation.
+        On first access the key is read from the Destination config blob.
+        If that fails (``CREDENTIAL_ENCRYPTION_KEY`` mismatch) we fall
+        back to the ``rosetta_chain_clients`` table.
+
+        After ``refresh_chain_key()`` is called (e.g. on a 401) the
+        next access re-reads **directly from the database** so that a
+        key rotation made via the backend UI is picked up without
+        restarting the pipeline process.
         """
         if self._cached_chain_key is not None:
             return self._cached_chain_key
 
-        encrypted = self._config.config.get("chain_key", "")
-        decrypted = decrypt_value(encrypted)
+        decrypted = self._read_chain_key_from_db()
 
-        # decrypt_value silently returns the original value on failure.
-        # If the result still looks like a base64 blob (same as input),
-        # try fetching the key from the chain client record instead.
-        if decrypted == encrypted and encrypted:
+        if not decrypted:
+            # Last resort — try the in-memory config blob
+            encrypted = self._config.config.get("chain_key", "")
+            decrypted = decrypt_value(encrypted)
+            if decrypted == encrypted:
+                decrypted = ""
+
+        if not decrypted:
+            self._logger.error(
+                "Could not obtain a usable chain key for destination %s. "
+                "Check CREDENTIAL_ENCRYPTION_KEY and rosetta_chain_clients.",
+                self._config.id,
+            )
+
+        self._cached_chain_key = decrypted or ""
+        return self._cached_chain_key
+
+    def _read_chain_key_from_db(self) -> str:
+        """Read the chain key fresh from the database."""
+        try:
+            from core.database import get_db_connection, return_db_connection
+
+            conn = get_db_connection()
             try:
-                from core.database import get_db_connection, return_db_connection
+                with conn.cursor() as cur:
+                    # First try the destination config stored in the DB
+                    # (it gets updated by _sync_linked_destination)
+                    cur.execute(
+                        "SELECT config FROM destinations WHERE id = %s",
+                        (self._config.id,),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        import json as _json
 
-                conn = get_db_connection()
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "SELECT c.chain_key FROM rosetta_chain_clients c "
-                            "JOIN destinations d ON d.chain_client_id = c.id "
-                            "WHERE d.id = %s",
-                            (self._config.id,),
+                        cfg = (
+                            row[0] if isinstance(row[0], dict) else _json.loads(row[0])
                         )
-                        row = cur.fetchone()
-                        if row and row[0]:
-                            decrypted = decrypt_value(row[0])
-                finally:
-                    return_db_connection(conn)
-            except Exception as e:
-                self._logger.warning(
-                    f"Could not read chain_key from chain_clients table: {e}"
-                )
+                        enc = cfg.get("chain_key", "")
+                        if enc:
+                            dec = decrypt_value(enc)
+                            if dec != enc:
+                                return dec
 
-        self._cached_chain_key = decrypted
-        return decrypted
+                    # Fallback: read from rosetta_chain_clients
+                    cur.execute(
+                        "SELECT c.chain_key FROM rosetta_chain_clients c "
+                        "JOIN destinations d ON d.chain_client_id = c.id "
+                        "WHERE d.id = %s",
+                        (self._config.id,),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        dec = decrypt_value(row[0])
+                        if dec != row[0]:
+                            return dec
+            finally:
+                return_db_connection(conn)
+        except Exception as e:
+            self._logger.warning(f"Could not read chain_key from DB: {e}")
+        return ""
 
     def refresh_chain_key(self) -> None:
         """Force the next ``chain_key`` access to re-read from the database."""

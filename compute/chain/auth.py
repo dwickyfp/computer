@@ -56,9 +56,27 @@ def _load_chain_key() -> Optional[str]:
                 return None
 
             try:
-                _cached_chain_key = decrypt_value(chain_key_encrypted)
+                decrypted = decrypt_value(chain_key_encrypted)
+
+                # detect silent failure: decrypt_value returns the
+                # encrypted blob unchanged when CREDENTIAL_ENCRYPTION_KEY
+                # is missing or wrong.
+                if decrypted == chain_key_encrypted:
+                    logger.error(
+                        "Chain key decryption returned the encrypted blob "
+                        "unchanged — CREDENTIAL_ENCRYPTION_KEY is likely "
+                        "missing or does not match the backend. Chain auth "
+                        "will ALWAYS fail until this is fixed."
+                    )
+                    _cached_chain_key = None
+                    _cache_valid = True
+                    _cache_time = time.monotonic()
+                    return None
+
+                _cached_chain_key = decrypted
                 _cache_valid = True
                 _cache_time = time.monotonic()
+                logger.debug("Chain key loaded and decrypted successfully")
                 return _cached_chain_key
             except Exception as e:
                 logger.error(f"Failed to decrypt chain key: {e}")
@@ -107,8 +125,16 @@ def validate_chain_key(x_chain_key: str = Header(...)) -> str:
     if x_chain_key != _cached_chain_key:
         # Key mismatch — maybe the key was just regenerated.  Try one
         # forced reload before rejecting.
+        logger.info("Chain key mismatch — forcing DB reload to check for rotation")
         _load_chain_key()
         if x_chain_key != _cached_chain_key:
+            logger.warning(
+                "Chain key validation failed after forced reload. "
+                "Sent key (first 8 chars): %s..., "
+                "Expected key loaded: %s",
+                x_chain_key[:8] if x_chain_key else "(empty)",
+                "yes" if _cached_chain_key else "NO (decryption failed?)",
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid chain key",
