@@ -936,16 +936,25 @@ CREATE TABLE IF NOT EXISTS rosetta_chain_clients (
 -- Virtual tables from remote Rosetta instances
 CREATE TABLE IF NOT EXISTS rosetta_chain_tables (
     id SERIAL PRIMARY KEY,
-    chain_client_id INTEGER NOT NULL REFERENCES rosetta_chain_clients(id) ON DELETE CASCADE,
+    chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL,
     table_name VARCHAR(255) NOT NULL,
     schema_json JSONB NOT NULL DEFAULT '{}',
     source_chain_id VARCHAR(255) NULL,
     record_count BIGINT NOT NULL DEFAULT 0,
     last_synced_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(chain_client_id, table_name)
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Unique index for local pipelines that have a known chain_client_id
+CREATE UNIQUE INDEX IF NOT EXISTS uq_chain_tables_local
+    ON rosetta_chain_tables(chain_client_id, table_name)
+    WHERE chain_client_id IS NOT NULL;
+
+-- Unique index for cross-instance registrations (no local chain_client_id)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_chain_tables_remote
+    ON rosetta_chain_tables(source_chain_id, table_name)
+    WHERE chain_client_id IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_rosetta_chain_tables_client
     ON rosetta_chain_tables(chain_client_id);

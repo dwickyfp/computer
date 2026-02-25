@@ -175,24 +175,38 @@ async def chain_push_schema(
     body = await request.json()
     table_name = body.get("table_name")
     schema_json = body.get("schema_json", {})
-    chain_client_id = body.get("chain_client_id")
+    chain_client_id = body.get("chain_client_id")  # optional for cross-instance calls
     source_chain_id = body.get("source_chain_id")
 
     if not table_name:
         return JSONResponse(
             status_code=400, content={"error": "table_name is required"}
         )
-    if not chain_client_id:
+
+    # For cross-instance registrations chain_client_id is absent (the sender's
+    # local ID is meaningless in this DB).  Require source_chain_id in that case
+    # so the remote table can still be uniquely identified.
+    if not chain_client_id and not source_chain_id:
         return JSONResponse(
-            status_code=400, content={"error": "chain_client_id is required"}
+            status_code=400,
+            content={
+                "error": "source_chain_id is required when chain_client_id is absent"
+            },
         )
+
+    # Coerce to int if present
+    if chain_client_id is not None:
+        try:
+            chain_client_id = int(chain_client_id)
+        except (TypeError, ValueError):
+            chain_client_id = None
 
     schema_mgr = _get_schema_manager()
     success = schema_mgr.upsert_table_schema(
-        chain_client_id=chain_client_id,
         table_name=table_name,
         schema_json=schema_json,
-        source_chain_id=source_chain_id,
+        chain_client_id=chain_client_id,
+        source_chain_id=str(source_chain_id) if source_chain_id is not None else None,
     )
 
     if success:

@@ -67,15 +67,20 @@ class ChainSchemaManager:
 
     def upsert_table_schema(
         self,
-        chain_client_id: int,
         table_name: str,
         schema_json: dict[str, Any],
+        chain_client_id: Optional[int] = None,
         source_chain_id: Optional[str] = None,
     ) -> bool:
         """
         Create or update a chain table schema.
 
         Auto-creates the entry if it doesn't exist (auto-accept mode).
+
+        When chain_client_id is provided (local pipeline), lookups are scoped
+        by (chain_client_id, table_name).  When it is None (cross-instance
+        registration from a remote Rosetta), lookups are scoped by
+        (source_chain_id, table_name) instead, avoiding FK violations.
 
         Returns:
             True if successful
@@ -84,41 +89,70 @@ class ChainSchemaManager:
         try:
             conn = get_db_connection()
             with conn.cursor() as cursor:
-                # Check if exists
-                cursor.execute(
-                    "SELECT id FROM rosetta_chain_tables "
-                    "WHERE chain_client_id = %s AND table_name = %s",
-                    (chain_client_id, table_name),
-                )
-                existing = cursor.fetchone()
-
                 schema_str = json.dumps(schema_json)
 
-                if existing:
+                if chain_client_id is not None:
+                    # ── Local pipeline path ──────────────────────────────
                     cursor.execute(
-                        "UPDATE rosetta_chain_tables "
-                        "SET schema_json = %s::jsonb, "
-                        "    source_chain_id = COALESCE(%s, source_chain_id), "
-                        "    last_synced_at = NOW(), "
-                        "    updated_at = NOW() "
+                        "SELECT id FROM rosetta_chain_tables "
                         "WHERE chain_client_id = %s AND table_name = %s",
-                        (schema_str, source_chain_id, chain_client_id, table_name),
+                        (chain_client_id, table_name),
                     )
+                    existing = cursor.fetchone()
+                    if existing:
+                        cursor.execute(
+                            "UPDATE rosetta_chain_tables "
+                            "SET schema_json = %s::jsonb, "
+                            "    source_chain_id = COALESCE(%s, source_chain_id), "
+                            "    last_synced_at = NOW(), "
+                            "    updated_at = NOW() "
+                            "WHERE chain_client_id = %s AND table_name = %s",
+                            (schema_str, source_chain_id, chain_client_id, table_name),
+                        )
+                    else:
+                        cursor.execute(
+                            "INSERT INTO rosetta_chain_tables "
+                            "(chain_client_id, table_name, schema_json, "
+                            " source_chain_id, last_synced_at) "
+                            "VALUES (%s, %s, %s::jsonb, %s, NOW())",
+                            (chain_client_id, table_name, schema_str, source_chain_id),
+                        )
                     logger.info(
-                        f"Updated schema for chain table {table_name} "
+                        f"Upserted schema for chain table {table_name} "
                         f"(client {chain_client_id})"
                     )
                 else:
+                    # ── Cross-instance registration path ─────────────────
+                    # chain_client_id is unknown (remote sender's local ID is
+                    # meaningless in this DB).  Use source_chain_id as the key.
                     cursor.execute(
-                        "INSERT INTO rosetta_chain_tables "
-                        "(chain_client_id, table_name, schema_json, "
-                        " source_chain_id, last_synced_at) "
-                        "VALUES (%s, %s, %s::jsonb, %s, NOW())",
-                        (chain_client_id, table_name, schema_str, source_chain_id),
+                        "SELECT id FROM rosetta_chain_tables "
+                        "WHERE chain_client_id IS NULL AND table_name = %s "
+                        "  AND source_chain_id = %s",
+                        (table_name, source_chain_id),
                     )
+                    existing = cursor.fetchone()
+                    if existing:
+                        cursor.execute(
+                            "UPDATE rosetta_chain_tables "
+                            "SET schema_json = %s::jsonb, "
+                            "    last_synced_at = NOW(), "
+                            "    updated_at = NOW() "
+                            "WHERE chain_client_id IS NULL "
+                            "  AND table_name = %s AND source_chain_id = %s",
+                            (schema_str, table_name, source_chain_id),
+                        )
+                    else:
+                        cursor.execute(
+                            "INSERT INTO rosetta_chain_tables "
+                            "(chain_client_id, table_name, schema_json, "
+                            " source_chain_id, last_synced_at) "
+                            "VALUES (NULL, %s, %s::jsonb, %s, NOW())",
+                            (table_name, schema_str, source_chain_id),
+                        )
                     logger.info(
-                        f"Auto-created chain table {table_name} "
-                        f"(client {chain_client_id})"
+                        f"Upserted cross-instance schema for table {table_name} "
+                        f"(source {source_chain_id})"
                     )
 
                 conn.commit()
@@ -191,7 +225,7 @@ class ChainSchemaManager:
     def list_databases(self) -> list[dict[str, Any]]:
         """
         List all logical databases from the local catalog.
-        
+
         Used to serve remote Rosetta instances with available destinations.
         """
         conn = None
@@ -203,7 +237,7 @@ class ChainSchemaManager:
                     "FROM catalog_databases "
                     "ORDER BY name"
                 )
-                
+
                 rows = cursor.fetchall()
                 databases = []
                 for row in rows:
@@ -216,7 +250,7 @@ class ChainSchemaManager:
                         }
                     )
                 return databases
-                
+
         except Exception as e:
             logger.error(f"Failed to list catalog databases: {e}")
             return []

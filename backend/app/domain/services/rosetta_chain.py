@@ -327,12 +327,11 @@ class RosettaChainService:
 
         url = self._build_client_url(client, "/chain/schema")
 
-        # Ensure chain_client_id is present — required by the remote compute endpoint.
-        # Use the local client_id as the scoping identifier on the remote side.
-        forwarded_payload = {
-            **payload,
-            "chain_client_id": payload.get("chain_client_id") or client_id,
-        }
+        # Strip any local chain_client_id — it references this instance's DB
+        # and is meaningless in the remote DB (causes FK violation).
+        # Use the client name as source_chain_id so the remote can identify us.
+        forwarded_payload = {k: v for k, v in payload.items() if k != "chain_client_id"}
+        forwarded_payload.setdefault("source_chain_id", client.name)
 
         with httpx.Client(timeout=10.0) as http:
             resp = http.post(
