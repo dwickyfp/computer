@@ -82,7 +82,7 @@ class RosettaChainService:
 
     def generate_chain_key(self) -> str:
         """Generate a new chain key. Returns the raw key (show once)."""
-        raw_key = secrets.token_urlsafe(32)
+        raw_key = f"sk_rst_{secrets.token_urlsafe(32)}"
         encrypted_key = encrypt_value(raw_key)
         self._config_repo.upsert(chain_key=encrypted_key, is_active=True)
 
