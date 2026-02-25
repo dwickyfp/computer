@@ -139,6 +139,10 @@ class Pipeline(Base, TimestampMixin):
         "Source", back_populates="pipelines", lazy="selectin"
     )
 
+    chain_client: Mapped["RosettaChainClient | None"] = relationship(
+        "RosettaChainClient", lazy="selectin", foreign_keys=[chain_client_id]
+    )
+
     destinations: Mapped[list["PipelineDestination"]] = relationship(
         "PipelineDestination",
         back_populates="pipeline",

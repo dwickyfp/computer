@@ -15,6 +15,16 @@ from app.domain.schemas.destination import DestinationResponse
 from app.domain.schemas.source import SourceResponse
 
 
+class ChainClientBriefResponse(BaseSchema):
+    """Minimal chain client info embedded in pipeline responses."""
+
+    id: int
+    name: str
+
+    class Config:
+        orm_mode = True
+
+
 class PipelineBase(BaseSchema):
     """Base pipeline schema with common fields."""
 
@@ -397,8 +407,15 @@ class PipelineResponse(PipelineBase, TimestampSchema):
     """
 
     id: int = Field(..., description="Unique pipeline identifier", examples=[1, 42])
+    source_type: str = Field(
+        default="POSTGRES",
+        description="Source type: POSTGRES, ROSETTA, or CATALOG_TABLE",
+    )
     source_id: Optional[int] = Field(
         default=None, description="ID of the source database"
+    )
+    chain_client_id: Optional[int] = Field(
+        default=None, description="Chain client ID (for ROSETTA source type)"
     )
     status: PipelineStatus = Field(..., description="Pipeline operational status")
     ready_refresh: bool = Field(
@@ -411,6 +428,9 @@ class PipelineResponse(PipelineBase, TimestampSchema):
     # Nested relationships
     source: SourceResponse | None = Field(
         default=None, description="Source configuration details"
+    )
+    chain_client: ChainClientBriefResponse | None = Field(
+        default=None, description="Chain client details (for ROSETTA source type)"
     )
     destinations: List[PipelineDestinationResponse] = Field(
         default=[], description="List of destinations"

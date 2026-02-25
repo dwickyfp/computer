@@ -28,6 +28,10 @@ export interface Pipeline {
     is_publication_enabled?: boolean
     is_replication_enabled?: boolean
   }
+  chain_client?: {
+    id: number
+    name: string
+  } | null
   destinations?: {
     id: number
     destination: {

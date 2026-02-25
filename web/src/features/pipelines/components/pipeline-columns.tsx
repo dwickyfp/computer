@@ -42,7 +42,12 @@ export const pipelineColumns: ColumnDef<Pipeline>[] = [
     id: 'pipelines',
     header: 'Pipelines',
     cell: ({ row }) => {
-      const sourceName = row.original.source?.name || 'Unknown Source'
+      const isRosettaSource = row.original.source_type === 'ROSETTA'
+      const sourceName =
+        row.original.source?.name ||
+        (isRosettaSource
+          ? (row.original.chain_client?.name ?? 'Rosetta Chain')
+          : 'Unknown Source')
       const destinations = row.original.destinations || []
       const destCount = destinations.length
       const firstDestName = destinations[0]?.destination?.name
