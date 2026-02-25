@@ -89,7 +89,7 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
             else "POSTGRES"
         )
 
-        if source_type == "ROSETTA":
+        if source_type in ["ROSETTA", "CATALOG_TABLE"]:
             subprocess_logger.info(
                 f"Starting chain pipeline engine for pipeline {pipeline_id}"
             )

@@ -163,6 +163,10 @@ class DestinationResponse(DestinationBase, TimestampSchema):
         default=None,
         description="ISO timestamp of the last table list check",
     )
+    chain_client_id: Optional[int] = Field(
+        default=None,
+        description="Chain client that owns this destination (ROSETTA type only)",
+    )
 
     @validator("config", pre=True, always=True)
     def mask_sensitive_config(cls, v: dict[str, Any]) -> dict[str, Any]:

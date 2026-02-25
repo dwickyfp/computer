@@ -35,6 +35,7 @@ export interface ChainClient {
   url: string
   port: number
   is_active: boolean
+  description: string | null
   last_connected_at: string | null
   tables: ChainTable[]
   created_at: string
@@ -136,6 +137,14 @@ export const chainRepo = {
   syncDestinations: async () => {
     const { data } = await api.post<{ created: number; message: string }>(
       '/chain/clients/sync-destinations'
+    )
+    return data
+  },
+
+  registerCatalogTable: async (clientId: number, payload: any) => {
+    const { data } = await api.post(
+      `/chain/clients/${clientId}/catalog/register`,
+      payload
     )
     return data
   },

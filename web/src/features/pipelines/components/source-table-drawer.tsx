@@ -310,6 +310,7 @@ export function SourceTableDrawer({
                     tables={filteredTables}
                     pipelineId={pipeline.id}
                     pipelineDestinationId={selectedDestinationId!}
+                    destination={currentDestination?.destination as any}
                     onRefresh={loadTables}
                   />
                 ) : (

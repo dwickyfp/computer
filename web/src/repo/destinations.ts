@@ -10,6 +10,7 @@ export interface Destination {
     is_used_in_active_pipeline?: boolean
     total_tables?: number
     last_table_check_at?: string | null
+    chain_client_id?: number | null
 }
 
 export interface DestinationTableList {

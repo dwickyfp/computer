@@ -1,16 +1,25 @@
 import { useState } from 'react'
 import { type TableWithSyncInfo, tableSyncRepo } from '@/repo/pipelines'
-import { Loader2, Unplug } from 'lucide-react'
+import { Loader2, Unplug, Settings2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { RosettaSchemaRegistration } from './rosetta-schema-registration'
+import { Destination } from '@/repo/destinations'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 interface RosettaTableConfigProps {
   tables: TableWithSyncInfo[]
   pipelineId: number
   pipelineDestinationId: number
+  destination?: Destination
   onRefresh: () => void
 }
 
@@ -18,10 +27,15 @@ export function RosettaTableConfig({
   tables,
   pipelineId,
   pipelineDestinationId,
+  destination,
   onRefresh,
 }: RosettaTableConfigProps) {
   const [processingTable, setProcessingTable] = useState<string | null>(null)
   const [registeringAll, setRegisteringAll] = useState(false)
+  
+  // Registration Modal State
+  const [schemaModalOpen, setSchemaModalOpen] = useState(false)
+  const [activeTableForSchema, setActiveTableForSchema] = useState<TableWithSyncInfo | null>(null)
 
   const handleToggleSync = async (table: TableWithSyncInfo) => {
     const isSynced = table.sync_configs && table.sync_configs.length > 0
@@ -73,6 +87,15 @@ export function RosettaTableConfig({
     } finally {
       setRegisteringAll(false)
     }
+  }
+
+  const openSchemaRegistration = (table: TableWithSyncInfo) => {
+    if (!destination?.chain_client_id) {
+      toast.error("Destination does not have a linked chain client ID.")
+      return
+    }
+    setActiveTableForSchema(table)
+    setSchemaModalOpen(true)
   }
 
   const registeredCount = tables.filter(
@@ -133,48 +156,77 @@ export function RosettaTableConfig({
           <div
             key={table.table_name}
             className={cn(
-              'flex items-center justify-between rounded-lg border px-3 py-2.5 transition-colors',
+              'flex flex-col gap-2 rounded-lg border px-3 py-2.5 transition-colors',
               isSynced
                 ? 'border-primary/20 bg-primary/5'
                 : 'border-border bg-card'
             )}
           >
-            <div className='flex min-w-0 flex-1 items-center gap-2'>
-              <Unplug
-                className={cn(
-                  'h-3.5 w-3.5 flex-shrink-0',
-                  isSynced ? 'text-primary' : 'text-muted-foreground'
-                )}
-              />
-              <span
-                className={cn(
-                  'truncate font-mono text-sm',
-                  isSynced ? 'text-foreground' : 'text-muted-foreground'
-                )}
-              >
-                {table.table_name}
-              </span>
-              {table.columns && table.columns.length > 0 && (
-                <span className='flex-shrink-0 text-xs text-muted-foreground'>
-                  {table.columns.length} cols
-                </span>
-              )}
-            </div>
-
-            <div className='ml-3 flex-shrink-0'>
-              {isProcessing ? (
-                <Loader2 className='h-4 w-4 animate-spin text-muted-foreground' />
-              ) : (
-                <Switch
-                  checked={isSynced}
-                  onCheckedChange={() => handleToggleSync(table)}
-                  aria-label={`Toggle sync for ${table.table_name}`}
+            <div className='flex items-center justify-between'>
+              <div className='flex min-w-0 flex-1 items-center gap-2'>
+                <Unplug
+                  className={cn(
+                    'h-3.5 w-3.5 flex-shrink-0',
+                    isSynced ? 'text-primary' : 'text-muted-foreground'
+                  )}
                 />
-              )}
+                <span
+                  className={cn(
+                    'truncate font-mono text-sm',
+                    isSynced ? 'text-foreground' : 'text-muted-foreground'
+                  )}
+                >
+                  {table.table_name}
+                </span>
+                {table.columns && table.columns.length > 0 && (
+                  <span className='flex-shrink-0 text-xs text-muted-foreground'>
+                    {table.columns.length} cols
+                  </span>
+                )}
+              </div>
+
+              <div className='ml-3 flex-shrink-0 flex items-center space-x-3'>
+                {isSynced && destination?.chain_client_id && (
+                  <TooltipProvider delayDuration={300}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          variant='ghost' 
+                          size='icon' 
+                          className='h-6 w-6'
+                          onClick={() => openSchemaRegistration(table)}
+                        >
+                          <Settings2 className='h-3.5 w-3.5 text-muted-foreground' />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Register Managed Destination</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+
+                {isProcessing ? (
+                  <Loader2 className='h-4 w-4 animate-spin text-muted-foreground' />
+                ) : (
+                  <Switch
+                    checked={isSynced}
+                    onCheckedChange={() => handleToggleSync(table)}
+                    aria-label={`Toggle sync for ${table.table_name}`}
+                  />
+                )}
+              </div>
             </div>
           </div>
         )
       })}
+
+      <RosettaSchemaRegistration
+        open={schemaModalOpen}
+        onOpenChange={setSchemaModalOpen}
+        table={activeTableForSchema}
+        chainId={destination?.chain_client_id as number}
+      />
     </div>
   )
 }

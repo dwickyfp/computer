@@ -176,6 +176,17 @@ def main() -> int:
         )
         chain_cleanup_thread.start()
 
+        # Start Catalog Health Worker
+        from core.catalog_health_worker import CatalogHealthWorker
+        catalog_health_worker = CatalogHealthWorker(check_interval_seconds=60)
+        catalog_health_thread = threading.Thread(
+            target=catalog_health_worker.run,
+            args=(chain_cleanup_stop,),
+            daemon=True,
+            name="catalog_health_worker",
+        )
+        catalog_health_thread.start()
+
         # Keep main thread alive to handle signals and facilitate clean shutdown
         while True:
             time.sleep(1)

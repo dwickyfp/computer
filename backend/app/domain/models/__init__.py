@@ -53,6 +53,7 @@ from app.domain.models.rosetta_chain import (
     RosettaChainClient,
     RosettaChainTable,
 )
+from app.domain.models.catalog import CatalogDatabase, CatalogTable
 
 
 __all__ = [
@@ -81,6 +82,15 @@ __all__ = [
     "FlowTaskTriggerType",
     "FlowTaskRunStatus",
     "FlowTaskNodeStatus",
+    "LinkedTask",
+    "LinkedTaskStep",
+    "LinkedTaskEdge",
+    "LinkedTaskRunHistory",
+    "LinkedTaskRunStepLog",
+    "LinkedTaskStatus",
+    "LinkedTaskRunStatus",
+    "LinkedTaskStepStatus",
+    "LinkedTaskEdgeCondition",
     "Schedule",
     "ScheduleRunHistory",
     "ScheduleTaskType",

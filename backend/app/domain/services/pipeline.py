@@ -759,13 +759,26 @@ class PipelineService:
 
             # 2. Get Source Tables
             self._update_progress(progress, 10, "Fetching source tables", "IN_PROGRESS")
-            source_service = SourceService(self.db)
-            source_details = source_service.get_source_details(pipeline.source_id)
-
-            # Use source_details.tables (list of source_detail.SourceTableInfo)
-            # SourceTableInfo has: id, table_name, schema_table (List[dict])
-            tables = source_details.tables
-
+            
+            tables = []
+            if pipeline.source_type == "POSTGRES":
+                source_service = SourceService(self.db)
+                source_details = source_service.get_source_details(pipeline.source_id)
+                tables = source_details.tables
+            elif pipeline.source_type == "CATALOG_TABLE":
+                from app.domain.services.catalog import CatalogService
+                catalog_service = CatalogService(self.db)
+                catalog_table = catalog_service.get_table(pipeline.catalog_table_id)
+                if catalog_table:
+                    # Mock SourceTableInfo structure for provision_table
+                    tables = [
+                        {
+                            "id": catalog_table.id,
+                            "table_name": catalog_table.table_name,
+                            "schema_definition": catalog_table.schema_definition
+                        }
+                    ]
+            
             if not tables:
                 self._update_progress(
                     progress, 100, "No tables to process", "COMPLETED"

@@ -186,3 +186,21 @@ def sync_client_tables(
 ):
     """Fetch and sync table list from a remote Rosetta instance."""
     return service.sync_client_tables(client_id)
+
+
+from typing import Dict, Any
+from fastapi import Body
+
+@router.post(
+    "/clients/{client_id}/catalog/register",
+)
+def register_catalog_table(
+    client_id: int,
+    payload: Dict[str, Any] = Body(...),
+    service: RosettaChainService = Depends(get_chain_service),
+):
+    """
+    Register a table schema to the remote Rosetta instance's catalog.
+    (Rosetta A -> B Handshake)
+    """
+    return service.register_catalog_table(client_id, payload)

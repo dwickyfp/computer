@@ -20,6 +20,7 @@ export const chainClientSchema = z.object({
   url: z.string(),
   port: z.number().default(8001),
   is_active: z.boolean(),
+  description: z.string().nullable().optional(),
   last_connected_at: z.string().nullable().optional(),
   tables: z.array(chainTableSchema).default([]),
   created_at: z.string(),

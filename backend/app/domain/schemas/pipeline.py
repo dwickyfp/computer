@@ -40,13 +40,18 @@ class PipelineCreate(PipelineBase):
     )
     source_type: str = Field(
         default="POSTGRES",
-        description="Source type: POSTGRES or ROSETTA",
-        examples=["POSTGRES", "ROSETTA"],
+        description="Source type: POSTGRES, ROSETTA, or CATALOG_TABLE",
+        examples=["POSTGRES", "ROSETTA", "CATALOG_TABLE"],
     )
     chain_client_id: Optional[int] = Field(
         default=None,
         ge=1,
         description="Chain client ID (required for ROSETTA source_type)",
+    )
+    catalog_table_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Catalog table ID (required for CATALOG_TABLE source_type)",
     )
     status: PipelineStatus = Field(
         default=PipelineStatus.START,
@@ -56,7 +61,7 @@ class PipelineCreate(PipelineBase):
 
     @validator("source_type")
     def validate_source_type(cls, v: str) -> str:
-        allowed = ["POSTGRES", "ROSETTA"]
+        allowed = ["POSTGRES", "ROSETTA", "CATALOG_TABLE"]
         if v.upper() not in allowed:
             raise ValueError(f"source_type must be one of {allowed}")
         return v.upper()
@@ -73,6 +78,13 @@ class PipelineCreate(PipelineBase):
         source_type = values.get("source_type", "POSTGRES")
         if source_type == "ROSETTA" and v is None:
             raise ValueError("chain_client_id is required when source_type is ROSETTA")
+        return v
+
+    @validator("catalog_table_id", always=True)
+    def validate_catalog_table_id(cls, v, values):
+        source_type = values.get("source_type", "POSTGRES")
+        if source_type == "CATALOG_TABLE" and v is None:
+            raise ValueError("catalog_table_id is required when source_type is CATALOG_TABLE")
         return v
 
     @validator("name")

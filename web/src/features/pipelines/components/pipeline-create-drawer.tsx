@@ -6,6 +6,7 @@ import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { chainRepo } from '@/repo/chains'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { sourcesRepo } from '@/repo/sources'
+import { catalogRepo } from '@/repo/catalog'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -43,9 +44,11 @@ const formSchema = z
         /^[a-z0-9-_]+$/,
         'Name must be alphanumeric, hyphen, or underscore'
       ),
-    source_type: z.enum(['POSTGRES', 'ROSETTA']),
+    source_type: z.enum(['POSTGRES', 'ROSETTA', 'CATALOG_TABLE']),
     source_id: z.string().optional(),
     chain_client_id: z.string().optional(),
+    catalog_database_id: z.string().optional(),
+    catalog_table_id: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.source_type === 'POSTGRES' && !data.source_id) {
@@ -60,6 +63,13 @@ const formSchema = z
         code: z.ZodIssueCode.custom,
         message: 'Chain client is required',
         path: ['chain_client_id'],
+      })
+    }
+    if (data.source_type === 'CATALOG_TABLE' && !data.catalog_table_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Catalog table is required',
+        path: ['catalog_table_id'],
       })
     }
   })
@@ -112,8 +122,10 @@ export function PipelineCreateDrawer({
       }
       if (values.source_type === 'POSTGRES') {
         payload.source_id = parseInt(values.source_id!)
-      } else {
+      } else if (values.source_type === 'ROSETTA') {
         payload.chain_client_id = parseInt(values.chain_client_id!)
+      } else if (values.source_type === 'CATALOG_TABLE') {
+        payload.catalog_table_id = parseInt(values.catalog_table_id!)
       }
       return pipelinesRepo.create(payload)
     },
@@ -264,6 +276,63 @@ export function PipelineCreateDrawer({
                 />
               )}
 
+              {sourceType === 'CATALOG_TABLE' && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name='catalog_database_id'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Catalog Database</FormLabel>
+                        <Select
+                          onValueChange={(val) => {
+                            field.onChange(val)
+                            form.setValue('catalog_table_id', '') // Reset table when DB changes
+                          }}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue placeholder='Select a database' />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <CatalogDatabaseSelectOptions />
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {form.watch('catalog_database_id') && (
+                    <FormField
+                      control={form.control}
+                      name='catalog_table_id'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Catalog Table</FormLabel>
+                          <Select
+                            onValueChange={field.onChange}
+                            defaultValue={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue placeholder='Select a table' />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <CatalogTableSelectOptions dbId={parseInt(form.watch('catalog_database_id')!)} />
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </>
+              )}
+
               <SheetFooter>
                 <Button type='submit' disabled={isPending}>
                   {isPending ? 'Creating...' : 'Create'}
@@ -277,5 +346,46 @@ export function PipelineCreateDrawer({
         </div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+function CatalogDatabaseSelectOptions() {
+  const { data: databases, isLoading } = useQuery({
+    queryKey: ['catalog-databases'],
+    queryFn: catalogRepo.getDatabases,
+  })
+
+  if (isLoading) return <SelectItem value="loading" disabled>Loading...</SelectItem>
+  if (!databases?.length) return <SelectItem value="empty" disabled>No databases found</SelectItem>
+
+  return (
+    <>
+      {databases.map((db: any) => (
+        <SelectItem key={db.id} value={db.id.toString()}>
+          {db.name}
+        </SelectItem>
+      ))}
+    </>
+  )
+}
+
+function CatalogTableSelectOptions({ dbId }: { dbId: number }) {
+  const { data: tables, isLoading } = useQuery({
+    queryKey: ['catalog-tables', dbId],
+    queryFn: () => catalogRepo.getTables(dbId),
+    enabled: !!dbId,
+  })
+
+  if (isLoading) return <SelectItem value="loading" disabled>Loading...</SelectItem>
+  if (!tables?.length) return <SelectItem value="empty" disabled>No tables found</SelectItem>
+
+  return (
+    <>
+      {tables.map((tbl: any) => (
+        <SelectItem key={tbl.id} value={tbl.id.toString()}>
+          {tbl.table_name}
+        </SelectItem>
+      ))}
+    </>
   )
 }

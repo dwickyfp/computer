@@ -254,6 +254,30 @@ class RosettaChainService:
 
         return self.get_client_tables(client_id)
 
+    def register_catalog_table(self, client_id: int, payload: dict) -> dict:
+        """
+        Register a table schema to a remote Rosetta instance's catalog.
+        
+        Acts as a proxy: Rosetta A -> Rosetta B.
+        """
+        client = self._client_repo.get_by_id(client_id)
+        
+        try:
+            raw_key = decrypt_value(client.chain_key)
+        except Exception:
+            raise Exception("Failed to decrypt chain key")
+            
+        url = self._build_client_url(client, "/catalog/register")
+        
+        with httpx.Client(timeout=10.0) as http:
+            resp = http.post(url, headers={"X-Chain-Key": raw_key}, json=payload)
+            
+            if resp.status_code != 200:
+                logger.error(f"Catalog registration failed on {client.name}: {resp.text}")
+                raise Exception(f"Remote registration failed: {resp.status_code}")
+                
+            return resp.json()
+
     # ─── Linked Destination Helpers ────────────────────────────────────────
 
     def _build_client_url(self, client: RosettaChainClient, path: str) -> str:

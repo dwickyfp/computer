@@ -90,10 +90,28 @@ class ChainPipelineEngine:
 
     def _get_stream_keys(self) -> list[str]:
         """
-        Get all Redis Stream keys for this pipeline's chain client.
-
-        Discovers streams matching the chain prefix pattern.
+        Get all Redis Stream keys for this pipeline's chain client or catalog table.
         """
+        source_type = getattr(self._pipeline, "source_type", "POSTGRES")
+        
+        if source_type == "CATALOG_TABLE":
+            # source_id holds the catalog_table.id
+            table_id = self._pipeline.source_id
+            if not table_id:
+                raise PipelineException(
+                    "Catalog Table pipeline requires source_id",
+                    {"pipeline_id": self._pipeline_id},
+                )
+            
+            from core.database import DatabaseSession
+            with DatabaseSession(autocommit=True) as session:
+                session.execute("SELECT stream_name FROM catalog_tables WHERE id = %(table_id)s", {"table_id": table_id})
+                row = session.fetchone()
+                if not row:
+                    raise PipelineException(f"Catalog table {table_id} not found")
+                return [row["stream_name"]]
+
+        # ROSETTA chain client logic
         config = get_config()
         prefix = config.chain.redis_stream_prefix
         chain_client_id = self._pipeline.chain_client_id
@@ -104,7 +122,6 @@ class ChainPipelineEngine:
                 {"pipeline_id": self._pipeline_id},
             )
 
-        # Pattern: rosetta:chain:{chain_client_id}:*
         pattern = f"{prefix}{chain_client_id}:*"
         keys = []
         cursor = 0

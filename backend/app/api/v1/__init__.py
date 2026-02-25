@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     schedules,
     schema_validation,
     rosetta_chain,
+    catalog,
 )
 
 # Create v1 router
@@ -77,3 +78,5 @@ api_router.include_router(
 )
 
 api_router.include_router(rosetta_chain.router, prefix="/chain", tags=["rosetta-chain"])
+
+api_router.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
