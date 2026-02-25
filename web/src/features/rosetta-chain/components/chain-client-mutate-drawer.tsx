@@ -173,7 +173,7 @@ export function ChainClientMutateDrawer({
                 <FormItem>
                   <FormLabel>Compute URL</FormLabel>
                   <FormControl>
-                    <Input {...field} placeholder='http://remote-host:8001' />
+                    <Input {...field} placeholder='remote-host or IP' />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

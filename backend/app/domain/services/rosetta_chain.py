@@ -161,7 +161,7 @@ class RosettaChainService:
                 latency_ms=None,
             )
 
-        url = f"http://{client.url}:{client.port}/chain/health"
+        url = self._build_client_url(client, "/chain/health")
         start = time.monotonic()
 
         try:
@@ -222,7 +222,7 @@ class RosettaChainService:
             logger.error(f"Failed to decrypt chain key for client {client_id}")
             return []
 
-        url = f"http://{client.url}:{client.port}/chain/tables"
+        url = self._build_client_url(client, "/chain/tables")
 
         try:
             with httpx.Client(timeout=15.0) as http:
@@ -255,6 +255,13 @@ class RosettaChainService:
         return self.get_client_tables(client_id)
 
     # ─── Linked Destination Helpers ────────────────────────────────────────
+
+    def _build_client_url(self, client: RosettaChainClient, path: str) -> str:
+        """Sanitize client URL and build full endpoints URL."""
+        base_url = client.url.replace("http://", "").replace("https://", "").strip("/")
+        if ":" in base_url:
+            base_url = base_url.split(":")[0]
+        return f"http://{base_url}:{client.port}{path}"
 
     def _destination_name(self, client_name: str) -> str:
         """Canonical name for the auto-created ROSETTA destination."""

@@ -37,8 +37,10 @@ export const chainClientFormSchema = z.object({
     .regex(/^\S*$/, 'Name must not contain whitespace'),
   url: z
     .string()
-    .min(1, 'URL is required')
-    .url('Must be a valid URL (e.g., http://host:8001)'),
+    .min(1, 'Host/IP is required')
+    .refine((val) => !val.startsWith('http://') && !val.startsWith('https://'), {
+      message: 'Do not include http:// or https://, just the host/IP',
+    }),
   port: z.coerce.number().int().min(1).max(65535).default(8001),
   chain_key: z.string().optional(),
   description: z.string().optional(),

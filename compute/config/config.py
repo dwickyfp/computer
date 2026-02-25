@@ -162,7 +162,7 @@ class SnowflakeConfig:
 class ChainConfig:
     """Rosetta Chain configuration for Arrow IPC ingestion."""
 
-    enabled: bool = False
+    enabled: bool = True
     redis_stream_prefix: str = "rosetta:chain"
     max_stream_length: int = 100000  # MAXLEN cap per chain stream
     consumer_group: str = "chain_pipeline"
@@ -248,7 +248,7 @@ class Config:
                 batch_timeout_max=int(os.getenv("SNOWFLAKE_BATCH_TIMEOUT_MAX", "600")),
             ),
             chain=ChainConfig(
-                enabled=os.getenv("CHAIN_ENABLED", "false").lower() == "true",
+                enabled=True,
                 redis_stream_prefix=os.getenv("CHAIN_REDIS_PREFIX", "rosetta:chain"),
                 max_stream_length=int(os.getenv("CHAIN_MAX_STREAM_LENGTH", "100000")),
                 consumer_group=os.getenv("CHAIN_CONSUMER_GROUP", "chain_pipeline"),
