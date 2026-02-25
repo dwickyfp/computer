@@ -128,7 +128,9 @@ class ChainPipelineEngine:
                 {"pipeline_id": self._pipeline_id},
             )
 
-        pattern = f"{prefix}{chain_client_id}:*"
+        # Pattern must match the key format used by ChainIngestManager.get_stream_key():
+        # f"{prefix}:{chain_id}:{table_name}" → e.g. "rosetta:chain:3:tbl_xxx"
+        pattern = f"{prefix}:{chain_client_id}:*"
         keys = []
         cursor = 0
         while True:
@@ -229,29 +231,35 @@ class ChainPipelineEngine:
         """
         Convert a Redis Stream entry back to a CDCRecord.
 
-        Fields stored by ChainIngestManager:
-            operation, key_json, and individual column values.
+        ChainIngestManager._batch_to_records() stores entries as:
+            b"operation"  → CDC op string (c/u/d/r)
+            b"table_name" → table name
+            b"key"        → JSON-encoded primary key dict
+            b"value"      → JSON-encoded dict of ALL column values
+            b"schema"     → JSON-encoded schema (usually {})
         """
 
         def _decode(v):
             return v.decode() if isinstance(v, bytes) else v
 
         operation = _decode(fields.get(b"operation", b"c"))
-        key_json_str = _decode(fields.get(b"key_json", b"{}"))
         table_name = _decode(fields.get(b"table_name", b""))
 
+        # Key is stored as a JSON string under b"key" (not b"key_json")
+        key_raw = _decode(fields.get(b"key", b"{}"))
         try:
-            key = json.loads(key_json_str)
+            key = json.loads(key_raw)
         except (json.JSONDecodeError, TypeError):
             key = {}
 
-        # Extract column values (everything except metadata fields)
-        meta_fields = {b"operation", b"key_json", b"table_name", b"timestamp"}
-        value = {}
-        for k, v in fields.items():
-            if k not in meta_fields:
-                col_name = _decode(k)
-                value[col_name] = _decode(v)
+        # All column values are stored as a single JSON blob under b"value"
+        value_raw = _decode(fields.get(b"value", b"{}"))
+        try:
+            value = json.loads(value_raw)
+            if not isinstance(value, dict):
+                value = {}
+        except (json.JSONDecodeError, TypeError):
+            value = {}
 
         timestamp_raw = fields.get(b"timestamp")
         timestamp = int(_decode(timestamp_raw)) if timestamp_raw else None
@@ -291,8 +299,9 @@ class ChainPipelineEngine:
                     if table_sync:
                         dest.write_batch(table_records, table_sync)
                     else:
-                        self._logger.debug(
-                            f"No table sync config for {table_name} → dest {dest_id}"
+                        self._logger.warning(
+                            f"No table sync config for table '{table_name}' → dest {dest_id}. "
+                            f"Add this table in the pipeline's table sync configuration."
                         )
                 except Exception as e:
                     self._logger.error(

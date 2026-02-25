@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { type TableWithSyncInfo, tableSyncRepo, type TableSyncConfig } from '@/repo/pipelines'
-import { Loader2, Unplug, Settings2, Plus, Database, AlertCircle } from 'lucide-react'
+import { Loader2, Unplug, Plus, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'

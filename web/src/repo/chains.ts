@@ -25,6 +25,7 @@ export interface ChainTable {
   table_name: string
   table_schema: Record<string, unknown>
   record_count: number
+  last_synced_at: string | null
   created_at: string
   updated_at: string
 }
@@ -46,6 +47,7 @@ export interface ChainClient {
   description: string | null
   last_connected_at: string | null
   tables: ChainTable[]
+  databases: ChainDatabase[]
   created_at: string
   updated_at: string
 }
