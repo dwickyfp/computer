@@ -55,7 +55,9 @@ class ChainPipelineEngine:
 
     def _load_pipeline(self) -> Pipeline:
         """Load pipeline configuration from database."""
-        pipeline = PipelineRepository.get_by_id(self._pipeline_id, include_relations=True)
+        pipeline = PipelineRepository.get_by_id(
+            self._pipeline_id, include_relations=True
+        )
         if pipeline is None:
             raise PipelineException(
                 f"Pipeline {self._pipeline_id} not found",
@@ -93,7 +95,7 @@ class ChainPipelineEngine:
         Get all Redis Stream keys for this pipeline's chain client or catalog table.
         """
         source_type = getattr(self._pipeline, "source_type", "POSTGRES")
-        
+
         if source_type == "CATALOG_TABLE":
             # source_id holds the catalog_table.id
             table_id = self._pipeline.source_id
@@ -102,10 +104,14 @@ class ChainPipelineEngine:
                     "Catalog Table pipeline requires source_id",
                     {"pipeline_id": self._pipeline_id},
                 )
-            
+
             from core.database import DatabaseSession
+
             with DatabaseSession(autocommit=True) as session:
-                session.execute("SELECT stream_name FROM catalog_tables WHERE id = %(table_id)s", {"table_id": table_id})
+                session.execute(
+                    "SELECT stream_name FROM catalog_tables WHERE id = %(table_id)s",
+                    {"table_id": table_id},
+                )
                 row = session.fetchone()
                 if not row:
                     raise PipelineException(f"Catalog table {table_id} not found")
