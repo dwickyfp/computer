@@ -327,8 +327,17 @@ class RosettaChainService:
 
         url = self._build_client_url(client, "/chain/schema")
 
+        # Ensure chain_client_id is present — required by the remote compute endpoint.
+        # Use the local client_id as the scoping identifier on the remote side.
+        forwarded_payload = {
+            **payload,
+            "chain_client_id": payload.get("chain_client_id") or client_id,
+        }
+
         with httpx.Client(timeout=10.0) as http:
-            resp = http.post(url, headers={"X-Chain-Key": raw_key}, json=payload)
+            resp = http.post(
+                url, headers={"X-Chain-Key": raw_key}, json=forwarded_payload
+            )
 
             if resp.status_code != 200:
                 logger.error(
