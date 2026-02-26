@@ -1571,7 +1571,10 @@ class PipelineService:
                 # Parse columns from chain table schema_json
                 columns = []
                 schema_data = chain_table.table_schema or {}
-                # schema_json may be {"columns": [...]} or a flat dict of col defs
+                # schema_json is a flat dict of col defs keyed by column name.
+                # Older rows may have the minimal {col: {"type": "TEXT"}} format;
+                # newer rows have the normalized {col: {column_name, real_data_type, ...}}.
+                # Both are handled below via the multi-key fallback.
                 col_list = (
                     schema_data.get("columns")
                     if isinstance(schema_data, dict)
@@ -1581,12 +1584,18 @@ class PipelineService:
                     col_list = list(schema_data.values())
                 for col in col_list or []:
                     if isinstance(col, dict):
+                        # Multi-key fallback: normalized, legacy "data_type", old inferred "type"
+                        data_type = (
+                            col.get("real_data_type")
+                            or col.get("data_type")
+                            or col.get("type", "TEXT")
+                        )
+                        col_name = col.get("column_name") or col.get("name", "")
                         columns.append(
                             ColumnSchemaResponse(
-                                column_name=col.get("column_name", col.get("name", "")),
-                                data_type=col.get("real_data_type")
-                                or col.get("data_type", ""),
-                                real_data_type=col.get("real_data_type"),
+                                column_name=col_name,
+                                data_type=data_type,
+                                real_data_type=col.get("real_data_type") or data_type,
                                 is_nullable=col.get("is_nullable") in [True, "YES"],
                                 is_primary_key=col.get("is_primary_key", False),
                                 has_default=col.get("has_default", False),
@@ -1595,13 +1604,15 @@ class PipelineService:
                                     if col.get("default_value") is not None
                                     else None
                                 ),
+                                numeric_precision=col.get("numeric_precision"),
+                                numeric_scale=col.get("numeric_scale"),
                             )
                         )
                     elif isinstance(col, str):
                         columns.append(
                             ColumnSchemaResponse(
                                 column_name=col,
-                                data_type="UNKNOWN",
+                                data_type="TEXT",
                                 is_nullable=True,
                                 is_primary_key=False,
                             )

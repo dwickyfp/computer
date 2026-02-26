@@ -600,26 +600,47 @@ class ChainPipelineEngine:
         Register a chain table in rosetta_chain_tables so it appears in the
         Data Explorer.  Called at most once per table per engine lifetime.
 
-        Infers a minimal column schema from the first record's values so the
-        Data Explorer can show column information without requiring the remote
-        sender to push a Debezium schema.
+        Infers a normalized column schema from the first record's values so the
+        Data Explorer and Filter Table UI can show column information without
+        requiring the remote sender to push a Debezium schema.
+
+        Schema is stored in schema_monitor-compatible format:
+        {col_name: {column_name, real_data_type, is_primary_key, is_nullable, ...}}
         """
         try:
             from chain.schema import ChainSchemaManager
 
-            # Build a minimal schema from the records' value keys
+            # Determine primary key columns from the first record that has key info
+            pk_columns: set[str] = set()
+            for rec in records:
+                if rec.key:
+                    pk_columns = set(rec.key.keys())
+                    break
+
+            # Build normalized schema from the first record's value keys
             sample = records[0].value if records else {}
             schema_json: dict = {}
             for col, val in sample.items():
                 if isinstance(val, bool):
-                    pg_type = "boolean"
+                    pg_type = "BOOLEAN"
                 elif isinstance(val, int):
-                    pg_type = "bigint"
+                    pg_type = "BIGINT"
                 elif isinstance(val, float):
-                    pg_type = "double precision"
+                    pg_type = "DOUBLE PRECISION"
                 else:
-                    pg_type = "text"
-                schema_json[col] = {"type": pg_type}
+                    pg_type = "TEXT"
+
+                schema_json[col] = {
+                    "column_name": col,
+                    "real_data_type": pg_type,
+                    "data_type": pg_type,
+                    "is_nullable": col not in pk_columns,
+                    "is_primary_key": col in pk_columns,
+                    "has_default": False,
+                    "default_value": None,
+                    "numeric_precision": None,
+                    "numeric_scale": None,
+                }
 
             mgr = ChainSchemaManager()
             chain_client_id = self._pipeline.chain_client_id
@@ -632,7 +653,8 @@ class ChainPipelineEngine:
             self._registered_tables.add(table_name)
             self._logger.debug(
                 f"Registered chain table '{table_name}' in Data Explorer "
-                f"(client {chain_client_id})"
+                f"(client {chain_client_id}, {len(schema_json)} columns, "
+                f"pk={list(pk_columns) or 'none'})"
             )
         except Exception as e:
             # Non-fatal — pipeline continues even if registration fails

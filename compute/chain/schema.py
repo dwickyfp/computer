@@ -14,6 +14,139 @@ from core.database import get_db_connection, return_db_connection
 logger = logging.getLogger(__name__)
 
 
+_PG_TYPE_MAP = {
+    "int2": "SMALLINT",
+    "int4": "INTEGER",
+    "int8": "BIGINT",
+    "float4": "REAL",
+    "float8": "DOUBLE PRECISION",
+    "bool": "BOOLEAN",
+    "varchar": "CHARACTER VARYING",
+    "bpchar": "CHARACTER",
+    "timestamptz": "TIMESTAMP WITH TIME ZONE",
+    "timestamp": "TIMESTAMP WITHOUT TIME ZONE",
+    "jsonb": "JSONB",
+    "json": "JSON",
+    "uuid": "UUID",
+    "text": "TEXT",
+    "bytea": "BYTEA",
+    "numeric": "NUMERIC",
+    "date": "DATE",
+    "time": "TIME WITHOUT TIME ZONE",
+    "timetz": "TIME WITH TIME ZONE",
+}
+
+
+def _resolve_pg_type(raw_type: str) -> str:
+    """Resolve a raw PG/Debezium type token to an uppercase canonical PG type."""
+    t = (raw_type or "TEXT").strip()
+    # Already upper-case canonical (e.g. "CHARACTER VARYING") — keep as-is
+    if " " in t:
+        return t.upper()
+    lower = t.lower()
+    return _PG_TYPE_MAP.get(lower, t.upper())
+
+
+def normalize_schema_json(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize any incoming schema dict into the schema_monitor-compatible
+    format stored in ``table_metadata_list.schema_table``.
+
+    Handles three common input shapes:
+
+    1. **Already normalized** — values are dicts containing ``column_name``.
+       Passed through with type resolution.
+
+    2. **Minimal inferred** — ``{col: {"type": "TEXT"}}`` produced by
+       ``chain_engine._register_chain_table()``.  Maps ``type`` →
+       ``real_data_type`` / ``data_type``.
+
+    3. **Debezium struct schema** — ``{"type": "struct", "fields": [...]}``.  
+       Each field has ``field`` (name) and ``type`` (Debezium logical type).
+
+    Output format per column::
+
+        {
+            "column_name": str,
+            "real_data_type": str,   # uppercase canonical PG type
+            "data_type": str,
+            "is_nullable": bool,
+            "is_primary_key": bool,
+            "has_default": bool,
+            "default_value": None,
+            "numeric_precision": None,
+            "numeric_scale": None,
+        }
+    """
+    if not raw or not isinstance(raw, dict):
+        return {}
+
+    # ── Debezium struct: {"type": "struct", "fields": [...]}
+    if raw.get("type") == "struct" and "fields" in raw:
+        result: dict[str, Any] = {}
+        for field in raw["fields"]:
+            col_name = field.get("field") or field.get("name") or ""
+            if not col_name:
+                continue
+            raw_type = field.get("type", "TEXT")
+            pg_type = _resolve_pg_type(raw_type)
+            result[col_name] = {
+                "column_name": col_name,
+                "real_data_type": pg_type,
+                "data_type": pg_type,
+                "is_nullable": field.get("optional", True),
+                "is_primary_key": False,
+                "has_default": field.get("default") is not None,
+                "default_value": str(field["default"]) if field.get("default") is not None else None,
+                "numeric_precision": None,
+                "numeric_scale": None,
+            }
+        return result
+
+    # ── Dict of column entries
+    result = {}
+    for key, val in raw.items():
+        if not isinstance(val, dict):
+            # Bare string value or unexpected — skip
+            continue
+
+        # Already normalized: has column_name key
+        if "column_name" in val:
+            col_name = val["column_name"] or key
+            raw_type = val.get("real_data_type") or val.get("data_type") or val.get("type", "TEXT")
+            pg_type = _resolve_pg_type(raw_type)
+            result[col_name] = {
+                "column_name": col_name,
+                "real_data_type": pg_type,
+                "data_type": pg_type,
+                "is_nullable": val.get("is_nullable", True),
+                "is_primary_key": val.get("is_primary_key", False),
+                "has_default": val.get("has_default", False),
+                "default_value": val.get("default_value"),
+                "numeric_precision": val.get("numeric_precision"),
+                "numeric_scale": val.get("numeric_scale"),
+            }
+            continue
+
+        # Minimal inferred: {col: {"type": "TEXT"}} or {col: {"type": "...", "is_primary_key": bool}}
+        col_name = key
+        raw_type = val.get("type") or val.get("data_type") or val.get("real_data_type", "TEXT")
+        pg_type = _resolve_pg_type(raw_type)
+        result[col_name] = {
+            "column_name": col_name,
+            "real_data_type": pg_type,
+            "data_type": pg_type,
+            "is_nullable": val.get("is_nullable", True),
+            "is_primary_key": val.get("is_primary_key", False),
+            "has_default": False,
+            "default_value": None,
+            "numeric_precision": None,
+            "numeric_scale": None,
+        }
+
+    return result
+
+
 class ChainSchemaManager:
     """
     Manages schema definitions for chain tables.
@@ -89,6 +222,8 @@ class ChainSchemaManager:
         try:
             conn = get_db_connection()
             with conn.cursor() as cursor:
+                # Normalize before persisting so every row is in the standard format
+                schema_json = normalize_schema_json(schema_json)
                 schema_str = json.dumps(schema_json)
 
                 if chain_client_id is not None:
