@@ -61,6 +61,7 @@ export const chainClientFormSchema = z.object({
   chain_key: z
     .string()
     .optional()
+    .transform((val) => val?.trim())
     .refine(
       (val) => {
         if (!val || val.trim() === '') return true // blank = keep existing (edit mode)

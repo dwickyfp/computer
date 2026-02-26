@@ -104,7 +104,8 @@ class ChainClientCreate(ChainClientBase):
 
     @validator("chain_key")
     def validate_chain_key(cls, v: str) -> str:
-        """Reject obviously wrong values such as ISO dates or IP addresses."""
+        """Strip whitespace and reject obviously wrong values such as ISO dates or IP addresses."""
+        v = v.strip()
         import re
 
         if re.match(r"^\d{4}-\d{2}-\d{2}", v):
@@ -164,9 +165,12 @@ class ChainClientUpdate(BaseSchema):
 
     @validator("chain_key")
     def validate_chain_key(cls, v: Optional[str]) -> Optional[str]:
-        """Reject obviously wrong values such as ISO dates or IP addresses."""
+        """Strip whitespace and reject obviously wrong values such as ISO dates or IP addresses."""
         if v is None:
             return v
+        v = v.strip()
+        if not v:
+            return None
         import re
 
         if re.match(r"^\d{4}-\d{2}-\d{2}", v):

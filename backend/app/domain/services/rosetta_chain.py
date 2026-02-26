@@ -166,14 +166,20 @@ class RosettaChainService:
         """Update a remote Rosetta instance registration."""
         update_data = data.dict(exclude_unset=True)
 
-        # If chain_key is being updated, encrypt it
-        if "chain_key" in update_data and update_data["chain_key"] is not None:
-            raw_preview = update_data["chain_key"]
-            logger.info(
-                f"Storing new chain_key for client id={client_id}: "
-                f"first 8 chars='{raw_preview[:8]}...', length={len(raw_preview)}"
-            )
-            update_data["chain_key"] = encrypt_value(raw_preview)
+        # If chain_key is being updated, encrypt it.
+        # The Pydantic validator strips whitespace and returns None for blank
+        # values, so a None here means "keep existing" — remove it so the
+        # repository doesn't accidentally overwrite the stored key with NULL.
+        if "chain_key" in update_data:
+            if update_data["chain_key"] is None or update_data["chain_key"] == "":
+                del update_data["chain_key"]
+            else:
+                raw_preview = update_data["chain_key"].strip()
+                logger.info(
+                    f"Storing new chain_key for client id={client_id}: "
+                    f"first 8 chars='{raw_preview[:8]}...', length={len(raw_preview)}"
+                )
+                update_data["chain_key"] = encrypt_value(raw_preview)
 
         client = self._client_repo.update(client_id, **update_data)
 

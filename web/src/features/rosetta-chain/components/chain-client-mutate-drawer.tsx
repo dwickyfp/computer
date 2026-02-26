@@ -121,6 +121,10 @@ export function ChainClientMutateDrawer({
 
   const onSubmit = (data: ChainClientForm) => {
     const payload: any = { ...data }
+    // Trim whitespace that may have been accidentally included when copy-pasting
+    if (payload.chain_key) {
+      payload.chain_key = payload.chain_key.trim()
+    }
     if (!payload.chain_key) {
       delete payload.chain_key
     }
