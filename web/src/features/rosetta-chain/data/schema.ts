@@ -4,7 +4,7 @@ import { z } from 'zod'
 
 export const chainTableSchema = z.object({
   id: z.number(),
-  chain_client_id: z.number(),
+  chain_client_id: z.number().nullable(),
   table_name: z.string(),
   table_schema: z.record(z.string(), z.unknown()),
   record_count: z.number(),
@@ -16,7 +16,7 @@ export type ChainTable = z.infer<typeof chainTableSchema>
 
 export const chainDatabaseSchema = z.object({
   id: z.number(),
-  chain_client_id: z.number(),
+  chain_client_id: z.number().nullable(),
   name: z.string(),
   created_at: z.string(),
   updated_at: z.string(),

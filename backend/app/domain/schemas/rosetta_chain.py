@@ -4,6 +4,7 @@ Rosetta Chain Pydantic schemas for request/response validation.
 Defines schemas for chain configuration, client management, and table discovery.
 """
 
+import json
 from datetime import datetime
 from typing import Any, Optional
 
@@ -202,9 +203,28 @@ class ChainTableResponse(BaseSchema):
     """Response schema for a chain table."""
 
     id: int = Field(..., description="Unique table identifier")
-    chain_client_id: int = Field(..., description="Owning chain client ID")
+    chain_client_id: Optional[int] = Field(
+        default=None,
+        description="Owning chain client ID (None for cross-instance rows)",
+    )
     table_name: str = Field(..., description="Table name")
     table_schema: dict = Field(default_factory=dict, description="Table schema")
+
+    @validator("table_schema", pre=True, always=True)
+    def coerce_table_schema(cls, v: Any) -> dict:
+        """Parse table_schema when psycopg2 returns it as a JSON string."""
+        if v is None:
+            return {}
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        if isinstance(v, dict):
+            return v
+        return {}
+
     source_chain_id: Optional[str] = Field(
         default=None, description="Source chain identifier"
     )

@@ -102,6 +102,9 @@ class RosettaChainTableRepository:
         or cross-instance registered (chain_client_id IS NULL, source_chain_id = str(client_id)).
         The latter happens when the sender pushes schema via /chain/schema without a local
         FK match on the receiver side.
+
+        Results are deduplicated by table_name — direct rows (chain_client_id IS NOT NULL)
+        take precedence over cross-instance NULL rows so the same table never appears twice.
         """
         stmt = (
             select(RosettaChainTable)
@@ -116,7 +119,14 @@ class RosettaChainTableRepository:
             )
             .order_by(RosettaChainTable.table_name)
         )
-        return list(self.db.execute(stmt).scalars().all())
+        rows = list(self.db.execute(stmt).scalars().all())
+
+        # Deduplicate by table_name — prefer direct-linked rows over NULL rows
+        seen: dict[str, RosettaChainTable] = {}
+        for t in rows:
+            if t.table_name not in seen or t.chain_client_id is not None:
+                seen[t.table_name] = t
+        return list(seen.values())
 
     def get_by_client_and_name(
         self, chain_client_id: int, table_name: str

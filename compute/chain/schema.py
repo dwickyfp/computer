@@ -125,6 +125,37 @@ class ChainSchemaManager:
                     # ── Cross-instance registration path ─────────────────
                     # chain_client_id is unknown (remote sender's local ID is
                     # meaningless in this DB).  Use source_chain_id as the key.
+                    #
+                    # Before inserting a NULL row, check if a direct-linked row
+                    # already exists for this table (created by _register_chain_table
+                    # in the compute engine).  If it does, update that row instead to
+                    # avoid duplicate entries showing in the Data Explorer.
+                    direct_client_id = None
+                    if source_chain_id and source_chain_id.isdigit():
+                        direct_client_id = int(source_chain_id)
+                        cursor.execute(
+                            "SELECT id FROM rosetta_chain_tables "
+                            "WHERE chain_client_id = %s AND table_name = %s",
+                            (direct_client_id, table_name),
+                        )
+                        direct_existing = cursor.fetchone()
+                        if direct_existing:
+                            cursor.execute(
+                                "UPDATE rosetta_chain_tables "
+                                "SET schema_json = %s::jsonb, "
+                                "    last_synced_at = NOW(), "
+                                "    updated_at = NOW() "
+                                "WHERE chain_client_id = %s AND table_name = %s",
+                                (schema_str, direct_client_id, table_name),
+                            )
+                            logger.info(
+                                f"Updated direct-linked schema for chain table {table_name} "
+                                f"via cross-instance registration (source {source_chain_id})"
+                            )
+                            conn.commit()
+                            return True
+
+                    # No direct row — proceed with NULL chain_client_id row
                     cursor.execute(
                         "SELECT id FROM rosetta_chain_tables "
                         "WHERE chain_client_id IS NULL AND table_name = %s "

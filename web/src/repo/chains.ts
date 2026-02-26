@@ -21,7 +21,7 @@ export interface ChainKeyGenerate {
 
 export interface ChainTable {
   id: number
-  chain_client_id: number
+  chain_client_id: number | null
   table_name: string
   table_schema: Record<string, unknown>
   record_count: number
@@ -32,7 +32,7 @@ export interface ChainTable {
 
 export interface ChainDatabase {
   id: number
-  chain_client_id: number
+  chain_client_id: number | null
   name: string
   created_at: string
   updated_at: string

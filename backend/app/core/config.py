@@ -79,9 +79,7 @@ class Settings(BaseSettings):
         description="Master key for credential encryption (AES-256-GCM)",
     )
     api_key: str = Field(default="", description="Optional API key for authentication")
-    cors_origins: List[str] = Field(
-        default=["http://localhost:3000"], description="Allowed CORS origins"
-    )
+    cors_origins: List[str] = Field(default=["*"], description="Allowed CORS origins")
 
     # WAL Monitoring Configuration
     wal_monitor_enabled: bool = Field(
