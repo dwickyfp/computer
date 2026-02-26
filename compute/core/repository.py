@@ -381,7 +381,10 @@ class PipelineMetadataRepository:
                 # FK violation means the pipeline row was deleted; this is not
                 # an application error — downgrade to WARNING to avoid false alarms.
                 err_str = str(e).lower()
-                if "foreign key" in err_str or "violates foreign key constraint" in err_str:
+                if (
+                    "foreign key" in err_str
+                    or "violates foreign key constraint" in err_str
+                ):
                     logger.warning(
                         f"Pipeline {pipeline_id} no longer exists in the pipelines "
                         f"table — skipping metadata upsert (FK violation)."
