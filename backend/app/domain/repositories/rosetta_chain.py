@@ -32,9 +32,7 @@ class RosettaChainConfigRepository:
     def get(self) -> Optional[RosettaChainConfig]:
         """Get the chain config (there should be at most one row)."""
         stmt = (
-            select(RosettaChainConfig)
-            .order_by(RosettaChainConfig.id.desc())
-            .limit(1)
+            select(RosettaChainConfig).order_by(RosettaChainConfig.id.desc()).limit(1)
         )
         return self.db.execute(stmt).scalar_one_or_none()
 
