@@ -69,6 +69,9 @@ class ChainPipelineEngine:
         self, destination_type: str, config: Any, source_config: Optional[Any] = None
     ) -> BaseDestination:
         """Create destination instance based on type."""
+        destination_type = (
+            destination_type.strip() if destination_type else destination_type
+        )
         if destination_type.upper() == DestinationType.SNOWFLAKE.value:
             cfg = get_config()
             timeout_config = {
@@ -417,9 +420,7 @@ class ChainPipelineEngine:
             )
             return True
         except Exception as e:
-            self._logger.error(
-                f"Failed to auto-create chain table '{table_name}': {e}"
-            )
+            self._logger.error(f"Failed to auto-create chain table '{table_name}': {e}")
             return False
 
     def _write_to_destinations(self, records: list[CDCRecord]) -> None:

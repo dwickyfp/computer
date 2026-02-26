@@ -181,6 +181,9 @@ class PipelineEngine:
         Returns:
             BaseDestination instance
         """
+        destination_type = (
+            destination_type.strip() if destination_type else destination_type
+        )
         if destination_type.upper() == DestinationType.SNOWFLAKE.value:
             # Get Snowflake timeout config from global config
             cfg = get_config()

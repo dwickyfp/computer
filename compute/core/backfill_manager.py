@@ -122,9 +122,14 @@ class BackfillManager:
                     return
 
                 for job in stale_jobs:
-                    job_id, pipeline_id, count_record, total_record, resume_attempts, last_pk_value = (
-                        job
-                    )
+                    (
+                        job_id,
+                        pipeline_id,
+                        count_record,
+                        total_record,
+                        resume_attempts,
+                        last_pk_value,
+                    ) = job
                     progress_pct = (
                         (count_record / total_record * 100) if total_record > 0 else 0
                     )
@@ -148,7 +153,11 @@ class BackfillManager:
                     else:
                         # Reset to PENDING for retry — last_pk_value is preserved
                         # so keyset pagination resumes from the exact cursor position
-                        resume_info = f"last_pk_value={last_pk_value}" if last_pk_value else f"count_record={count_record}"
+                        resume_info = (
+                            f"last_pk_value={last_pk_value}"
+                            if last_pk_value
+                            else f"count_record={count_record}"
+                        )
                         logger.info(
                             f"Recovering backfill job {job_id} (pipeline {pipeline_id}): "
                             f"{progress_pct:.1f}% complete, will resume from {resume_info}"
@@ -331,7 +340,9 @@ class BackfillManager:
 
         # Get checkpoint for resume
         start_count = job.get("count_record", 0) or 0
-        last_pk_value = job.get("last_pk_value")  # Cursor position for keyset pagination
+        last_pk_value = job.get(
+            "last_pk_value"
+        )  # Cursor position for keyset pagination
         pk_column = job.get("pk_column")  # Cached PK column name
 
         # Build PostgreSQL connection string
@@ -436,7 +447,9 @@ class BackfillManager:
                     if remaining <= 0:
                         break
                     current_batch_size = min(self.batch_size, remaining)
-                    batch_query = f"{base_query} LIMIT {current_batch_size} OFFSET {offset}"
+                    batch_query = (
+                        f"{base_query} LIMIT {current_batch_size} OFFSET {offset}"
+                    )
 
                 logger.debug(
                     f"Job {job_id}: Processing batch, total_processed={total_processed}"
@@ -513,7 +526,9 @@ class BackfillManager:
 
             if len(result) == 1:
                 pk_col = result[0][0]
-                logger.info(f"Detected primary key column '{pk_col}' for table {table_name}")
+                logger.info(
+                    f"Detected primary key column '{pk_col}' for table {table_name}"
+                )
                 return pk_col
             elif len(result) > 1:
                 logger.info(
@@ -560,14 +575,13 @@ class BackfillManager:
         finally:
             if conn:
                 from core.database import return_db_connection
+
                 try:
                     return_db_connection(conn)
                 except Exception as e:
                     logger.warning(f"Error returning connection to pool: {e}")
 
-    def _update_job_progress(
-        self, job_id: int, count: int, last_pk_value: str
-    ) -> None:
+    def _update_job_progress(self, job_id: int, count: int, last_pk_value: str) -> None:
         """
         Update job progress with both record count and cursor position.
 
@@ -602,6 +616,7 @@ class BackfillManager:
         finally:
             if conn:
                 from core.database import return_db_connection
+
                 try:
                     return_db_connection(conn)
                 except Exception as e:
@@ -681,6 +696,16 @@ class BackfillManager:
                         dest = PostgreSQLDestination(
                             destination_config, source_config=source_config
                         )
+                    elif (
+                        destination_config.type.upper() == DestinationType.ROSETTA.value
+                    ):
+                        # ROSETTA is a forwarding destination — backfill is not
+                        # applicable for chain-to-chain replication.
+                        logger.info(
+                            f"Skipping ROSETTA destination '{destination_config.name}' "
+                            f"for backfill (ROSETTA forwarding does not support backfill)"
+                        )
+                        continue
                     else:
                         logger.warning(
                             f"Unsupported destination type: {destination_config.type}"
@@ -891,6 +916,16 @@ class BackfillManager:
                         destination = PostgreSQLDestination(
                             destination_config, source_config=source_config
                         )
+                    elif (
+                        destination_config.type.upper() == DestinationType.ROSETTA.value
+                    ):
+                        # ROSETTA is a forwarding destination — backfill is not
+                        # applicable for chain-to-chain replication.
+                        logger.info(
+                            f"Skipping ROSETTA destination '{destination_config.name}' "
+                            f"for backfill (ROSETTA forwarding does not support backfill)"
+                        )
+                        continue
                     else:
                         logger.warning(
                             f"Unsupported destination type: {destination_config.type}"
@@ -1175,6 +1210,7 @@ class BackfillManager:
         # Try JSON v2 format first
         try:
             import json
+
             parsed = json.loads(filter_sql)
             if isinstance(parsed, dict) and parsed.get("version") == 2:
                 return self._build_where_clause_v2(parsed)
@@ -1243,7 +1279,9 @@ class BackfillManager:
 
         return result
 
-    def _build_single_clause(self, column: str, operator: str, value: str, value2: str = "") -> str:
+    def _build_single_clause(
+        self, column: str, operator: str, value: str, value2: str = ""
+    ) -> str:
         """
         Build a single SQL clause from filter components.
 
