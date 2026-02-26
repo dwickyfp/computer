@@ -52,6 +52,9 @@ class ChainPipelineEngine:
         self._redis: Optional[redis.Redis] = None
         self._is_running = False
         self._logger = logging.getLogger(f"ChainEngine_{pipeline_id}")
+        # Track which tables have been registered in rosetta_chain_tables so we
+        # avoid a DB write on every batch.  Resets when the engine restarts.
+        self._registered_tables: set[str] = set()
 
     def _load_pipeline(self) -> Pipeline:
         """Load pipeline configuration from database."""
@@ -484,8 +487,11 @@ class ChainPipelineEngine:
                     self._logger.info(
                         f"Wrote {len(table_records)} record(s) for "
                         f"'{table_name}' → dest {dest_id} OK."
-                    )
-
+                    )  # Auto-register the table in rosetta_chain_tables so it
+                    # appears in the Data Explorer.  Only done once per table
+                    # per engine lifetime to avoid repeated DB writes.
+                    if table_name not in self._registered_tables:
+                        self._register_chain_table(table_name, table_records)
                 except Exception as e:
                     self._logger.error(
                         f"Failed to write {len(table_records)} record(s) for "
@@ -543,6 +549,51 @@ class ChainPipelineEngine:
                     )
 
         return None
+
+    def _register_chain_table(self, table_name: str, records: list[CDCRecord]) -> None:
+        """
+        Register a chain table in rosetta_chain_tables so it appears in the
+        Data Explorer.  Called at most once per table per engine lifetime.
+
+        Infers a minimal column schema from the first record's values so the
+        Data Explorer can show column information without requiring the remote
+        sender to push a Debezium schema.
+        """
+        try:
+            from chain.schema import ChainSchemaManager
+
+            # Build a minimal schema from the records' value keys
+            sample = records[0].value if records else {}
+            schema_json: dict = {}
+            for col, val in sample.items():
+                if isinstance(val, bool):
+                    pg_type = "boolean"
+                elif isinstance(val, int):
+                    pg_type = "bigint"
+                elif isinstance(val, float):
+                    pg_type = "double precision"
+                else:
+                    pg_type = "text"
+                schema_json[col] = {"type": pg_type}
+
+            mgr = ChainSchemaManager()
+            chain_client_id = self._pipeline.chain_client_id
+            mgr.upsert_table_schema(
+                table_name=table_name,
+                schema_json=schema_json,
+                chain_client_id=chain_client_id,
+                source_chain_id=str(chain_client_id) if chain_client_id else None,
+            )
+            self._registered_tables.add(table_name)
+            self._logger.debug(
+                f"Registered chain table '{table_name}' in Data Explorer "
+                f"(client {chain_client_id})"
+            )
+        except Exception as e:
+            # Non-fatal — pipeline continues even if registration fails
+            self._logger.warning(
+                f"Could not register chain table '{table_name}' in Data Explorer: {e}"
+            )
 
     def run(self) -> None:
         """

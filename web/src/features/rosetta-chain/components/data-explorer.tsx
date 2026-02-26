@@ -1,6 +1,24 @@
 import { useState } from 'react'
+import { format } from 'date-fns'
 import { useQuery } from '@tanstack/react-query'
-import { chainRepo, ChainClient, ChainDatabase, ChainTable } from '@/repo/chains'
+import {
+  chainRepo,
+  ChainClient,
+  ChainDatabase,
+  ChainTable,
+} from '@/repo/chains'
+import {
+  ChevronRight,
+  Database,
+  Table as TableIcon,
+  Layers,
+  Loader2,
+  Server,
+  RefreshCw,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import {
   Table,
   TableBody,
@@ -9,10 +27,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { ChevronRight, Database, Table as TableIcon, Layers, Loader2, Server } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { format } from 'date-fns'
 
 type ViewState = 'clients' | 'databases' | 'tables' | 'schema'
 
@@ -32,25 +46,28 @@ export function DataExplorer() {
   const { data: databases, isLoading: loadingDbs } = useQuery({
     queryKey: ['chain-client-databases', selectedClient?.id],
     queryFn: () => chainRepo.getClientDatabases(selectedClient!.id),
-    enabled: !!selectedClient && (viewState === 'databases' || viewState === 'tables' || viewState === 'schema'),
+    enabled:
+      !!selectedClient &&
+      (viewState === 'databases' ||
+        viewState === 'tables' ||
+        viewState === 'schema'),
     staleTime: 5000,
   })
 
   // We fetch tables per client, then filter by the selected database name
-  // Note: the backend actually returns all tables for a client via getClientTables.
-  // There is no getTables(db_id) equivalent for rosetta_chain databases right now,
-  // we filter tables on the frontend based on the stream_name or source database.
-  const { data: tables, isLoading: loadingTables } = useQuery({
+  const {
+    data: tables,
+    isLoading: loadingTables,
+    refetch: refetchTables,
+    isFetching: fetchingTables,
+  } = useQuery({
     queryKey: ['chain-client-tables', selectedClient?.id],
     queryFn: () => chainRepo.getClientTables(selectedClient!.id),
-    enabled: !!selectedClient && viewState === 'tables',
-    staleTime: 5000,
+    enabled:
+      !!selectedClient && (viewState === 'tables' || viewState === 'schema'),
+    staleTime: 0,
+    refetchInterval: 30_000,
   })
-
-  // Alternatively, if the backend doesn't explicitly return database-scoped chain tables, 
-  // we can just display all tables for the client when a database is selected, 
-  // but logically we should filter them. But `ChainTable` doesn't explicitly link to `ChainDatabase` in the schema provided 
-  // (it just has chain_client_id). Let's just list tables since the UI implies showing tables.
   const handleClientClick = (client: ChainClient) => {
     setSelectedClient(client)
     setViewState('databases')
@@ -89,26 +106,26 @@ export function DataExplorer() {
   }
 
   return (
-    <Card className='h-full flex flex-col'>
-      <CardHeader className='pb-3 border-b'>
+    <Card className='flex h-full flex-col'>
+      <CardHeader className='border-b pb-3'>
         {/* Breadcrumb Navigation */}
         <div className='flex items-center space-x-2 text-sm text-muted-foreground'>
-          <button 
+          <button
             onClick={() => handleBreadcrumbClick('clients')}
-            className={`flex items-center hover:text-foreground transition-colors ${viewState === 'clients' ? 'text-foreground font-medium' : ''}`}
+            className={`flex items-center transition-colors hover:text-foreground ${viewState === 'clients' ? 'font-medium text-foreground' : ''}`}
           >
-            <Server className='w-4 h-4 mr-1' />
+            <Server className='mr-1 h-4 w-4' />
             Clients
           </button>
-          
+
           {selectedClient && (
             <>
-              <ChevronRight className='w-4 h-4' />
-              <button 
+              <ChevronRight className='h-4 w-4' />
+              <button
                 onClick={() => handleBreadcrumbClick('databases')}
-                className={`flex items-center hover:text-foreground transition-colors ${viewState === 'databases' ? 'text-foreground font-medium' : ''}`}
+                className={`flex items-center transition-colors hover:text-foreground ${viewState === 'databases' ? 'font-medium text-foreground' : ''}`}
               >
-                <Database className='w-4 h-4 mr-1' />
+                <Database className='mr-1 h-4 w-4' />
                 {selectedClient.name}
               </button>
             </>
@@ -116,12 +133,12 @@ export function DataExplorer() {
 
           {selectedDb && (
             <>
-              <ChevronRight className='w-4 h-4' />
-              <button 
+              <ChevronRight className='h-4 w-4' />
+              <button
                 onClick={() => handleBreadcrumbClick('tables')}
-                className={`flex items-center hover:text-foreground transition-colors ${viewState === 'tables' ? 'text-foreground font-medium' : ''}`}
+                className={`flex items-center transition-colors hover:text-foreground ${viewState === 'tables' ? 'font-medium text-foreground' : ''}`}
               >
-                <TableIcon className='w-4 h-4 mr-1' />
+                <TableIcon className='mr-1 h-4 w-4' />
                 {selectedDb.name}
               </button>
             </>
@@ -129,29 +146,30 @@ export function DataExplorer() {
 
           {selectedTable && (
             <>
-              <ChevronRight className='w-4 h-4' />
-              <span className='flex items-center text-foreground font-medium'>
-                <Layers className='w-4 h-4 mr-1' />
+              <ChevronRight className='h-4 w-4' />
+              <span className='flex items-center font-medium text-foreground'>
+                <Layers className='mr-1 h-4 w-4' />
                 {selectedTable.table_name}
               </span>
             </>
           )}
         </div>
       </CardHeader>
-      
-      <CardContent className='pt-6 flex-1 overflow-auto'>
+
+      <CardContent className='flex-1 overflow-auto pt-6'>
         {viewState === 'clients' && (
           <div className='space-y-6'>
-            <div className='flex gap-4 items-end'>
-              <div className='flex-1 max-w-sm'>
+            <div className='flex items-end gap-4'>
+              <div className='max-w-sm flex-1'>
                 <h3 className='text-lg font-medium'>Select a Chain Client</h3>
                 <p className='text-sm text-muted-foreground'>
-                  Choose a remote Rosetta instance to explore its cataloged databases.
+                  Choose a remote Rosetta instance to explore its cataloged
+                  databases.
                 </p>
               </div>
             </div>
 
-            <div className='border rounded-md'>
+            <div className='rounded-md border'>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -163,21 +181,39 @@ export function DataExplorer() {
                 <TableBody>
                   {loadingClients ? (
                     <TableRow>
-                      <TableCell colSpan={3} className='text-center h-24'><Loader2 className='w-5 h-5 animate-spin mx-auto' /></TableCell>
+                      <TableCell colSpan={3} className='h-24 text-center'>
+                        <Loader2 className='mx-auto h-5 w-5 animate-spin' />
+                      </TableCell>
                     </TableRow>
                   ) : clients?.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={3} className='text-center text-muted-foreground h-24'>No clients found.</TableCell>
-                    </TableRow>
-                  ) : clients?.map((client: ChainClient) => (
-                    <TableRow key={client.id} className='cursor-pointer hover:bg-muted/50 transition-colors' onClick={() => handleClientClick(client)}>
-                      <TableCell className='font-medium flex items-center'><Server className='w-4 h-4 mr-2 text-muted-foreground'/>{client.name}</TableCell>
-                      <TableCell>{client.url}:{client.port}</TableCell>
-                      <TableCell>
-                        <ChevronRight className='w-5 h-5 text-muted-foreground ml-auto' />
+                      <TableCell
+                        colSpan={3}
+                        className='h-24 text-center text-muted-foreground'
+                      >
+                        No clients found.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    clients?.map((client: ChainClient) => (
+                      <TableRow
+                        key={client.id}
+                        className='cursor-pointer transition-colors hover:bg-muted/50'
+                        onClick={() => handleClientClick(client)}
+                      >
+                        <TableCell className='flex items-center font-medium'>
+                          <Server className='mr-2 h-4 w-4 text-muted-foreground' />
+                          {client.name}
+                        </TableCell>
+                        <TableCell>
+                          {client.url}:{client.port}
+                        </TableCell>
+                        <TableCell>
+                          <ChevronRight className='ml-auto h-5 w-5 text-muted-foreground' />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -186,11 +222,13 @@ export function DataExplorer() {
 
         {viewState === 'databases' && (
           <div className='space-y-6'>
-            <div className='flex justify-between items-center'>
-              <h3 className='text-lg font-medium'>Databases in {selectedClient?.name}</h3>
+            <div className='flex items-center justify-between'>
+              <h3 className='text-lg font-medium'>
+                Databases in {selectedClient?.name}
+              </h3>
             </div>
 
-            <div className='border rounded-md'>
+            <div className='rounded-md border'>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -202,21 +240,39 @@ export function DataExplorer() {
                 <TableBody>
                   {loadingDbs ? (
                     <TableRow>
-                      <TableCell colSpan={3} className='text-center h-24'><Loader2 className='w-5 h-5 animate-spin mx-auto' /></TableCell>
+                      <TableCell colSpan={3} className='h-24 text-center'>
+                        <Loader2 className='mx-auto h-5 w-5 animate-spin' />
+                      </TableCell>
                     </TableRow>
                   ) : databases?.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={3} className='text-center text-muted-foreground h-24'>No databases found for this client.</TableCell>
-                    </TableRow>
-                  ) : databases?.map((db: ChainDatabase) => (
-                    <TableRow key={db.id} className='cursor-pointer hover:bg-muted/50 transition-colors' onClick={() => handleDbClick(db)}>
-                      <TableCell className='font-medium flex items-center'><Database className='w-4 h-4 mr-2 text-muted-foreground'/>{db.name}</TableCell>
-                      <TableCell>{format(new Date(db.created_at), 'MMM d, yyyy HH:mm')}</TableCell>
-                      <TableCell>
-                        <ChevronRight className='w-5 h-5 text-muted-foreground ml-auto' />
+                      <TableCell
+                        colSpan={3}
+                        className='h-24 text-center text-muted-foreground'
+                      >
+                        No databases found for this client.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    databases?.map((db: ChainDatabase) => (
+                      <TableRow
+                        key={db.id}
+                        className='cursor-pointer transition-colors hover:bg-muted/50'
+                        onClick={() => handleDbClick(db)}
+                      >
+                        <TableCell className='flex items-center font-medium'>
+                          <Database className='mr-2 h-4 w-4 text-muted-foreground' />
+                          {db.name}
+                        </TableCell>
+                        <TableCell>
+                          {format(new Date(db.created_at), 'MMM d, yyyy HH:mm')}
+                        </TableCell>
+                        <TableCell>
+                          <ChevronRight className='ml-auto h-5 w-5 text-muted-foreground' />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -225,13 +281,23 @@ export function DataExplorer() {
 
         {viewState === 'tables' && (
           <div className='space-y-4'>
-            <div className='flex justify-between items-center'>
-              <h3 className='text-lg font-medium'>Tables in {selectedDb?.name}</h3>
-              <p className='text-sm text-muted-foreground max-w-md text-right'>
-                Tables are registered remotely from Chain Clients via Pipeline Managed Destinations.
-              </p>
+            <div className='flex items-center justify-between'>
+              <h3 className='text-lg font-medium'>
+                Tables in {selectedDb?.name}
+              </h3>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => refetchTables()}
+                disabled={fetchingTables}
+              >
+                <RefreshCw
+                  className={`mr-1.5 h-3.5 w-3.5 ${fetchingTables ? 'animate-spin' : ''}`}
+                />
+                Refresh
+              </Button>
             </div>
-            <div className='border rounded-md'>
+            <div className='rounded-md border'>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -244,28 +310,41 @@ export function DataExplorer() {
                 <TableBody>
                   {loadingTables ? (
                     <TableRow>
-                      <TableCell colSpan={4} className='text-center h-24'><Loader2 className='w-5 h-5 animate-spin mx-auto' /></TableCell>
-                    </TableRow>
-                  ) : tables?.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className='text-center text-muted-foreground h-24'>No tables registered in this client yet.</TableCell>
-                    </TableRow>
-                  ) : tables?.filter(() => {
-                      // We don't have a strict DB link right now in ChainTable, so we can filter by prefix if table_name has it, 
-                      // or just show all. Since we want a robust drilldown, let's just render the tables.
-                      // A proper backend fix would associate rosetta_chain_tables with rosetta_chain_databases.
-                      // For now, we will just display the tables returned for the client.
-                      return true
-                  }).map((tbl: ChainTable) => (
-                    <TableRow key={tbl.id} className='cursor-pointer hover:bg-muted/50 transition-colors' onClick={() => handleTableClick(tbl)}>
-                      <TableCell className='font-medium flex items-center'><TableIcon className='w-4 h-4 mr-2 text-muted-foreground'/>{tbl.table_name}</TableCell>
-                      <TableCell className='text-muted-foreground font-mono text-xs'>{tbl.record_count.toLocaleString()}</TableCell>
-                      <TableCell>{getStatusBadge(tbl)}</TableCell>
-                      <TableCell>
-                        <ChevronRight className='w-5 h-5 text-muted-foreground ml-auto' />
+                      <TableCell colSpan={4} className='h-24 text-center'>
+                        <Loader2 className='mx-auto h-5 w-5 animate-spin' />
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : !tables || tables.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={4}
+                        className='h-24 text-center text-muted-foreground'
+                      >
+                        No tables registered yet. Tables appear automatically
+                        once the chain pipeline starts streaming data.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    tables.map((tbl: ChainTable) => (
+                      <TableRow
+                        key={tbl.id}
+                        className='cursor-pointer transition-colors hover:bg-muted/50'
+                        onClick={() => handleTableClick(tbl)}
+                      >
+                        <TableCell className='flex items-center font-medium'>
+                          <TableIcon className='mr-2 h-4 w-4 text-muted-foreground' />
+                          {tbl.table_name}
+                        </TableCell>
+                        <TableCell className='font-mono text-xs text-muted-foreground'>
+                          {tbl.record_count.toLocaleString()}
+                        </TableCell>
+                        <TableCell>{getStatusBadge(tbl)}</TableCell>
+                        <TableCell>
+                          <ChevronRight className='ml-auto h-5 w-5 text-muted-foreground' />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -275,7 +354,9 @@ export function DataExplorer() {
         {viewState === 'schema' && selectedTable && (
           <div className='space-y-6'>
             <div className='flex items-center justify-between'>
-              <h3 className='text-lg font-medium'>Schema Definition: {selectedTable.table_name}</h3>
+              <h3 className='text-lg font-medium'>
+                Schema Definition: {selectedTable.table_name}
+              </h3>
               <div className='flex space-x-2'>
                 {getStatusBadge(selectedTable)}
               </div>
@@ -285,28 +366,44 @@ export function DataExplorer() {
               <CardContent className='pt-6'>
                 <dl className='grid grid-cols-2 gap-4 text-sm'>
                   <div>
-                    <dt className='text-muted-foreground'>Source Chain Client ID</dt>
+                    <dt className='text-muted-foreground'>
+                      Source Chain Client ID
+                    </dt>
                     <dd className='mt-1'>{selectedTable.chain_client_id}</dd>
                   </div>
                   <div>
                     <dt className='text-muted-foreground'>Record Count</dt>
-                    <dd className='mt-1'>{selectedTable.record_count.toLocaleString()}</dd>
+                    <dd className='mt-1'>
+                      {selectedTable.record_count.toLocaleString()}
+                    </dd>
                   </div>
                   <div>
                     <dt className='text-muted-foreground'>Last Synced</dt>
-                    <dd className='mt-1'>{selectedTable.last_synced_at ? format(new Date(selectedTable.last_synced_at), 'MMM d, yyyy HH:mm:ss') : 'Never'}</dd>
+                    <dd className='mt-1'>
+                      {selectedTable.last_synced_at
+                        ? format(
+                            new Date(selectedTable.last_synced_at),
+                            'MMM d, yyyy HH:mm:ss'
+                          )
+                        : 'Never'}
+                    </dd>
                   </div>
                   <div>
                     <dt className='text-muted-foreground'>Discovered At</dt>
-                    <dd className='mt-1'>{format(new Date(selectedTable.created_at), 'MMM d, yyyy HH:mm')}</dd>
+                    <dd className='mt-1'>
+                      {format(
+                        new Date(selectedTable.created_at),
+                        'MMM d, yyyy HH:mm'
+                      )}
+                    </dd>
                   </div>
                 </dl>
               </CardContent>
             </Card>
 
             <div>
-              <h4 className='font-medium mb-3'>Columns</h4>
-              <div className='border rounded-md'>
+              <h4 className='mb-3 font-medium'>Columns</h4>
+              <div className='rounded-md border'>
                 <Table>
                   <TableHeader>
                     <TableRow className='bg-muted/50'>
@@ -318,25 +415,45 @@ export function DataExplorer() {
                   </TableHeader>
                   <TableBody>
                     {/* Assuming table_schema has fields array for this example, adjust based on actual structure */}
-                    {!selectedTable.table_schema || Object.keys(selectedTable.table_schema).length === 0 ? (
+                    {!selectedTable.table_schema ||
+                    Object.keys(selectedTable.table_schema).length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={4} className='text-center text-muted-foreground h-24'>No schema defined.</TableCell>
+                        <TableCell
+                          colSpan={4}
+                          className='h-24 text-center text-muted-foreground'
+                        >
+                          No schema defined.
+                        </TableCell>
                       </TableRow>
                     ) : Array.isArray(selectedTable.table_schema) ? (
-                      selectedTable.table_schema.map((field: any, idx: number) => (
-                        <TableRow key={idx}>
-                          <TableCell className='font-medium'>{field.name}</TableCell>
-                          <TableCell className='font-mono text-xs text-muted-foreground'>{field.type}</TableCell>
-                          <TableCell>{field.nullable ? 'Yes' : 'No'}</TableCell>
-                          <TableCell>{field.primary_key ? 'Yes' : 'No'}</TableCell>
-                        </TableRow>
-                      ))
+                      selectedTable.table_schema.map(
+                        (field: any, idx: number) => (
+                          <TableRow key={idx}>
+                            <TableCell className='font-medium'>
+                              {field.name}
+                            </TableCell>
+                            <TableCell className='font-mono text-xs text-muted-foreground'>
+                              {field.type}
+                            </TableCell>
+                            <TableCell>
+                              {field.nullable ? 'Yes' : 'No'}
+                            </TableCell>
+                            <TableCell>
+                              {field.primary_key ? 'Yes' : 'No'}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      )
                     ) : (
                       <TableRow>
                         <TableCell colSpan={4}>
-                           <pre className='text-xs p-2 overflow-auto bg-muted rounded'>
-                             {JSON.stringify(selectedTable.table_schema, null, 2)}
-                           </pre>
+                          <pre className='overflow-auto rounded bg-muted p-2 text-xs'>
+                            {JSON.stringify(
+                              selectedTable.table_schema,
+                              null,
+                              2
+                            )}
+                          </pre>
                         </TableCell>
                       </TableRow>
                     )}
