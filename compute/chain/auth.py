@@ -35,8 +35,10 @@ def _load_chain_key() -> Optional[str]:
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
+            # ORDER BY id DESC ensures we always read the most-recently
+            # generated key even if stale duplicate rows exist.
             cursor.execute(
-                "SELECT chain_key, is_active FROM rosetta_chain_config LIMIT 1"
+                "SELECT chain_key, is_active FROM rosetta_chain_config ORDER BY id DESC LIMIT 1"
             )
             row = cursor.fetchone()
 

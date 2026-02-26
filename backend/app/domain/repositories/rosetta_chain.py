@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, delete
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -31,13 +31,28 @@ class RosettaChainConfigRepository:
 
     def get(self) -> Optional[RosettaChainConfig]:
         """Get the chain config (there should be at most one row)."""
-        stmt = select(RosettaChainConfig).limit(1)
+        stmt = (
+            select(RosettaChainConfig)
+            .order_by(RosettaChainConfig.id.desc())
+            .limit(1)
+        )
         return self.db.execute(stmt).scalar_one_or_none()
 
     def upsert(self, chain_key: str, is_active: bool = True) -> RosettaChainConfig:
-        """Create or update the chain config."""
+        """Create or update the chain config.
+
+        Always keeps exactly ONE row.  Any stale duplicate rows (which can
+        accumulate from early migration runs) are deleted so that both the
+        backend and the compute's ``LIMIT 1`` query always see the same key.
+        """
         existing = self.get()
         if existing:
+            # Delete all OTHER rows first so we're left with exactly one.
+            self.db.execute(
+                delete(RosettaChainConfig)
+                .where(RosettaChainConfig.id != existing.id)
+                .execution_options(synchronize_session=False)
+            )
             existing.chain_key = chain_key
             existing.is_active = is_active
             existing.updated_at = datetime.now(ZoneInfo("Asia/Jakarta"))
