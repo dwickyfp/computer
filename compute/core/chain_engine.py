@@ -18,6 +18,7 @@ from core.models import Pipeline, DestinationType
 from core.repository import (
     PipelineRepository,
     PipelineMetadataRepository,
+    DataFlowRepository,
 )
 from core.exceptions import PipelineException
 from core.error_sanitizer import sanitize_for_db, sanitize_for_log
@@ -426,6 +427,34 @@ class ChainPipelineEngine:
             self._logger.error(f"Failed to auto-create chain table '{table_name}': {e}")
             return False
 
+    def _update_monitoring(
+        self,
+        pd,
+        table_sync,
+        table_name: str,
+        count: int,
+    ) -> None:
+        """
+        Record data flow count in data_flow_record_monitoring.
+
+        Args:
+            pd: PipelineDestination object
+            table_sync: PipelineDestinationTableSync object
+            table_name: Target table name
+            count: Number of records written
+        """
+        try:
+            DataFlowRepository.increment_count(
+                pipeline_id=self._pipeline_id,
+                pipeline_destination_id=pd.id,
+                source_id=self._pipeline.source_id or 0,
+                table_sync_id=table_sync.id,
+                table_name=table_name,
+                count=count,
+            )
+        except Exception as e:
+            self._logger.warning(f"Failed to update data flow monitoring: {e}")
+
     def _write_to_destinations(self, records: list[CDCRecord]) -> None:
         """
         Route CDC records to all configured destinations.
@@ -483,11 +512,27 @@ class ChainPipelineEngine:
                         f"'{table_name}' → dest {dest_id} "
                         f"(target: '{table_sync.table_name_target}')"
                     )
-                    dest.write_batch(table_records, table_sync)
+                    written = dest.write_batch(table_records, table_sync)
                     self._logger.info(
                         f"Wrote {len(table_records)} record(s) for "
                         f"'{table_name}' → dest {dest_id} OK."
-                    )  # Auto-register the table in rosetta_chain_tables so it
+                    )
+
+                    # Track in data flow monitoring
+                    written_count = written if isinstance(written, int) else len(table_records)
+                    pd_obj = next(
+                        (pd for pd in self._pipeline.destinations if pd.destination_id == dest_id),
+                        None,
+                    )
+                    if pd_obj and written_count > 0:
+                        self._update_monitoring(
+                            pd=pd_obj,
+                            table_sync=table_sync,
+                            table_name=table_sync.table_name_target,
+                            count=written_count,
+                        )
+
+                    # Auto-register the table in rosetta_chain_tables so it
                     # appears in the Data Explorer.  Only done once per table
                     # per engine lifetime to avoid repeated DB writes.
                     if table_name not in self._registered_tables:
