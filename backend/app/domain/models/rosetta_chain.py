@@ -135,7 +135,7 @@ class RosettaChainClient(Base, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    
+
     databases: Mapped[list["RosettaChainDatabase"]] = relationship(
         "RosettaChainDatabase",
         back_populates="chain_client",

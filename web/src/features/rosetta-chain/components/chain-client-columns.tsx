@@ -2,8 +2,8 @@ import { formatDistanceToNow } from 'date-fns'
 import { type ColumnDef } from '@tanstack/react-table'
 import { Badge } from '@/components/ui/badge'
 import { DataTableColumnHeader } from '@/components/data-table'
-import { ChainClientRowActions } from './chain-client-row-actions'
 import { type ChainClient } from '../data/schema'
+import { ChainClientRowActions } from './chain-client-row-actions'
 
 export const chainClientColumns: ColumnDef<ChainClient>[] = [
   {
@@ -50,7 +50,9 @@ export const chainClientColumns: ColumnDef<ChainClient>[] = [
         )
       }
       return (
-        <span className='text-xs text-muted-foreground italic'>auto-detect</span>
+        <span className='text-xs text-muted-foreground italic'>
+          auto-detect
+        </span>
       )
     },
     meta: { title: 'Chain ID' },
