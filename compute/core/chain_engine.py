@@ -417,9 +417,7 @@ class ChainPipelineEngine:
             )
             return True
         except Exception as e:
-            self._logger.error(
-                f"Failed to auto-create chain table '{table_name}': {e}"
-            )
+            self._logger.error(f"Failed to auto-create chain table '{table_name}': {e}")
             return False
 
     def _write_to_destinations(self, records: list[CDCRecord]) -> None:
