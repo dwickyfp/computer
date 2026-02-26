@@ -12,6 +12,7 @@ import { ChainProvider } from './components/chain-provider'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DataExplorer } from './components/data-explorer'
+import { LocalDataExplorer } from './components/local-data-explorer'
 
 export function RosettaChain() {
   const { data: clients } = useQuery({
@@ -43,6 +44,7 @@ export function RosettaChain() {
           <TabsList className='w-fit mb-4'>
             <TabsTrigger value='clients'>Chain Clients</TabsTrigger>
             <TabsTrigger value='explorer'>Data Explorer</TabsTrigger>
+            <TabsTrigger value='client-explorer'>Data Client</TabsTrigger>
           </TabsList>
 
           <TabsContent value='clients' className='mt-0 flex-1 space-y-4'>
@@ -64,6 +66,10 @@ export function RosettaChain() {
           </TabsContent>
 
           <TabsContent value='explorer' className='h-full mt-0'>
+            <LocalDataExplorer />
+          </TabsContent>
+
+          <TabsContent value='client-explorer' className='h-full mt-0'>
             <DataExplorer />
           </TabsContent>
         </Tabs>
