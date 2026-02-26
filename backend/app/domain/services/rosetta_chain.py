@@ -300,6 +300,13 @@ class RosettaChainService:
         tables = self._table_repo.get_by_client(client_id)
         return [ChainTableResponse.from_orm(t) for t in tables]
 
+    def get_client_tables_by_database(
+        self, client_id: int, database_id: int
+    ) -> list[ChainTableResponse]:
+        """Get tables for a specific database on a chain client."""
+        tables = self._table_repo.get_by_database(client_id, database_id)
+        return [ChainTableResponse.from_orm(t) for t in tables]
+
     def sync_client_tables(self, client_id: int) -> list[ChainTableResponse]:
         """
         Fetch and sync table list from a remote Rosetta instance.
@@ -329,13 +336,21 @@ class RosettaChainService:
 
                 remote_tables = resp.json()
 
+                # Get the client's current databases so we can map database_name -> database_id
+                client_dbs = self._database_repo.get_by_client(client_id)
+                db_name_to_id = {db.name: db.id for db in client_dbs}
+
                 # Upsert each remote table
                 for table_info in remote_tables:
+                    db_name = table_info.get("database_name")
+                    database_id = db_name_to_id.get(db_name) if db_name else None
+
                     self._table_repo.upsert(
                         chain_client_id=client_id,
                         table_name=table_info["table_name"],
                         table_schema=table_info.get("schema_json", {}),
                         source_chain_id=table_info.get("source_chain_id"),
+                        database_id=database_id,
                     )
 
                 # Update last connected
@@ -393,7 +408,18 @@ class RosettaChainService:
                         name=db_info["name"],
                     )
 
-                # Wait, updating last_connected is already done by table sync, or we can do it here too
+                # Remove stale local databases that no longer exist on the remote chain
+                remote_names = {db_info["name"] for db_info in remote_databases}
+                existing_dbs = self._database_repo.get_by_client(client_id)
+                for db in existing_dbs:
+                    if db.name not in remote_names:
+                        logger.info(
+                            f"Removing stale database '{db.name}' "
+                            f"for client id={client_id} (no longer on remote)"
+                        )
+                        self.db.delete(db)
+                self.db.flush()
+
                 self._client_repo.update_last_connected(client_id)
 
         except Exception as e:

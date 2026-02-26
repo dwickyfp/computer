@@ -1045,3 +1045,7 @@ CREATE INDEX IF NOT EXISTS ix_rosetta_chain_databases_chain_client_id ON public.
 -- Previously the code fell back to 0 which violated the FK constraint.
 ALTER TABLE data_flow_record_monitoring ALTER COLUMN source_id DROP NOT NULL;
 
+ALTER TABLE rosetta_chain_tables
+ADD COLUMN IF NOT EXISTS database_id INTEGER REFERENCES rosetta_chain_databases(id) ON DELETE SET NULL;
+
+

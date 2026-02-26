@@ -22,6 +22,7 @@ export interface ChainKeyGenerate {
 export interface ChainTable {
   id: number
   chain_client_id: number | null
+  database_id: number | null
   table_name: string
   table_schema: Record<string, unknown>
   record_count: number
@@ -136,6 +137,13 @@ export const chainRepo = {
 
   getClientTables: async (id: number) => {
     const { data } = await api.get<ChainTable[]>(`/chain/clients/${id}/tables`)
+    return data
+  },
+
+  getClientTablesByDatabase: async (clientId: number, dbId: number) => {
+    const { data } = await api.get<ChainTable[]>(
+      `/chain/clients/${clientId}/catalog/databases/${dbId}/tables`
+    )
     return data
   },
 

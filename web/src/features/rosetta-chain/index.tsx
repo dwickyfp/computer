@@ -61,7 +61,7 @@ export function RosettaChain() {
                   to.
                 </p>
               </div>
-              <ChainPrimaryButtons />
+              <ChainPrimaryButtons clients={clients ?? []} />
             </div>
 
             <ChainClientTable data={clients ?? []} />

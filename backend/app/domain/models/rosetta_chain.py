@@ -183,6 +183,14 @@ class RosettaChainTable(Base, TimestampMixin):
         comment="Reference to the chain client that owns this table (NULL for cross-instance registrations)",
     )
 
+    database_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("rosetta_chain_databases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Reference to the logical database this table belongs to",
+    )
+
     table_name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
@@ -220,6 +228,11 @@ class RosettaChainTable(Base, TimestampMixin):
     chain_client: Mapped["RosettaChainClient"] = relationship(
         "RosettaChainClient",
         back_populates="tables",
+    )
+
+    database: Mapped[Optional["RosettaChainDatabase"]] = relationship(
+        "RosettaChainDatabase",
+        foreign_keys=[database_id],
     )
 
     def __repr__(self) -> str:

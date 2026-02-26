@@ -54,17 +54,20 @@ export function DataExplorer() {
     staleTime: 5000,
   })
 
-  // We fetch tables per client, then filter by the selected database name
+  // We fetch tables per client+database combination
   const {
     data: tables,
     isLoading: loadingTables,
     refetch: refetchTables,
     isFetching: fetchingTables,
   } = useQuery({
-    queryKey: ['chain-client-tables', selectedClient?.id],
-    queryFn: () => chainRepo.getClientTables(selectedClient!.id),
+    queryKey: ['chain-client-tables', selectedClient?.id, selectedDb?.id],
+    queryFn: () =>
+      chainRepo.getClientTablesByDatabase(selectedClient!.id, selectedDb!.id),
     enabled:
-      !!selectedClient && (viewState === 'tables' || viewState === 'schema'),
+      !!selectedClient &&
+      !!selectedDb &&
+      (viewState === 'tables' || viewState === 'schema'),
     staleTime: 0,
     refetchInterval: 30_000,
   })

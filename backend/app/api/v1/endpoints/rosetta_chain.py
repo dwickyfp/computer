@@ -177,6 +177,19 @@ def get_client_tables(
     return service.get_client_tables(client_id)
 
 
+@router.get(
+    "/clients/{client_id}/catalog/databases/{db_id}/tables",
+    response_model=list[ChainTableResponse],
+)
+def get_client_database_tables(
+    client_id: int,
+    db_id: int,
+    service: RosettaChainService = Depends(get_chain_service_readonly),
+):
+    """Get tables for a specific database on a chain client."""
+    return service.get_client_tables_by_database(client_id, db_id)
+
+
 @router.post(
     "/clients/{client_id}/sync-tables",
     response_model=list[ChainTableResponse],

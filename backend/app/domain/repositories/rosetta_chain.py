@@ -138,12 +138,27 @@ class RosettaChainTableRepository:
         )
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_by_database(
+        self, chain_client_id: int, database_id: int
+    ) -> list[RosettaChainTable]:
+        """Get all tables for a specific database under a chain client."""
+        stmt = (
+            select(RosettaChainTable)
+            .where(
+                RosettaChainTable.chain_client_id == chain_client_id,
+                RosettaChainTable.database_id == database_id,
+            )
+            .order_by(RosettaChainTable.table_name)
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
     def upsert(
         self,
         chain_client_id: int,
         table_name: str,
         table_schema: dict,
         source_chain_id: Optional[str] = None,
+        database_id: Optional[int] = None,
     ) -> RosettaChainTable:
         """Create or update a chain table entry."""
         existing = self.get_by_client_and_name(chain_client_id, table_name)
@@ -153,6 +168,8 @@ class RosettaChainTableRepository:
             existing.table_schema = table_schema
             if source_chain_id:
                 existing.source_chain_id = source_chain_id
+            if database_id is not None:
+                existing.database_id = database_id
             existing.last_synced_at = now
             existing.updated_at = now
             self.db.flush()
@@ -164,6 +181,7 @@ class RosettaChainTableRepository:
                 table_name=table_name,
                 table_schema=table_schema,
                 source_chain_id=source_chain_id,
+                database_id=database_id,
                 last_synced_at=now,
             )
             self.db.add(table)

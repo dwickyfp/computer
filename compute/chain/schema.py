@@ -337,46 +337,41 @@ class ChainSchemaManager:
         self, chain_client_id: Optional[int] = None
     ) -> list[dict[str, Any]]:
         """
-        List all chain tables, optionally filtered by client ID.
-
-        Returns list of table info dicts.
+        List all outbound catalog tables along with their logical database name.
+        
+        This exposes the local node's data catalog to remote Rosetta instances
+        so they can discover what datasets are available to be streamed.
         """
         conn = None
         try:
             conn = get_db_connection()
             with conn.cursor() as cursor:
-                if chain_client_id:
-                    cursor.execute(
-                        "SELECT id, chain_client_id, table_name, schema_json, "
-                        "       source_chain_id, record_count, last_synced_at "
-                        "FROM rosetta_chain_tables "
-                        "WHERE chain_client_id = %s "
-                        "ORDER BY table_name",
-                        (chain_client_id,),
-                    )
-                else:
-                    cursor.execute(
-                        "SELECT id, chain_client_id, table_name, schema_json, "
-                        "       source_chain_id, record_count, last_synced_at "
-                        "FROM rosetta_chain_tables "
-                        "ORDER BY table_name"
-                    )
+                # We return the local catalog_tables (outbound available data)
+                # rather than rosetta_chain_tables (inbound received data).
+                # We join catalog_databases to provide the database_name.
+                cursor.execute(
+                    "SELECT t.id, d.name AS database_name, t.table_name, t.schema_json, t.created_at "
+                    "FROM catalog_tables t "
+                    "JOIN catalog_databases d ON t.database_id = d.id "
+                    "ORDER BY d.name, t.table_name"
+                )
 
                 rows = cursor.fetchall()
                 tables = []
                 for row in rows:
                     schema = row[3]
                     if isinstance(schema, str):
-                        schema = json.loads(schema)
+                        try:
+                            schema = json.loads(schema)
+                        except json.JSONDecodeError:
+                            schema = {}
                     tables.append(
                         {
                             "id": row[0],
-                            "chain_client_id": row[1],
+                            "database_name": row[1],
                             "table_name": row[2],
-                            "schema_json": schema,
-                            "source_chain_id": row[4],
-                            "record_count": row[5] or 0,
-                            "last_synced_at": (row[6].isoformat() if row[6] else None),
+                            "schema_json": schema or {},
+                            "created_at": (row[4].isoformat() if row[4] else None),
                         }
                     )
                 return tables
