@@ -311,9 +311,17 @@ class PostgreSQLDestination(BaseDestination):
 
         try:
             if pg_type == "date":
-                # Debezium sends DATE as days since epoch
+                # Debezium sends DATE as days since epoch (int or numeric string
+                # when coming through Rosetta Chain where all values are str-ified)
                 if isinstance(value, int):
                     return datetime.date(1970, 1, 1) + datetime.timedelta(days=value)
+                if isinstance(value, str):
+                    try:
+                        return datetime.date(1970, 1, 1) + datetime.timedelta(
+                            days=int(value)
+                        )
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type in (
@@ -326,6 +334,13 @@ class PostgreSQLDestination(BaseDestination):
                     return datetime.datetime(1970, 1, 1) + datetime.timedelta(
                         microseconds=value
                     )
+                if isinstance(value, str):
+                    try:
+                        return datetime.datetime(1970, 1, 1) + datetime.timedelta(
+                            microseconds=int(value)
+                        )
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type == "time without time zone":
@@ -334,15 +349,30 @@ class PostgreSQLDestination(BaseDestination):
                     return (
                         datetime.datetime.min + datetime.timedelta(microseconds=value)
                     ).time()
+                if isinstance(value, str):
+                    try:
+                        return (
+                            datetime.datetime.min
+                            + datetime.timedelta(microseconds=int(value))
+                        ).time()
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type in ("time with time zone", "timetz"):
                 # Debezium sends TIME WITH TIME ZONE as microseconds since midnight
-                # The timezone offset is preserved in the PostgreSQL column metadata
                 if isinstance(value, int):
                     return (
                         datetime.datetime.min + datetime.timedelta(microseconds=value)
                     ).time()
+                if isinstance(value, str):
+                    try:
+                        return (
+                            datetime.datetime.min
+                            + datetime.timedelta(microseconds=int(value))
+                        ).time()
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type in ("numeric", "decimal"):

@@ -443,6 +443,7 @@ class ChainPipelineEngine:
 
         for table_name, table_records in by_table.items():
             for dest_id, dest in self._destinations.items():
+                table_sync = None
                 try:
                     # Find table_sync config for this destination/table
                     table_sync = self._find_table_sync(dest_id, table_name)
@@ -492,14 +493,17 @@ class ChainPipelineEngine:
                         exc_info=True,
                     )
                     # Send to DLQ for later retry
-                    if self._dlq_manager:
+                    if self._dlq_manager and table_sync:
                         for record in table_records:
                             try:
-                                self._dlq_manager.add_to_dlq(
+                                self._dlq_manager.enqueue(
+                                    pipeline_id=self._pipeline_id,
                                     source_id=self._pipeline.source_id or 0,
-                                    table_name=table_name,
                                     destination_id=dest_id,
-                                    record=record,
+                                    table_name=table_name,
+                                    table_name_target=table_sync.table_name_target,
+                                    cdc_record=record,
+                                    table_sync=table_sync,
                                     error_message=str(e),
                                 )
                             except Exception as dlq_err:
