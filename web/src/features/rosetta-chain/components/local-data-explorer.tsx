@@ -12,6 +12,17 @@ import {
   Trash2,
   HardDrive,
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -25,17 +36,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
 
 type ViewState = 'databases' | 'tables' | 'schema'
 
@@ -118,7 +118,10 @@ export function LocalDataExplorer() {
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!newDbName.trim()) return
-    createMutation.mutate({ name: newDbName.trim(), description: newDbDescription.trim() || undefined })
+    createMutation.mutate({
+      name: newDbName.trim(),
+      description: newDbDescription.trim() || undefined,
+    })
   }
 
   const getStatusBadge = (status: string) => {
@@ -180,7 +183,11 @@ export function LocalDataExplorer() {
               </div>
               <Button
                 size='sm'
-                onClick={() => { setShowCreateForm(true); setNewDbName(''); setNewDbDescription('') }}
+                onClick={() => {
+                  setShowCreateForm(true)
+                  setNewDbName('')
+                  setNewDbDescription('')
+                }}
                 disabled={showCreateForm}
               >
                 <Plus className='mr-1.5 h-4 w-4' />
@@ -192,7 +199,7 @@ export function LocalDataExplorer() {
             {showCreateForm && (
               <form
                 onSubmit={handleCreateSubmit}
-                className='rounded-md border bg-muted/30 p-4 space-y-3'
+                className='space-y-3 rounded-md border bg-muted/30 p-4'
               >
                 <p className='text-sm font-medium'>Create Database</p>
                 <div className='grid grid-cols-2 gap-3'>
@@ -216,7 +223,7 @@ export function LocalDataExplorer() {
                     />
                   </div>
                 </div>
-                <div className='flex gap-2 justify-end'>
+                <div className='flex justify-end gap-2'>
                   <Button
                     type='button'
                     variant='outline'
@@ -296,16 +303,19 @@ export function LocalDataExplorer() {
                             </AlertDialogTrigger>
                             <AlertDialogContent>
                               <AlertDialogHeader>
-                                <AlertDialogTitle>Delete "{db.name}"?</AlertDialogTitle>
+                                <AlertDialogTitle>
+                                  Delete "{db.name}"?
+                                </AlertDialogTitle>
                                 <AlertDialogDescription>
-                                  This will permanently delete the database and all its
-                                  registered tables. This action cannot be undone.
+                                  This will permanently delete the database and
+                                  all its registered tables. This action cannot
+                                  be undone.
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                                 <AlertDialogAction
-                                  className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                                  className='text-destructive-foreground bg-destructive hover:bg-destructive/90'
                                   onClick={() => deleteMutation.mutate(db.id)}
                                 >
                                   Delete
@@ -375,7 +385,10 @@ export function LocalDataExplorer() {
                         <TableCell>{getStatusBadge(tbl.status)}</TableCell>
                         <TableCell className='text-sm text-muted-foreground'>
                           {tbl.last_health_check_at
-                            ? format(new Date(tbl.last_health_check_at), 'MMM d, HH:mm')
+                            ? format(
+                                new Date(tbl.last_health_check_at),
+                                'MMM d, HH:mm'
+                              )
                             : '—'}
                         </TableCell>
                         <TableCell>
@@ -411,7 +424,9 @@ export function LocalDataExplorer() {
                   </div>
                   <div>
                     <dt className='text-muted-foreground'>Source Chain ID</dt>
-                    <dd className='mt-1'>{selectedTable.source_chain_id ?? '—'}</dd>
+                    <dd className='mt-1'>
+                      {selectedTable.source_chain_id ?? '—'}
+                    </dd>
                   </div>
                   <div>
                     <dt className='text-muted-foreground'>Last Health Check</dt>
@@ -427,7 +442,10 @@ export function LocalDataExplorer() {
                   <div>
                     <dt className='text-muted-foreground'>Registered At</dt>
                     <dd className='mt-1'>
-                      {format(new Date(selectedTable.created_at), 'MMM d, yyyy HH:mm')}
+                      {format(
+                        new Date(selectedTable.created_at),
+                        'MMM d, yyyy HH:mm'
+                      )}
                     </dd>
                   </div>
                 </dl>
@@ -461,12 +479,18 @@ export function LocalDataExplorer() {
                       selectedTable.schema_json.fields.map(
                         (field: any, idx: number) => (
                           <TableRow key={idx}>
-                            <TableCell className='font-medium'>{field.name}</TableCell>
+                            <TableCell className='font-medium'>
+                              {field.name}
+                            </TableCell>
                             <TableCell className='font-mono text-xs text-muted-foreground'>
                               {field.type}
                             </TableCell>
-                            <TableCell>{field.nullable ? 'Yes' : 'No'}</TableCell>
-                            <TableCell>{field.primary_key ? 'Yes' : 'No'}</TableCell>
+                            <TableCell>
+                              {field.nullable ? 'Yes' : 'No'}
+                            </TableCell>
+                            <TableCell>
+                              {field.primary_key ? 'Yes' : 'No'}
+                            </TableCell>
                           </TableRow>
                         )
                       )

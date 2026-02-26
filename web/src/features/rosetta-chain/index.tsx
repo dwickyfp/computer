@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { chainRepo } from '@/repo/chains'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'
@@ -9,8 +10,6 @@ import { ChainDialogs } from './components/chain-dialogs'
 import { ChainKeyCard } from './components/chain-key-card'
 import { ChainPrimaryButtons } from './components/chain-primary-buttons'
 import { ChainProvider } from './components/chain-provider'
-
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DataExplorer } from './components/data-explorer'
 import { LocalDataExplorer } from './components/local-data-explorer'
 
@@ -40,8 +39,8 @@ export function RosettaChain() {
           </div>
         </div>
 
-        <Tabs defaultValue='clients' className='flex-1 flex flex-col'>
-          <TabsList className='w-fit mb-4'>
+        <Tabs defaultValue='clients' className='flex flex-1 flex-col'>
+          <TabsList className='mb-4 w-fit'>
             <TabsTrigger value='clients'>Chain Clients</TabsTrigger>
             <TabsTrigger value='explorer'>Data Explorer</TabsTrigger>
             <TabsTrigger value='client-explorer'>Data Client</TabsTrigger>
@@ -52,11 +51,14 @@ export function RosettaChain() {
             <ChainKeyCard />
 
             {/* Chain Clients section */}
-            <div className='flex flex-wrap items-end justify-between gap-2 mt-6'>
+            <div className='mt-6 flex flex-wrap items-end justify-between gap-2'>
               <div>
-                <h2 className='text-2xl font-bold tracking-tight'>Active Clients</h2>
+                <h2 className='text-2xl font-bold tracking-tight'>
+                  Active Clients
+                </h2>
                 <p className='text-muted-foreground'>
-                  Remote Rosetta instances that this instance can stream data to.
+                  Remote Rosetta instances that this instance can stream data
+                  to.
                 </p>
               </div>
               <ChainPrimaryButtons />
@@ -65,11 +67,11 @@ export function RosettaChain() {
             <ChainClientTable data={clients ?? []} />
           </TabsContent>
 
-          <TabsContent value='explorer' className='h-full mt-0'>
+          <TabsContent value='explorer' className='mt-0 h-full'>
             <LocalDataExplorer />
           </TabsContent>
 
-          <TabsContent value='client-explorer' className='h-full mt-0'>
+          <TabsContent value='client-explorer' className='mt-0 h-full'>
             <DataExplorer />
           </TabsContent>
         </Tabs>
