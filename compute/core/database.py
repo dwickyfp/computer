@@ -239,13 +239,31 @@ def get_db_connection() -> psycopg2.extensions.connection:
                 conn = connection_pool.getconn()
                 _update_pool_stat("total_acquired")
 
-                # Reset the new connection too
-                if conn.status != psycopg2.extensions.STATUS_READY:
-                    conn.rollback()
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                conn.autocommit = False
+                try:
+                    # Reset the new connection too
+                    if conn.status != psycopg2.extensions.STATUS_READY:
+                        conn.rollback()
+                    conn.autocommit = True
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1")
+                    conn.autocommit = False
+                except (psycopg2.OperationalError, psycopg2.InterfaceError) as e2:
+                    # Replacement is also dead — return it before continuing the retry loop
+                    logger.warning(
+                        f"Replacement connection also stale, discarding: {e2}"
+                    )
+                    _update_pool_stat("total_stale_detected")
+                    _update_pool_stat("total_closed_stale")
+                    connection_pool.putconn(conn, close=True)
+                    _update_pool_stat("total_returned")
+                    # Let the outer retry loop handle this attempt
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5
+                        continue
+                    raise DatabaseException(
+                        f"Failed to get a live connection after stale replacement: {e2}"
+                    )
 
             return conn
         except psycopg2.pool.PoolError as e:

@@ -9,7 +9,7 @@ from typing import Optional
 from datetime import datetime
 
 from core.database import DatabaseSession
-from core.db_utils import retry_on_connection_error
+from core.db_utils import retry_on_connection_error, is_connection_error
 from core.models import (
     Source,
     Destination,
@@ -372,6 +372,10 @@ class PipelineMetadataRepository:
                 row = session.fetchone()
                 return row["id"] if row else 0
             except Exception as e:
+                # Re-raise transient connection errors so @retry_on_connection_error
+                # can do its job.  Swallow only non-retryable SQL errors.
+                if is_connection_error(e):
+                    raise
                 logger.error(
                     f"Error upserting pipeline metadata for pipeline {pipeline_id}: {e}"
                 )

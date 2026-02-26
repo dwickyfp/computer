@@ -11,19 +11,45 @@ from typing import Callable, TypeVar, Any
 
 import psycopg2
 
+from core.exceptions import DatabaseException
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+_CONNECTION_ERROR_KEYWORDS = [
+    "connection",
+    "closed",
+    "terminated",
+    "timeout",
+    "reset",
+    "broken pipe",
+    "no message from the libpq",
+    "pgres_tuples_ok",
+    "server closed",
+    "could not receive data",
+    "ssl connection has been closed",
+]
 
 
 def retry_on_connection_error(
     max_retries: int = 3,
     delay: float = 1.0,
     backoff: float = 2.0,
-    exceptions: tuple = (psycopg2.OperationalError, psycopg2.InterfaceError),
+    exceptions: tuple = (
+        psycopg2.OperationalError,
+        psycopg2.InterfaceError,
+        DatabaseException,
+    ),
 ) -> Callable:
     """
     Decorator to retry database operations on connection errors.
+
+    Catches psycopg2 native errors AND DatabaseException (which wraps
+    psycopg2 errors raised inside DatabaseSession).  When a
+    DatabaseException is received the retry only fires if the underlying
+    message looks like a transient connection problem; non-transient SQL
+    errors (e.g. constraint violations) are re-raised immediately.
 
     Args:
         max_retries: Maximum number of retry attempts
@@ -47,18 +73,24 @@ def retry_on_connection_error(
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
+                    # For DatabaseException only retry on transient connection issues
+                    if isinstance(e, DatabaseException) and not is_connection_error(e):
+                        raise
+
                     last_exception = e
 
                     if attempt < max_retries:
                         logger.warning(
-                            f"Database operation '{func.__name__}' failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Database operation '{func.__name__}' failed "
+                            f"(attempt {attempt + 1}/{max_retries + 1}): {e}. "
                             f"Retrying in {current_delay:.1f}s..."
                         )
                         time.sleep(current_delay)
                         current_delay *= backoff
                     else:
                         logger.error(
-                            f"Database operation '{func.__name__}' failed after {max_retries + 1} attempts: {e}"
+                            f"Database operation '{func.__name__}' failed after "
+                            f"{max_retries + 1} attempts: {e}"
                         )
 
             # Re-raise the last exception if all retries failed
@@ -73,6 +105,8 @@ def is_connection_error(exception: Exception) -> bool:
     """
     Check if an exception is a database connection error.
 
+    Handles both raw psycopg2 exceptions and DatabaseException wrappers.
+
     Args:
         exception: The exception to check
 
@@ -83,17 +117,7 @@ def is_connection_error(exception: Exception) -> bool:
         return True
 
     error_msg = str(exception).lower()
-    connection_error_keywords = [
-        "connection",
-        "closed",
-        "terminated",
-        "timeout",
-        "reset",
-        "broken pipe",
-        "no message from the libpq",
-    ]
-
-    return any(keyword in error_msg for keyword in connection_error_keywords)
+    return any(keyword in error_msg for keyword in _CONNECTION_ERROR_KEYWORDS)
 
 
 def validate_connection(conn: psycopg2.extensions.connection) -> bool:
