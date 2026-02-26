@@ -83,11 +83,18 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
         # Chain (ROSETTA) pipelines use ChainPipelineEngine which reads from Redis Streams
         # Regular (POSTGRES) pipelines use PipelineEngine which reads from Debezium CDC
         pipeline_data = PipelineRepository.get_by_id(pipeline_id)
-        source_type = (
-            getattr(pipeline_data, "source_type", "POSTGRES")
-            if pipeline_data
-            else "POSTGRES"
-        )
+
+        if pipeline_data is None:
+            # Pipeline was deleted from the DB between the manager scheduling
+            # this process and the process actually starting.  There is nothing
+            # to run and nowhere to write metadata, so exit cleanly.
+            subprocess_logger.warning(
+                f"Pipeline {pipeline_id} no longer exists in the database — "
+                f"skipping process startup."
+            )
+            return
+
+        source_type = getattr(pipeline_data, "source_type", "POSTGRES")
 
         if source_type in ["ROSETTA", "CATALOG_TABLE"]:
             subprocess_logger.info(
