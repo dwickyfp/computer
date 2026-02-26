@@ -74,6 +74,14 @@ class DestinationService:
                 destination_data.config["private_key_passphrase"]
             )
 
+        if (
+            "chain_key" in destination_data.config
+            and destination_data.config["chain_key"]
+        ):
+            destination_data.config["chain_key"] = encrypt_value(
+                destination_data.config["chain_key"]
+            )
+
         destination = self.repository.create(**destination_data.dict())
 
         logger.info(
@@ -164,6 +172,8 @@ class DestinationService:
                 new_config["private_key_passphrase"] = encrypt_value(
                     new_config["private_key_passphrase"]
                 )
+            if "chain_key" in new_config and new_config["chain_key"]:
+                new_config["chain_key"] = encrypt_value(new_config["chain_key"])
 
             # Merge: Use old config as base, update with new config
             # This preserves secrets that were filtered out/masked in the frontend
@@ -317,6 +327,29 @@ class DestinationService:
         Raises:
             Exception: If connection fails, with error details
         """
+        if config.type == "ROSETTA":
+            import httpx
+
+            url = config.config.get("url", "").rstrip("/")
+            chain_key = config.config.get("chain_key", "")
+            if not url:
+                raise Exception("Remote Compute URL is required")
+            if not chain_key:
+                raise Exception("Chain Key is required")
+            try:
+                resp = httpx.get(
+                    f"{url}/chain/health",
+                    headers={"X-Chain-Key": chain_key},
+                    timeout=10.0,
+                )
+                if resp.status_code == 200:
+                    return True
+                raise Exception(
+                    f"Remote Rosetta returned {resp.status_code}: {resp.text}"
+                )
+            except httpx.ConnectError as e:
+                raise Exception(f"Cannot connect to {url}: {e}")
+
         if config.type == "POSTGRES":
             import psycopg2
 

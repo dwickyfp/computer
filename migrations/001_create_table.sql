@@ -1039,4 +1039,9 @@ COMMENT ON COLUMN public.rosetta_chain_databases.updated_at IS 'Timestamp of las
 
 CREATE INDEX IF NOT EXISTS ix_rosetta_chain_databases_chain_client_id ON public.rosetta_chain_databases (chain_client_id);
 
+-- Migration: Allow NULL source_id in data_flow_record_monitoring for chain pipelines
+-- Chain pipelines (source_type = ROSETTA | CATALOG_TABLE) do not have a corresponding
+-- row in the sources table, so source_id is NULL on the pipeline object.
+-- Previously the code fell back to 0 which violated the FK constraint.
+ALTER TABLE data_flow_record_monitoring ALTER COLUMN source_id DROP NOT NULL;
 

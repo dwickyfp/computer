@@ -447,7 +447,7 @@ class ChainPipelineEngine:
             DataFlowRepository.increment_count(
                 pipeline_id=self._pipeline_id,
                 pipeline_destination_id=pd.id,
-                source_id=self._pipeline.source_id or 0,
+                source_id=self._pipeline.source_id,
                 table_sync_id=table_sync.id,
                 table_name=table_name,
                 count=count,
