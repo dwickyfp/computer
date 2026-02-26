@@ -42,7 +42,13 @@ class RosettaDestination(BaseDestination):
             chain_id: Unique chain identifier for stream naming
         """
         super().__init__(config)
-        self._chain_id = chain_id or str(config.id)
+        # Use chain_client_id (receiver's rosetta_chain_clients.id) as the
+        # stream identifier so the receiver's ChainPipelineEngine can find
+        # the Redis streams.  Fall back to destination.id only if the
+        # chain_client_id relationship is not set.
+        self._chain_id = chain_id or str(
+            getattr(config, 'chain_client_id', None) or config.id
+        )
         self._client: Optional[httpx.Client] = None
         self._synced_schemas: set[str] = set()
         self._cached_chain_key: Optional[str] = None
@@ -365,7 +371,7 @@ class RosettaDestination(BaseDestination):
                 json={
                     "table_name": table_name,
                     "schema_json": schema,
-                    "chain_client_id": self._config.id,
+                    "chain_client_id": getattr(self._config, 'chain_client_id', self._config.id),
                     "source_chain_id": self._chain_id,
                 },
                 headers=self._auth_headers(),

@@ -172,7 +172,8 @@ class PipelineDestinationRepository:
         with DatabaseSession() as session:
             session.execute(
                 """
-                SELECT pd.*, d.name as dest_name, d.type as dest_type, d.config as dest_config
+                SELECT pd.*, d.name as dest_name, d.type as dest_type, d.config as dest_config,
+                       d.chain_client_id as dest_chain_client_id
                 FROM pipelines_destination pd
                 JOIN destinations d ON pd.destination_id = d.id
                 WHERE pd.pipeline_id = %s
@@ -189,6 +190,7 @@ class PipelineDestinationRepository:
                     name=row["dest_name"],
                     type=row["dest_type"],
                     config=row["dest_config"],
+                    chain_client_id=row.get("dest_chain_client_id"),
                 )
 
                 if include_table_syncs:

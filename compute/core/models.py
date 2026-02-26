@@ -96,6 +96,7 @@ class Destination:
     name: str
     type: str
     config: dict[str, Any] = field(default_factory=dict)
+    chain_client_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -107,6 +108,7 @@ class Destination:
             name=data["name"],
             type=data["type"],
             config=data.get("config", {}),
+            chain_client_id=data.get("chain_client_id"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
