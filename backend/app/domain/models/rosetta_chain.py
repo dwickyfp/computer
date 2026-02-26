@@ -113,6 +113,15 @@ class RosettaChainClient(Base, TimestampMixin):
         comment="Whether this client connection is active",
     )
 
+    source_chain_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        comment=(
+            "The X-Chain-ID value the sender uses (= sender's destination.id). "
+            "Used by ChainPipelineEngine to scan the correct Redis stream prefix."
+        ),
+    )
+
     last_connected_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

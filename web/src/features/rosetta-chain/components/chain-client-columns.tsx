@@ -36,6 +36,26 @@ export const chainClientColumns: ColumnDef<ChainClient>[] = [
     meta: { title: 'URL' },
   },
   {
+    id: 'source_chain_id',
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title='Chain ID' />
+    ),
+    cell: ({ row }) => {
+      const scid = row.original.source_chain_id
+      if (scid) {
+        return (
+          <Badge variant='outline' className='font-mono text-xs'>
+            {scid}
+          </Badge>
+        )
+      }
+      return (
+        <span className='text-xs text-muted-foreground italic'>auto-detect</span>
+      )
+    },
+    meta: { title: 'Chain ID' },
+  },
+  {
     id: 'status',
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title='Status' />

@@ -163,6 +163,10 @@ async def chain_ingest(
                 operation_type=x_operation_type,
             )
 
+        # Auto-populate source_chain_id on the matching chain client row so
+        # ChainPipelineEngine can resolve the correct Redis stream pattern.
+        _try_auto_map_source_chain_id(x_chain_id)
+
         return {"status": "ok", "records_ingested": count}
 
     except ValueError as e:
@@ -170,6 +174,49 @@ async def chain_ingest(
     except Exception as e:
         logger.error(f"Chain ingest error: {e}")
         return JSONResponse(status_code=500, content={"error": "Ingestion failed"})
+
+
+def _try_auto_map_source_chain_id(chain_id: str) -> None:
+    """
+    Auto-populate source_chain_id on the rosetta_chain_clients row when
+    exactly one client has no source_chain_id set yet.
+
+    This covers the common single-client setup so users don't have to
+    manually enter the sender's chain ID.  For multi-client setups the
+    admin must set source_chain_id explicitly in the UI.
+    """
+    from core.database import DatabaseSession
+
+    try:
+        with DatabaseSession() as session:
+            # Already mapped?
+            session.execute(
+                "SELECT id FROM rosetta_chain_clients "
+                "WHERE source_chain_id = %s LIMIT 1",
+                (chain_id,),
+            )
+            if session.fetchone():
+                return  # Nothing to do
+
+            # Count clients with no mapping yet
+            session.execute(
+                "SELECT id FROM rosetta_chain_clients WHERE source_chain_id IS NULL"
+            )
+            unmapped = session.fetchall()
+            if len(unmapped) == 1:
+                client_id = unmapped[0]["id"]
+                session.execute(
+                    "UPDATE rosetta_chain_clients "
+                    "SET source_chain_id = %s, updated_at = NOW() "
+                    "WHERE id = %s",
+                    (chain_id, client_id),
+                )
+                logger.info(
+                    f"Auto-mapped source_chain_id={chain_id!r} to "
+                    f"rosetta_chain_clients.id={client_id}"
+                )
+    except Exception as e:
+        logger.warning(f"Failed to auto-map source_chain_id={chain_id!r}: {e}")
 
 
 @app.post("/chain/schema")

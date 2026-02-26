@@ -30,6 +30,7 @@ export const chainClientSchema = z.object({
   url: z.string(),
   port: z.number().default(8001),
   is_active: z.boolean(),
+  source_chain_id: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   last_connected_at: z.string().nullable().optional(),
   tables: z.array(chainTableSchema).default([]),
@@ -78,6 +79,7 @@ export const chainClientFormSchema = z.object({
     ),
   description: z.string().optional(),
   is_active: z.boolean().optional().default(true),
+  source_chain_id: z.string().nullable().optional(),
 })
 
 export type ChainClientForm = z.infer<typeof chainClientFormSchema>

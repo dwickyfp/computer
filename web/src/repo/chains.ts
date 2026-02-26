@@ -44,6 +44,7 @@ export interface ChainClient {
   url: string
   port: number
   is_active: boolean
+  source_chain_id: string | null
   description: string | null
   last_connected_at: string | null
   tables: ChainTable[]
@@ -57,6 +58,7 @@ export interface ChainClientCreate {
   url: string
   port?: number
   chain_key: string
+  source_chain_id?: string | null
   description?: string
   is_active?: boolean
 }

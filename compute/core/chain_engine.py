@@ -90,6 +90,32 @@ class ChainPipelineEngine:
                 {"destination_type": destination_type},
             )
 
+    def _get_source_chain_id(self, chain_client_id: int) -> str:
+        """
+        Read source_chain_id from rosetta_chain_clients for this client.
+
+        Returns the stored source_chain_id if set, otherwise falls back to
+        str(chain_client_id) so existing behaviour is preserved for clients
+        that were registered before this column existed.
+        """
+        from core.database import DatabaseSession
+
+        try:
+            with DatabaseSession(autocommit=True) as session:
+                session.execute(
+                    "SELECT source_chain_id FROM rosetta_chain_clients WHERE id = %s",
+                    (chain_client_id,),
+                )
+                row = session.fetchone()
+                if row and row.get("source_chain_id"):
+                    return str(row["source_chain_id"])
+        except Exception as e:
+            self._logger.warning(
+                f"Could not read source_chain_id for chain_client {chain_client_id}: {e}. "
+                f"Falling back to local id."
+            )
+        return str(chain_client_id)
+
     def _get_stream_keys(self) -> list[str]:
         """
         Get all Redis Stream keys for this pipeline's chain client or catalog table.
@@ -123,9 +149,17 @@ class ChainPipelineEngine:
         chain_client_id = self._pipeline.chain_client_id
 
         if chain_client_id:
-            # Specific client: only read streams for that chain client
-            # Key format: {prefix}:{chain_client_id}:{table_name}
-            pattern = f"{prefix}:{chain_client_id}:*"
+            # Resolve the source_chain_id that the sender stamps on its X-Chain-ID
+            # header (= sender's destination.id).  This is the value written into
+            # the Redis stream key by ChainIngestManager, NOT our local
+            # rosetta_chain_clients.id which is an unrelated auto-increment.
+            source_chain_id = self._get_source_chain_id(chain_client_id)
+            if source_chain_id != str(chain_client_id):
+                self._logger.debug(
+                    f"Using source_chain_id={source_chain_id!r} for Redis scan "
+                    f"(chain_client_id={chain_client_id})"
+                )
+            pattern = f"{prefix}:{source_chain_id}:*"
         else:
             # Self-stream mode: no specific client, read ALL ingested chain streams.
             # This lets the local compute consume data it ingested itself via Arrow IPC

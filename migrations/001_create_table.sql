@@ -971,6 +971,12 @@ ALTER TABLE pipelines ALTER COLUMN source_id DROP NOT NULL;
 ALTER TABLE destinations ADD COLUMN IF NOT EXISTS chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_destinations_chain_client ON destinations(chain_client_id) WHERE chain_client_id IS NOT NULL;
 
+-- source_chain_id: the X-Chain-ID value a sender stamps on each ingest request
+-- (= sender's destination.id).  Used by ChainPipelineEngine to build the correct
+-- Redis stream scan pattern instead of the local chain_client.id.
+ALTER TABLE rosetta_chain_clients ADD COLUMN IF NOT EXISTS source_chain_id VARCHAR(255) NULL;
+CREATE INDEX IF NOT EXISTS idx_chain_clients_source_chain_id ON rosetta_chain_clients(source_chain_id) WHERE source_chain_id IS NOT NULL;
+
 -- Migration 008: Catalog Architecture
 
 -- Create catalog databases table

@@ -57,6 +57,7 @@ export function ChainClientMutateDrawer({
           chain_key: '',
           description: '',
           is_active: currentRow.is_active,
+          source_chain_id: currentRow.source_chain_id ?? '',
         }
       : {
           name: '',
@@ -65,6 +66,7 @@ export function ChainClientMutateDrawer({
           chain_key: '',
           description: '',
           is_active: true,
+          source_chain_id: '',
         }) as any,
   })
 
@@ -78,6 +80,7 @@ export function ChainClientMutateDrawer({
             chain_key: '',
             description: '',
             is_active: currentRow.is_active,
+            source_chain_id: currentRow.source_chain_id ?? '',
           }
         : {
             name: '',
@@ -86,6 +89,7 @@ export function ChainClientMutateDrawer({
             chain_key: '',
             description: '',
             is_active: true,
+            source_chain_id: '',
           }
     )
   }, [currentRow, form])
@@ -119,6 +123,10 @@ export function ChainClientMutateDrawer({
     const payload: any = { ...data }
     if (!payload.chain_key) {
       delete payload.chain_key
+    }
+    // Normalise: empty string → null so the backend clears the value
+    if (!payload.source_chain_id || payload.source_chain_id.trim() === '') {
+      payload.source_chain_id = null
     }
     delete payload.description
 
@@ -189,6 +197,37 @@ export function ChainClientMutateDrawer({
                   <FormControl>
                     <Input {...field} type='number' placeholder='8001' />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='source_chain_id'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Source Chain ID{' '}
+                    <span className='font-normal text-muted-foreground'>
+                      (optional)
+                    </span>
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ''}
+                      placeholder='e.g. 3  (auto-detected on first ingest if blank)'
+                    />
+                  </FormControl>
+                  <p className='text-xs text-muted-foreground'>
+                    The sender&apos;s destination ID — visible as{' '}
+                    <code className='rounded bg-muted px-1 py-0.5 text-xs'>
+                      X-Chain-ID
+                    </code>{' '}
+                    in their pipeline destination list. Leave blank to let the
+                    receiver auto-detect it on first ingest.
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}

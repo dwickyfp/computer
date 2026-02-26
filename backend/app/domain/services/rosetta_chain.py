@@ -147,6 +147,7 @@ class RosettaChainService:
             port=data.port,
             chain_key=encrypted_key,
             is_active=True,
+            source_chain_id=data.source_chain_id or None,
         )
 
         # Commit client first so _create_linked_destination's rollback

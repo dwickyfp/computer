@@ -69,6 +69,17 @@ class ChainClientBase(BaseSchema):
         description="Port of the remote Rosetta compute service",
         examples=[8001],
     )
+    source_chain_id: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "The X-Chain-ID value the sender stamps on each ingest request "
+            "(equals the sender's destination ID, visible in their pipeline destination list). "
+            "Leave blank to let the receiver auto-detect it on first ingest (works when "
+            "only one client is registered)."
+        ),
+        examples=["3", "12"],
+    )
 
 
 class ChainClientCreate(ChainClientBase):
@@ -138,6 +149,11 @@ class ChainClientUpdate(BaseSchema):
         ge=1,
         le=65535,
         description="Port of the remote Rosetta compute service",
+    )
+    source_chain_id: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description="The X-Chain-ID the sender stamps (= sender's destination ID)",
     )
     chain_key: Optional[str] = Field(
         default=None,
@@ -221,6 +237,10 @@ class ChainClientResponse(ChainClientBase):
 
     id: int = Field(..., description="Unique client identifier")
     is_active: bool = Field(..., description="Whether connection is active")
+    source_chain_id: Optional[str] = Field(
+        default=None,
+        description="The X-Chain-ID the sender stamps (= sender's destination ID)",
+    )
     last_connected_at: Optional[datetime] = Field(
         default=None, description="Last successful connection timestamp"
     )
