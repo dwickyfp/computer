@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { chainRepo, ChainDatabase } from '@/repo/chains'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Loader2, Database } from 'lucide-react'
@@ -21,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { TableWithSyncInfo, ColumnSchema } from '@/repo/pipelines'
+import { TableWithSyncInfo, ColumnSchema, tableSyncRepo } from '@/repo/pipelines'
 import { Switch } from '@/components/ui/switch'
 
 interface RosettaSchemaRegistrationProps {
@@ -29,6 +29,11 @@ interface RosettaSchemaRegistrationProps {
   onOpenChange: (open: boolean) => void
   table: TableWithSyncInfo | null
   chainId: number // ID of the destination chain client
+  // For persisting catalog_database_name back to the sync config
+  syncConfigId?: number
+  pipelineId?: number
+  pipelineDestinationId?: number
+  initialDbName?: string | null
 }
 
 export function RosettaSchemaRegistration({
@@ -36,12 +41,30 @@ export function RosettaSchemaRegistration({
   onOpenChange,
   table,
   chainId,
+  syncConfigId,
+  pipelineId,
+  pipelineDestinationId,
+  initialDbName,
 }: RosettaSchemaRegistrationProps) {
-  const [dbName, setDbName] = useState('')
+  const [dbName, setDbName] = useState(initialDbName ?? '')
   const [tableName, setTableName] = useState('')
   
   // Track schema overrides
   const [schemaUpdates, setSchemaUpdates] = useState<Record<string, Partial<ColumnSchema>>>({})
+
+  // Sync initialDbName into dbName when dialog opens or initialDbName changes
+  useEffect(() => {
+    if (open) {
+      setDbName(initialDbName ?? '')
+    }
+  }, [open, initialDbName])
+  
+  // Initialize tableName when dialog opens or table changes
+  useEffect(() => {
+    if (open && table) {
+      setTableName(table.table_name)
+    }
+  }, [open, table])
 
   // Fetch available databases from the remote chain client
   const { data: databases, isLoading: loadingDbs } = useQuery({
@@ -52,8 +75,21 @@ export function RosettaSchemaRegistration({
 
   const registerMutation = useMutation({
     mutationFn: (payload: any) => chainRepo.registerCatalogTable(chainId, payload),
-    onSuccess: () => {
+    onSuccess: async (_data, variables) => {
       toast.success(`Successfully registered table to catalog.`)
+      // Persist the selected catalog_database_name back to the local sync config
+      if (syncConfigId && pipelineId && pipelineDestinationId) {
+        try {
+          await tableSyncRepo.updateCatalogDatabaseName(
+            pipelineId,
+            pipelineDestinationId,
+            syncConfigId,
+            variables.database_name ?? null
+          )
+        } catch {
+          // Non-fatal: the remote registration succeeded, just the local save failed
+        }
+      }
       onOpenChange(false)
       // Reset form
       setDbName('')
@@ -62,14 +98,6 @@ export function RosettaSchemaRegistration({
     },
     onError: (err: any) => {
       toast.error(`Failed to register catalog table: ${err.message || 'Unknown error'}`)
-    }
-  })
-
-  // Initialize form when table changes
-  useState(() => {
-    if (table) {
-      // The prop `table` inherently passes the "branch target name" via line 188 of rosetta-table-config.tsx
-      setTableName(table.table_name)
     }
   })
 

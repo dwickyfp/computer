@@ -387,6 +387,12 @@ class PipelineDestinationTableSync(Base, TimestampMixin):
         comment="Timestamp when lineage was last generated",
     )
 
+    catalog_database_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Destination database name on the remote Rosetta Chain instance",
+    )
+
     # Relationships
     pipeline_destination: Mapped["PipelineDestination"] = relationship(
         "PipelineDestination", back_populates="table_syncs"

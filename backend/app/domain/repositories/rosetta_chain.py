@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -96,10 +96,24 @@ class RosettaChainTableRepository:
         self.db = db
 
     def get_by_client(self, chain_client_id: int) -> list[RosettaChainTable]:
-        """Get all tables for a specific chain client."""
+        """Get all tables for a specific chain client.
+
+        Returns tables that are either directly linked (chain_client_id = client_id)
+        or cross-instance registered (chain_client_id IS NULL, source_chain_id = str(client_id)).
+        The latter happens when the sender pushes schema via /chain/schema without a local
+        FK match on the receiver side.
+        """
         stmt = (
             select(RosettaChainTable)
-            .where(RosettaChainTable.chain_client_id == chain_client_id)
+            .where(
+                or_(
+                    RosettaChainTable.chain_client_id == chain_client_id,
+                    (
+                        RosettaChainTable.chain_client_id.is_(None)
+                        & (RosettaChainTable.source_chain_id == str(chain_client_id))
+                    ),
+                )
+            )
             .order_by(RosettaChainTable.table_name)
         )
         return list(self.db.execute(stmt).scalars().all())

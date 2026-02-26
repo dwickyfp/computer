@@ -254,6 +254,11 @@ class PipelineDestinationTableSyncResponse(BaseSchema):
         default=None, description="Timestamp when lineage was last generated"
     )
 
+    catalog_database_name: str | None = Field(
+        default=None,
+        description="Destination database name on the remote Rosetta Chain instance",
+    )
+
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
@@ -286,6 +291,10 @@ class TableSyncCreateRequest(BaseSchema):
         description="Custom primary key columns for PostgreSQL merge (semicolon-separated: key1;key2)",
     )
     enabled: bool = Field(default=True, description="Whether sync is enabled")
+    catalog_database_name: str | None = Field(
+        default=None,
+        description="Destination database name on the remote Rosetta Chain instance",
+    )
 
 
 class TableSyncBulkRequest(BaseSchema):

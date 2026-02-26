@@ -194,6 +194,11 @@ export function RosettaTableConfig({
       }
     : activeTableForSchema;
 
+  // Pre-populate the catalog database name from the active sync config
+  const activeInitialDbName = activeTableForSchema && activeSyncConfigId
+    ? (activeTableForSchema.sync_configs.find(c => c.id === activeSyncConfigId)?.catalog_database_name ?? null)
+    : null
+
   return (
     <div className='space-y-8'>
       {/* Header row with counts and Register All button */}
@@ -330,9 +335,16 @@ export function RosettaTableConfig({
 
       <RosettaSchemaRegistration
         open={schemaModalOpen}
-        onOpenChange={setSchemaModalOpen}
+        onOpenChange={(open) => {
+          setSchemaModalOpen(open)
+          if (!open) onRefresh()
+        }}
         table={activeTableWithBranchName}
         chainId={destination?.chain_client_id as number}
+        syncConfigId={activeSyncConfigId ?? undefined}
+        pipelineId={pipelineId}
+        pipelineDestinationId={pipelineDestinationId}
+        initialDbName={activeInitialDbName}
       />
       
       {/* Delete Confirmation Modal */}

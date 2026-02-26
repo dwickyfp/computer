@@ -166,12 +166,12 @@ class RosettaChainTable(Base, TimestampMixin):
         comment="Unique table identifier",
     )
 
-    chain_client_id: Mapped[int] = mapped_column(
+    chain_client_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("rosetta_chain_clients.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("rosetta_chain_clients.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
-        comment="Reference to the chain client that owns this table",
+        comment="Reference to the chain client that owns this table (NULL for cross-instance registrations)",
     )
 
     table_name: Mapped[str] = mapped_column(

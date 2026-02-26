@@ -48,6 +48,7 @@ export function TableBranchNode({
 
     const currentTags = tableSyncTagsData?.tags || []
     const hasCustomKeys = syncConfig.primary_key_column_target && syncConfig.primary_key_column_target.trim().length > 0
+    const hasCatalogDb = !!syncConfig.catalog_database_name
 
     return (
         <div className={cn(
@@ -84,11 +85,16 @@ export function TableBranchNode({
                             variant="ghost"
                             size="sm"
                             onClick={(e) => { e.stopPropagation(); onRegisterSchema() }}
-                            className="h-6 px-1.5 text-[10px] gap-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+                            className={cn(
+                                "h-6 px-1.5 text-[10px] gap-1",
+                                hasCatalogDb
+                                    ? "text-teal-600 bg-teal-50 hover:bg-teal-100 hover:text-teal-700 dark:text-teal-400 dark:bg-teal-950/50 dark:hover:bg-teal-950/70 dark:hover:text-teal-300"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                            )}
                             title="Register Managed Destination Target"
                         >
                             <Settings2 className="h-3 w-3" />
-                            Target Settings
+                            {hasCatalogDb ? syncConfig.catalog_database_name : "Target Settings"}
                         </Button>
                     )}
 

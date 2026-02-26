@@ -1753,6 +1753,11 @@ class PipelineService:
             )
             if table_sync_data.table_name_target:
                 existing.table_name_target = table_sync_data.table_name_target
+            # Only update catalog_database_name when explicitly included in the request
+            if "catalog_database_name" in getattr(
+                table_sync_data, "__fields_set__", set()
+            ):
+                existing.catalog_database_name = table_sync_data.catalog_database_name
 
             self.db.commit()
             self.db.refresh(existing)
@@ -1782,6 +1787,9 @@ class PipelineService:
                 custom_sql=table_sync_data.custom_sql,
                 filter_sql=table_sync_data.filter_sql,
                 primary_key_column_target=table_sync_data.primary_key_column_target,
+                catalog_database_name=getattr(
+                    table_sync_data, "catalog_database_name", None
+                ),
             )
             self.db.add(new_sync)
             self.db.commit()

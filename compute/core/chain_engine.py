@@ -265,13 +265,18 @@ class ChainPipelineEngine:
         timestamp_raw = fields.get(b"timestamp")
         timestamp = int(_decode(timestamp_raw)) if timestamp_raw else None
 
-        return CDCRecord(
+        record = CDCRecord(
             operation=operation,
             table_name=table_name or self._extract_table_from_key(stream_key),
             key=key,
             value=value,
             timestamp=timestamp,
         )
+        self._logger.debug(
+            f"Parsed CDCRecord: op={record.operation} table={record.table_name} "
+            f"key_cols={list(key.keys())} value_cols={list(value.keys())}"
+        )
+        return record
 
     def _extract_table_from_key(self, stream_key: str) -> str:
         """Extract table name from stream key pattern: prefix:chain_id:table_name."""
@@ -304,26 +309,35 @@ class ChainPipelineEngine:
         """
         Auto-create a destination table inferred from CDCRecord column values.
 
-        Used for ROSETTA chain pipelines so data can flow without requiring
-        the user to pre-create tables in the destination database.
+        The table is created via DuckDB's postgres ATTACH (not via a separate
+        psycopg2 connection) so DuckDB sees the table immediately in its schema
+        cache and subsequent DELETE/INSERT statements don't fail with
+        "table not found" errors.
 
-        - Column types are inferred from Python value types in the first batch.
-        - Primary key is taken from ``CDCRecord.key`` (if non-empty).
-        - All other columns default to TEXT for safety.
+        Falls back to psycopg2 DDL if DuckDB creation fails.
 
-        Returns True if the table was created, False if it already existed
-        or creation was not possible.
+        Returns True on success (created or already exists), False on failure.
         """
         from destinations.postgresql import PostgreSQLDestination
 
         if not isinstance(dest, PostgreSQLDestination):
             return False
 
+        # Ensure destination connection is healthy before any DDL
+        try:
+            dest.initialize()
+        except Exception as e:
+            self._logger.error(
+                f"Cannot auto-create chain table '{table_name}': "
+                f"destination not ready: {e}"
+            )
+            return False
+
         # Check if table already exists — avoid unnecessary DDL
         try:
             existing = dest._get_table_schema(table_name)
             if existing:
-                return False
+                return False  # Table already exists
         except Exception:
             pass  # Proceed to attempt creation
 
@@ -361,28 +375,51 @@ class ChainPipelineEngine:
             else:
                 col_defs.append(f'"{col}" {pg_type}')
 
-        # Composite primary key constraint
         if len(pk_columns) > 1:
             pk_str = ", ".join(f'"{c}"' for c in pk_columns)
             col_defs.append(f"PRIMARY KEY ({pk_str})")
 
-        create_sql = (
-            f'CREATE TABLE IF NOT EXISTS "{schema}"."{table_name}" '
-            f"({', '.join(col_defs)})"
-        )
+        col_def_str = ", ".join(col_defs)
 
+        # ── Primary path: create via DuckDB ATTACH ───────────────────────────
+        # This ensures DuckDB's schema cache is consistent — if we create the
+        # table with a separate psycopg2 connection DuckDB won't see it and the
+        # subsequent DELETE/INSERT via DuckDB will fail with "table not found".
+        full_table = f"{dest.duckdb_alias}.{schema}.{table_name}"
+        try:
+            dest._duckdb_conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {full_table} ({col_def_str})"
+            )
+            self._logger.info(
+                f"Auto-created chain table '{schema}.{table_name}' via DuckDB "
+                f"with columns {list(all_columns.keys())} "
+                f"and primary key {pk_columns or 'none'}."
+            )
+            return True
+        except Exception as duckdb_err:
+            self._logger.warning(
+                f"DuckDB DDL failed for chain table '{table_name}': {duckdb_err}. "
+                f"Falling back to psycopg2."
+            )
+
+        # ── Fallback: create via psycopg2 direct connection ──────────────────
+        create_sql = (
+            f'CREATE TABLE IF NOT EXISTS "{schema}"."{table_name}" ({col_def_str})'
+        )
         try:
             with dest._pg_conn.cursor() as cur:
                 cur.execute(create_sql)
-            # Note: connection uses autocommit=True, no explicit commit needed
+            # autocommit=True — no explicit commit needed
             self._logger.info(
-                f"Auto-created chain table '{schema}.{table_name}' "
+                f"Auto-created chain table '{schema}.{table_name}' via psycopg2 "
                 f"with columns {list(all_columns.keys())} "
                 f"and primary key {pk_columns or 'none'}."
             )
             return True
         except Exception as e:
-            self._logger.error(f"Failed to auto-create chain table '{table_name}': {e}")
+            self._logger.error(
+                f"Failed to auto-create chain table '{table_name}': {e}"
+            )
             return False
 
     def _write_to_destinations(self, records: list[CDCRecord]) -> None:
@@ -408,16 +445,7 @@ class ChainPipelineEngine:
                 try:
                     # Find table_sync config for this destination/table
                     table_sync = self._find_table_sync(dest_id, table_name)
-                    if table_sync:
-                        # For ROSETTA chain pipelines, ensure destination table exists
-                        # before trying to MERGE; auto-create it from record schema if needed.
-                        if is_rosetta_source:
-                            self._auto_create_chain_table(
-                                dest, table_sync.table_name_target, table_records
-                            )
-                        dest.write_batch(table_records, table_sync)
-                    else:
-                        # Gather configured table names for helpful diagnostics
+                    if not table_sync:
                         configured_tables = [
                             ts.table_name
                             for pd in self._pipeline.destinations
@@ -429,12 +457,40 @@ class ChainPipelineEngine:
                             f"Configured tables: {configured_tables or 'none'}. "
                             f"Add this table in the pipeline's table sync configuration."
                         )
+                        continue
+
+                    # For ROSETTA chain pipelines, ensure destination table exists
+                    # before trying to MERGE; auto-create it from record schema if needed.
+                    # IMPORTANT: table creation goes via DuckDB ATTACH, not psycopg2,
+                    # so DuckDB's schema cache sees the new table immediately.
+                    if is_rosetta_source:
+                        created = self._auto_create_chain_table(
+                            dest, table_sync.table_name_target, table_records
+                        )
+                        if created:
+                            self._logger.info(
+                                f"Chain table '{table_sync.table_name_target}' "
+                                f"auto-created for dest {dest_id}."
+                            )
+
+                    self._logger.debug(
+                        f"Writing {len(table_records)} record(s) for "
+                        f"'{table_name}' → dest {dest_id} "
+                        f"(target: '{table_sync.table_name_target}')"
+                    )
+                    dest.write_batch(table_records, table_sync)
+                    self._logger.info(
+                        f"Wrote {len(table_records)} record(s) for "
+                        f"'{table_name}' → dest {dest_id} OK."
+                    )
+
                 except Exception as e:
                     self._logger.error(
-                        f"Failed to write {len(table_records)} records for "
-                        f"{table_name} to dest {dest_id}: {sanitize_for_log(e)}"
+                        f"Failed to write {len(table_records)} record(s) for "
+                        f"'{table_name}' → dest {dest_id}: {sanitize_for_log(e)}",
+                        exc_info=True,
                     )
-                    # Send to DLQ
+                    # Send to DLQ for later retry
                     if self._dlq_manager:
                         for record in table_records:
                             try:
@@ -567,17 +623,30 @@ class ChainPipelineEngine:
                             records.append(record)
                             entry_ids.append(entry_id)
                         except Exception as e:
-                            self._logger.error(f"Failed to parse stream entry: {e}")
+                            self._logger.error(
+                                f"Failed to parse stream entry {entry_id} "
+                                f"from {stream_key}: {e}",
+                                exc_info=True,
+                            )
 
                     if records:
+                        self._logger.debug(
+                            f"Processing {len(records)} record(s) from "
+                            f"stream '{stream_key}' → "
+                            f"tables: {list({r.table_name for r in records})}"
+                        )
                         self._write_to_destinations(records)
 
-                        # Acknowledge processed entries then delete them
-                        # XACK removes from PEL; XDEL removes from the stream body
-                        # so consumed data does not linger in Redis.
+                        # Acknowledge processed entries then delete them.
+                        # NOTE: XACK + XDEL run regardless of whether write_batch
+                        # succeeded or sent records to DLQ, so entries are never
+                        # re-delivered from the stream.  DLQ recovery handles retries.
                         if entry_ids:
                             try:
                                 self._redis.xack(stream_key, group_name, *entry_ids)
+                                self._logger.debug(
+                                    f"XACK {len(entry_ids)} entries from {stream_key}"
+                                )
                             except Exception as e:
                                 self._logger.error(f"XACK failed for {stream_key}: {e}")
 

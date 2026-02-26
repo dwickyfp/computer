@@ -168,6 +168,7 @@ export interface TableSyncConfig {
   custom_sql: string | null
   filter_sql: string | null
   primary_key_column_target: string | null
+  catalog_database_name: string | null
 
   is_exists_table_landing: boolean
   is_exists_stream: boolean
@@ -259,6 +260,19 @@ export const tableSyncRepo = {
     await api.delete(
       `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/table-syncs/${syncConfigId}`
     )
+  },
+
+  updateCatalogDatabaseName: async (
+    pipelineId: number,
+    pipelineDestinationId: number,
+    syncConfigId: number,
+    catalogDatabaseName: string | null
+  ): Promise<TableSyncConfig> => {
+    const response: AxiosResponse<TableSyncConfig> = await api.patch(
+      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/table-syncs/${syncConfigId}/catalog`,
+      { catalog_database_name: catalogDatabaseName }
+    )
+    return response.data
   },
 
   initSnowflakeTable: async (

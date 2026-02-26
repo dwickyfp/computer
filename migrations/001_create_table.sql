@@ -94,6 +94,9 @@ ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS lineage_st
 ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS lineage_error TEXT NULL;
 ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS lineage_generated_at TIMESTAMPTZ NULL;
 
+-- Rosetta Chain catalog database name for table sync (destination DB on remote Rosetta instance)
+ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS catalog_database_name VARCHAR(255) NULL;
+
 CREATE INDEX IF NOT EXISTS idx_pipelines_destination_table_sync_lineage_status ON pipelines_destination_table_sync(lineage_status);
 
 COMMENT ON COLUMN pipelines_destination_table_sync.lineage_metadata IS 'JSON containing column-level lineage: {source_tables, source_columns, output_columns, column_lineage}';
