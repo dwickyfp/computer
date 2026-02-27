@@ -74,14 +74,6 @@ class DestinationService:
                 destination_data.config["private_key_passphrase"]
             )
 
-        if (
-            "chain_key" in destination_data.config
-            and destination_data.config["chain_key"]
-        ):
-            destination_data.config["chain_key"] = encrypt_value(
-                destination_data.config["chain_key"]
-            )
-
         destination = self.repository.create(**destination_data.dict())
 
         logger.info(
@@ -172,9 +164,6 @@ class DestinationService:
                 new_config["private_key_passphrase"] = encrypt_value(
                     new_config["private_key_passphrase"]
                 )
-            if "chain_key" in new_config and new_config["chain_key"]:
-                new_config["chain_key"] = encrypt_value(new_config["chain_key"])
-
             # Merge: Use old config as base, update with new config
             # This preserves secrets that were filtered out/masked in the frontend
             final_config = existing_destination.config.copy()
@@ -203,25 +192,27 @@ class DestinationService:
         # Collect tag IDs from all pipeline_destinations using this destination
         from app.domain.models.pipeline import PipelineDestination
         from app.domain.models.tag import PipelineDestinationTableSyncTag, TagList
-        
+
         tag_ids = set()
         pipeline_destinations = (
             self.db.query(PipelineDestination)
             .filter(PipelineDestination.destination_id == destination_id)
             .all()
         )
-        
+
         for pipeline_dest in pipeline_destinations:
             for table_sync in pipeline_dest.table_syncs:
                 for tag_assoc in table_sync.tag_associations:
                     tag_ids.add(tag_assoc.tag_id)
-        
+
         # Delete destination (CASCADE will delete pipeline_destinations and table_syncs)
         self.repository.delete(destination_id)
-        
+
         # Cleanup unused tags after deletion
         if tag_ids:
-            logger.info(f"Checking {len(tag_ids)} tags for cleanup after destination deletion")
+            logger.info(
+                f"Checking {len(tag_ids)} tags for cleanup after destination deletion"
+            )
             for tag_id in tag_ids:
                 # Check if tag is still used
                 count = (
@@ -229,7 +220,7 @@ class DestinationService:
                     .filter(PipelineDestinationTableSyncTag.tag_id == tag_id)
                     .count()
                 )
-                
+
                 if count == 0:
                     # Tag is unused, delete it
                     tag = self.db.query(TagList).filter(TagList.id == tag_id).first()
@@ -239,7 +230,7 @@ class DestinationService:
                             extra={"tag_id": tag_id, "tag_name": tag.tag},
                         )
                         self.db.delete(tag)
-            
+
             self.db.commit()
 
         logger.info(
@@ -331,15 +322,11 @@ class DestinationService:
             import httpx
 
             url = config.config.get("url", "").rstrip("/")
-            chain_key = config.config.get("chain_key", "")
             if not url:
                 raise Exception("Remote Compute URL is required")
-            if not chain_key:
-                raise Exception("Chain Key is required")
             try:
                 resp = httpx.get(
                     f"{url}/chain/health",
-                    headers={"X-Chain-Key": chain_key},
                     timeout=10.0,
                 )
                 if resp.status_code == 200:
@@ -477,12 +464,11 @@ class DestinationService:
             # Re-raise with clear message if possible
             raise e
 
-    
     def fetch_schema(
-        self, 
-        destination_id: int, 
+        self,
+        destination_id: int,
         table_name: str | None = None,
-        only_tables: bool = False
+        only_tables: bool = False,
     ) -> dict[str, list[str]]:
         """
         Fetch schema (tables and columns) from the destination.
@@ -496,20 +482,21 @@ class DestinationService:
             Dictionary mapping table names to list of column names (or empty list if only_tables)
         """
         destination = self.get_destination(destination_id)
-        
+
         # Redis Key - include table_name/only_tables if provided
         cache_key = f"destination:{destination_id}:schema"
         if table_name:
             cache_key += f":table:{table_name}"
         if only_tables:
             cache_key += ":only_tables"
-        
+
         try:
             # 1. Try Cache
             redis_client = RedisClient.get_instance()
             cached_schema = redis_client.get(cache_key)
             if cached_schema:
                 import json
+
                 return json.loads(cached_schema)
         except Exception as e:
             logger.warning(f"Redis cache error: {e}")
@@ -519,7 +506,7 @@ class DestinationService:
         try:
             if destination.type == "POSTGRES":
                 import psycopg2
-                
+
                 conn = psycopg2.connect(
                     host=destination.config.get("host"),
                     port=destination.config.get("port"),
@@ -528,7 +515,7 @@ class DestinationService:
                     password=decrypt_value(destination.config.get("password") or ""),
                     connect_timeout=10,
                 )
-                
+
                 with conn.cursor() as cur:
                     if only_tables:
                         # Fetch ONLY table names
@@ -539,14 +526,14 @@ class DestinationService:
                         """
                         params = []
                         if table_name:
-                             query += " AND table_name ILIKE %s"
-                             params.append(table_name)
+                            query += " AND table_name ILIKE %s"
+                            params.append(table_name)
                         query += " ORDER BY table_name;"
-                        
+
                         cur.execute(query, tuple(params))
                         rows = cur.fetchall()
                         for (table,) in rows:
-                             schema_data[table] = []
+                            schema_data[table] = []
                     else:
                         # Fetch tables and columns from information_schema
                         query = """
@@ -559,17 +546,17 @@ class DestinationService:
                             # Use ILIKE for case-insensitive matching
                             query += " AND table_name ILIKE %s"
                             params.append(table_name)
-                            
+
                         query += " ORDER BY table_name, ordinal_position;"
-                        
+
                         cur.execute(query, tuple(params))
                         rows = cur.fetchall()
-                        
+
                         for table, column in rows:
                             if table not in schema_data:
                                 schema_data[table] = []
                             schema_data[table].append(column)
-                
+
                 conn.close()
 
             elif destination.type == "SNOWFLAKE":
@@ -596,14 +583,16 @@ class DestinationService:
 
                     passphrase = None
                     if destination.config.get("private_key_passphrase"):
-                        passphrase = decrypt_value(destination.config.get("private_key_passphrase")).encode()
+                        passphrase = decrypt_value(
+                            destination.config.get("private_key_passphrase")
+                        ).encode()
 
                     p_key = serialization.load_pem_private_key(
                         private_key_str.encode(),
                         password=passphrase,
                         backend=default_backend(),
                     )
-                    
+
                     pkb = p_key.private_bytes(
                         encoding=serialization.Encoding.DER,
                         format=serialization.PrivateFormat.PKCS8,
@@ -611,13 +600,15 @@ class DestinationService:
                     )
                     conn_params["private_key"] = pkb
                 elif destination.config.get("password"):
-                    conn_params["password"] = decrypt_value(destination.config.get("password"))
+                    conn_params["password"] = decrypt_value(
+                        destination.config.get("password")
+                    )
 
                 ctx = snowflake.connector.connect(**conn_params)
                 cs = ctx.cursor()
-                
+
                 params = []
-                
+
                 if only_tables:
                     # Fetch ONLY table names
                     query = """
@@ -628,13 +619,13 @@ class DestinationService:
                     if table_name:
                         query += " AND TABLE_NAME ILIKE %s"
                         params.append(table_name)
-                    
+
                     query += " ORDER BY TABLE_NAME;"
-                    
+
                     cs.execute(query, tuple(params))
                     rows = cs.fetchall()
                     for (table,) in rows:
-                         schema_data[table] = []
+                        schema_data[table] = []
                 else:
                     # Fetch tables and columns
                     query = """
@@ -648,30 +639,37 @@ class DestinationService:
                         params.append(table_name)
 
                     query += " ORDER BY TABLE_NAME, ORDINAL_POSITION;"
-                    
+
                     cs.execute(query, tuple(params))
                     rows = cs.fetchall()
-                    
+
                     for table, column in rows:
                         if table not in schema_data:
                             schema_data[table] = []
                         schema_data[table].append(column)
-                
+
                 cs.close()
                 ctx.close()
-            
+
             # Cache the result
             try:
                 import json
+
                 redis_client = RedisClient.get_instance()
-                redis_client.setex(cache_key, 300, json.dumps(schema_data)) # 5 minutes TTL
+                redis_client.setex(
+                    cache_key, 300, json.dumps(schema_data)
+                )  # 5 minutes TTL
             except Exception as e:
-                logger.warning(f"Failed to cache schema for destination {destination_id}: {e}")
+                logger.warning(
+                    f"Failed to cache schema for destination {destination_id}: {e}"
+                )
 
             return schema_data
 
         except Exception as e:
-            logger.error(f"Failed to fetch schema for destination {destination.name}: {e}")
+            logger.error(
+                f"Failed to fetch schema for destination {destination.name}: {e}"
+            )
             raise ValueError(f"Failed to fetch schema: {str(e)}")
 
     # ------------------------------------------------------------------
@@ -692,6 +690,7 @@ class DestinationService:
             Celery task ID if worker is available, or None if worker is disabled.
         """
         from app.core.config import get_settings
+
         settings = get_settings()
 
         if not getattr(settings, "worker_enabled", False):
@@ -702,6 +701,7 @@ class DestinationService:
             return None
 
         from app.infrastructure.worker_client import WorkerClient
+
         try:
             task_id = WorkerClient.get_instance().submit_destination_table_list_task(
                 destination_id=destination_id

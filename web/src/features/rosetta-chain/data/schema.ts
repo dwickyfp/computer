@@ -58,26 +58,6 @@ export const chainClientFormSchema = z.object({
       }
     ),
   port: z.coerce.number().int().min(1).max(65535).default(8001),
-  chain_key: z
-    .string()
-    .optional()
-    .transform((val) => val?.trim())
-    .refine(
-      (val) => {
-        if (!val || val.trim() === '') return true // blank = keep existing (edit mode)
-        // Reject values that look like ISO dates (e.g. 2026-02-25 or 2026-02-25T10:30:00)
-        if (/^\d{4}-\d{2}-\d{2}/.test(val)) return false
-        // Reject values that look like IP addresses
-        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(val)) return false
-        // Must be at least 16 chars to be a valid key
-        if (val.length < 16) return false
-        return true
-      },
-      {
-        message:
-          'Invalid chain key. Paste the key from the remote Rosetta Chain Key page (must start with sk_rst_)',
-      }
-    ),
   description: z.string().optional(),
   is_active: z.boolean().optional().default(true),
   source_chain_id: z.string().nullable().optional(),

@@ -5,7 +5,6 @@ Manages chain key generation, client registration, connectivity testing,
 and table discovery between Rosetta instances.
 """
 
-import secrets
 import time
 from typing import Optional
 
@@ -13,16 +12,13 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.core.security import encrypt_value, decrypt_value
 from app.domain.models.rosetta_chain import (
     RosettaChainClient,
-    RosettaChainConfig,
     RosettaChainTable,
 )
 from app.domain.models.destination import Destination
 from app.domain.repositories.rosetta_chain import (
     RosettaChainClientRepository,
-    RosettaChainConfigRepository,
     RosettaChainTableRepository,
     RosettaChainDatabaseRepository,
 )
@@ -31,7 +27,6 @@ from app.domain.schemas.rosetta_chain import (
     ChainClientResponse,
     ChainClientTestResponse,
     ChainClientUpdate,
-    ChainKeyResponse,
     ChainTableResponse,
     RosettaChainDatabaseResponse,
 )
@@ -44,85 +39,9 @@ class RosettaChainService:
 
     def __init__(self, db: Session):
         self.db = db
-        self._config_repo = RosettaChainConfigRepository(db)
         self._client_repo = RosettaChainClientRepository(db)
         self._table_repo = RosettaChainTableRepository(db)
         self._database_repo = RosettaChainDatabaseRepository(db)
-
-    # ─── Chain Key Management ───────────────────────────────────────────────
-
-    def get_chain_key(self) -> Optional[ChainKeyResponse]:
-        """Get the current chain key (masked)."""
-        config = self._config_repo.get()
-        if not config:
-            return None
-
-        # Decrypt and mask the key
-        try:
-            raw_key = decrypt_value(config.chain_key)
-            masked = f"{'*' * max(0, len(raw_key) - 8)}{raw_key[-8:]}"
-        except Exception:
-            masked = "********"
-
-        return ChainKeyResponse(
-            chain_key_masked=masked,
-            is_active=config.is_active,
-            created_at=config.created_at,
-        )
-
-    def get_chain_key_raw(self) -> Optional[str]:
-        """Get the raw (decrypted) chain key for display once after generation."""
-        config = self._config_repo.get()
-        if not config:
-            return None
-        try:
-            return decrypt_value(config.chain_key)
-        except Exception:
-            return None
-
-    def generate_chain_key(self) -> str:
-        """Generate a new chain key. Returns the raw key (show once)."""
-        raw_key = f"sk_rst_{secrets.token_urlsafe(32)}"
-        encrypted_key = encrypt_value(raw_key)
-        self._config_repo.upsert(chain_key=encrypted_key, is_active=True)
-
-        # IMPORTANT: Commit to DB BEFORE notifying the compute process.
-        # Otherwise the compute re-reads the OLD key because the
-        # transaction hasn't been committed yet.
-        self.db.commit()
-
-        # Notify the local compute process to invalidate its cached key
-        # so incoming requests are validated against the new key immediately.
-        self._invalidate_compute_key_cache()
-
-        return raw_key
-
-    def _invalidate_compute_key_cache(self) -> None:
-        """Tell the local compute node to drop its cached chain key."""
-        try:
-            from app.core.config import get_settings
-
-            settings = get_settings()
-            url = f"{settings.compute_node_url.rstrip('/')}/chain/invalidate-key-cache"
-            resp = httpx.post(url, timeout=5.0)
-            if resp.status_code == 200:
-                logger.info("Compute key cache invalidated successfully")
-            else:
-                logger.warning(
-                    f"Compute key cache invalidation returned {resp.status_code}"
-                )
-        except Exception as e:
-            logger.warning(
-                f"Could not notify compute to invalidate key cache: {e}. "
-                "The cache will expire automatically within 60 seconds."
-            )
-
-    def set_chain_active(self, is_active: bool) -> Optional[ChainKeyResponse]:
-        """Toggle chain ingestion active state."""
-        config = self._config_repo.set_active(is_active)
-        if not config:
-            return None
-        return self.get_chain_key()
 
     # ─── Client Management ──────────────────────────────────────────────────
 
@@ -138,14 +57,10 @@ class RosettaChainService:
 
     def create_client(self, data: ChainClientCreate) -> ChainClientResponse:
         """Register a new remote Rosetta instance."""
-        # Encrypt the chain key before storing
-        encrypted_key = encrypt_value(data.chain_key)
-
         client = self._client_repo.create(
             name=data.name,
             url=data.url,
             port=data.port,
-            chain_key=encrypted_key,
             is_active=True,
             source_chain_id=data.source_chain_id or None,
         )
@@ -156,7 +71,7 @@ class RosettaChainService:
 
         # Auto-create a linked ROSETTA destination so it appears in the
         # pipeline "Add Destination" list without manual setup.
-        self._create_linked_destination(client, encrypted_key)
+        self._create_linked_destination(client)
 
         return ChainClientResponse.from_orm(client)
 
@@ -166,32 +81,10 @@ class RosettaChainService:
         """Update a remote Rosetta instance registration."""
         update_data = data.dict(exclude_unset=True)
 
-        # If chain_key is being updated, encrypt it.
-        # The Pydantic validator strips whitespace and returns None for blank
-        # values, so a None here means "keep existing" — remove it so the
-        # repository doesn't accidentally overwrite the stored key with NULL.
-        if "chain_key" in update_data:
-            if update_data["chain_key"] is None or update_data["chain_key"] == "":
-                del update_data["chain_key"]
-            else:
-                raw_preview = update_data["chain_key"].strip()
-                logger.info(
-                    f"Storing new chain_key for client id={client_id}: "
-                    f"first 8 chars='{raw_preview[:8]}...', length={len(raw_preview)}"
-                )
-                update_data["chain_key"] = encrypt_value(raw_preview)
-
         client = self._client_repo.update(client_id, **update_data)
 
-        # IMPORTANT: commit the client update FIRST so that a failure
-        # in _sync_linked_destination (which does its own rollback on
-        # error) does NOT silently roll back the chain_key change.
+        # Commit before syncing destination.
         self.db.commit()
-
-        logger.info(
-            f"Chain client '{client.name}' (id={client_id}) updated. "
-            f"chain_key {'CHANGED' if 'chain_key' in update_data else 'unchanged'}."
-        )
 
         # Sync the linked destination with the updated connection details
         self._sync_linked_destination(client)
@@ -211,49 +104,12 @@ class RosettaChainService:
         """Test connectivity to a remote Rosetta instance."""
         client = self._client_repo.get_by_id(client_id)
 
-        try:
-            raw_key = decrypt_value(client.chain_key)
-        except Exception:
-            return ChainClientTestResponse(
-                success=False,
-                message="Failed to decrypt chain key",
-                latency_ms=None,
-            )
-
-        # ── Sanity check: detect obviously wrong keys ───────────────
-        import re
-
-        _ip_like = re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", raw_key)
-        if _ip_like:
-            logger.error(
-                f"Chain key for client '{client.name}' (id={client_id}) "
-                f"decrypted to an IP address ({raw_key[:12]}...). "
-                f"This usually means the URL was accidentally saved in "
-                f"the chain_key field. Please update the client with the "
-                f"correct chain key from the remote Rosetta instance."
-            )
-            return ChainClientTestResponse(
-                success=False,
-                message=(
-                    f"The stored chain key appears to be an IP address "
-                    f"({raw_key[:12]}...), not a valid chain key. "
-                    f"Please update this client with the correct key "
-                    f"from the remote Rosetta's Chain Key page."
-                ),
-                latency_ms=None,
-            )
-
-        logger.debug(
-            f"Testing connection to '{client.name}' — key first 8 chars: "
-            f"{raw_key[:8]}..., key length: {len(raw_key)}"
-        )
-
         url = self._build_client_url(client, "/chain/health")
         start = time.monotonic()
 
         try:
             with httpx.Client(timeout=10.0) as http:
-                resp = http.get(url, headers={"X-Chain-Key": raw_key})
+                resp = http.get(url)
                 latency = (time.monotonic() - start) * 1000
 
                 if resp.status_code == 200:
@@ -261,17 +117,6 @@ class RosettaChainService:
                     return ChainClientTestResponse(
                         success=True,
                         message="Connection successful",
-                        latency_ms=round(latency, 2),
-                    )
-                elif resp.status_code == 401:
-                    return ChainClientTestResponse(
-                        success=False,
-                        message=(
-                            f"Authentication failed (401). The chain key "
-                            f"stored for this client does not match the "
-                            f"remote instance's key. Regenerate or re-enter "
-                            f"the key. (sent key first 8: {raw_key[:8]}...)"
-                        ),
                         latency_ms=round(latency, 2),
                     )
                 else:
@@ -321,17 +166,11 @@ class RosettaChainService:
         """
         client = self._client_repo.get_by_id(client_id)
 
-        try:
-            raw_key = decrypt_value(client.chain_key)
-        except Exception:
-            logger.error(f"Failed to decrypt chain key for client {client_id}")
-            return []
-
         url = self._build_client_url(client, "/chain/tables")
 
         try:
             with httpx.Client(timeout=15.0) as http:
-                resp = http.get(url, headers={"X-Chain-Key": raw_key})
+                resp = http.get(url)
 
                 if resp.status_code != 200:
                     logger.error(
@@ -386,17 +225,11 @@ class RosettaChainService:
         """
         client = self._client_repo.get_by_id(client_id)
 
-        try:
-            raw_key = decrypt_value(client.chain_key)
-        except Exception:
-            logger.error(f"Failed to decrypt chain key for client {client_id}")
-            return []
-
         url = self._build_client_url(client, "/chain/databases")
 
         try:
             with httpx.Client(timeout=15.0) as http:
-                resp = http.get(url, headers={"X-Chain-Key": raw_key})
+                resp = http.get(url)
 
                 if resp.status_code != 200:
                     logger.error(
@@ -441,11 +274,6 @@ class RosettaChainService:
         """
         client = self._client_repo.get_by_id(client_id)
 
-        try:
-            raw_key = decrypt_value(client.chain_key)
-        except Exception:
-            raise Exception("Failed to decrypt chain key")
-
         url = self._build_client_url(client, "/chain/schema")
 
         # Strip any local chain_client_id — it references this instance's DB
@@ -455,9 +283,7 @@ class RosettaChainService:
         forwarded_payload.setdefault("source_chain_id", client.name)
 
         with httpx.Client(timeout=10.0) as http:
-            resp = http.post(
-                url, headers={"X-Chain-Key": raw_key}, json=forwarded_payload
-            )
+            resp = http.post(url, json=forwarded_payload)
 
             if resp.status_code != 200:
                 logger.error(
@@ -480,9 +306,7 @@ class RosettaChainService:
         """Canonical name for the auto-created ROSETTA destination."""
         return f"chain-{client_name}"
 
-    def _create_linked_destination(
-        self, client: RosettaChainClient, encrypted_key: str
-    ) -> None:
+    def _create_linked_destination(self, client: RosettaChainClient) -> None:
         """
         Create a ROSETTA Destination record linked to this chain client.
 
@@ -504,7 +328,6 @@ class RosettaChainService:
                 config={
                     "url": client.url,
                     "port": client.port,
-                    "chain_key": encrypted_key,
                 },
                 list_tables=[],
                 total_tables=0,
@@ -535,20 +358,17 @@ class RosettaChainService:
                 self.db.query(Destination).filter_by(chain_client_id=client.id).first()
             )
             if not dest:
-                # Destination doesn't exist yet — create it now (handles clients
-                # registered before this feature was added).
-                self._create_linked_destination(client, client.chain_key)
+                # Destination doesn't exist yet — create it now.
+                self._create_linked_destination(client)
                 return
 
-            # Sync name, URL, port **and** chain_key so that key rotations
-            # propagate to the compute engine without a manual restart.
+            # Sync name, URL and port.
             new_name = self._destination_name(client.name)
             dest.name = new_name
             dest.config = {
                 **(dest.config or {}),
                 "url": client.url,
                 "port": client.port,
-                "chain_key": client.chain_key,  # already encrypted
             }
             self.db.commit()
         except Exception as e:
@@ -591,6 +411,6 @@ class RosettaChainService:
                 self.db.query(Destination).filter_by(chain_client_id=client.id).first()
             )
             if not existing:
-                self._create_linked_destination(client, client.chain_key)
+                self._create_linked_destination(client)
                 created += 1
         return created

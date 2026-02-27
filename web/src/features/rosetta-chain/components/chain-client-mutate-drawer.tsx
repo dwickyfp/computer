@@ -54,7 +54,6 @@ export function ChainClientMutateDrawer({
           name: currentRow.name,
           url: currentRow.url,
           port: currentRow.port ?? 8001,
-          chain_key: '',
           description: '',
           is_active: currentRow.is_active,
           source_chain_id: currentRow.source_chain_id ?? '',
@@ -63,7 +62,6 @@ export function ChainClientMutateDrawer({
           name: '',
           url: '',
           port: 8001,
-          chain_key: '',
           description: '',
           is_active: true,
           source_chain_id: '',
@@ -77,7 +75,6 @@ export function ChainClientMutateDrawer({
             name: currentRow.name,
             url: currentRow.url,
             port: currentRow.port ?? 8001,
-            chain_key: '',
             description: '',
             is_active: currentRow.is_active,
             source_chain_id: currentRow.source_chain_id ?? '',
@@ -86,7 +83,6 @@ export function ChainClientMutateDrawer({
             name: '',
             url: '',
             port: 8001,
-            chain_key: '',
             description: '',
             is_active: true,
             source_chain_id: '',
@@ -121,13 +117,6 @@ export function ChainClientMutateDrawer({
 
   const onSubmit = (data: ChainClientForm) => {
     const payload: any = { ...data }
-    // Trim whitespace that may have been accidentally included when copy-pasting
-    if (payload.chain_key) {
-      payload.chain_key = payload.chain_key.trim()
-    }
-    if (!payload.chain_key) {
-      delete payload.chain_key
-    }
     // Normalise: empty string → null so the backend clears the value
     if (!payload.source_chain_id || payload.source_chain_id.trim() === '') {
       payload.source_chain_id = null
@@ -232,32 +221,6 @@ export function ChainClientMutateDrawer({
                     in their pipeline destination list. Leave blank to let the
                     receiver auto-detect it on first ingest.
                   </p>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='chain_key'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Chain Key{isUpdate && ' (leave blank to keep existing)'}
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      type='text'
-                      autoComplete='off'
-                      data-1p-ignore
-                      data-lpignore='true'
-                      data-form-type='other'
-                      placeholder={
-                        isUpdate ? 'Leave blank to keep existing' : 'sk_rst_...'
-                      }
-                    />
-                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

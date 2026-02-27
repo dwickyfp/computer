@@ -1,5 +1,55 @@
 -- ETL Stream Configuration Database Schema
 
+-- ============================================================
+-- DROP ALL TABLES
+-- WARNING: This will permanently delete ALL data.
+-- Uncomment and run manually to reset the database schema.
+-- ============================================================
+
+/*
+DROP TABLE IF EXISTS public.rosetta_chain_databases         CASCADE;
+DROP TABLE IF EXISTS rosetta_chain_tables                   CASCADE;
+DROP TABLE IF EXISTS rosetta_chain_clients                  CASCADE;
+DROP TABLE IF EXISTS rosetta_chain_config                   CASCADE;
+DROP TABLE IF EXISTS catalog_tables                         CASCADE;
+DROP TABLE IF EXISTS catalog_databases                      CASCADE;
+DROP TABLE IF EXISTS flow_task_watermarks                   CASCADE;
+DROP TABLE IF EXISTS flow_task_graph_version                CASCADE;
+DROP TABLE IF EXISTS schedule_run_history                   CASCADE;
+DROP TABLE IF EXISTS schedules                              CASCADE;
+DROP TABLE IF EXISTS linked_task_run_step_log               CASCADE;
+DROP TABLE IF EXISTS linked_task_run_history                CASCADE;
+DROP TABLE IF EXISTS linked_task_edges                      CASCADE;
+DROP TABLE IF EXISTS linked_task_steps                      CASCADE;
+DROP TABLE IF EXISTS linked_tasks                           CASCADE;
+DROP TABLE IF EXISTS flow_task_run_node_log                 CASCADE;
+DROP TABLE IF EXISTS flow_task_run_history                  CASCADE;
+DROP TABLE IF EXISTS flow_task_graph                        CASCADE;
+DROP TABLE IF EXISTS flow_tasks                             CASCADE;
+DROP TABLE IF EXISTS worker_health_status                   CASCADE;
+DROP TABLE IF EXISTS pipelines_destination_table_sync_tag   CASCADE;
+DROP TABLE IF EXISTS tbltag_list                            CASCADE;
+DROP TABLE IF EXISTS queue_backfill_data                    CASCADE;
+DROP TABLE IF EXISTS notification_log                       CASCADE;
+DROP TABLE IF EXISTS job_metrics_monitoring                 CASCADE;
+DROP TABLE IF EXISTS rosetta_setting_configuration          CASCADE;
+DROP TABLE IF EXISTS data_flow_record_monitoring            CASCADE;
+DROP TABLE IF EXISTS credit_snowflake_monitoring            CASCADE;
+DROP TABLE IF EXISTS pipelines_progress                     CASCADE;
+DROP TABLE IF EXISTS presets                                CASCADE;
+DROP TABLE IF EXISTS history_schema_evolution               CASCADE;
+DROP TABLE IF EXISTS table_metadata_list                    CASCADE;
+DROP TABLE IF EXISTS wal_metrics                            CASCADE;
+DROP TABLE IF EXISTS wal_monitor                            CASCADE;
+DROP TABLE IF EXISTS system_metrics                         CASCADE;
+DROP TABLE IF EXISTS pipeline_metadata                      CASCADE;
+DROP TABLE IF EXISTS pipelines_destination_table_sync       CASCADE;
+DROP TABLE IF EXISTS pipelines_destination                  CASCADE;
+DROP TABLE IF EXISTS pipelines                              CASCADE;
+DROP TABLE IF EXISTS destinations                           CASCADE;
+DROP TABLE IF EXISTS sources                                CASCADE;
+*/
+
 -- Table 1: Sources (PostgreSQL connection configurations)
 CREATE TABLE IF NOT EXISTS sources (
     id SERIAL PRIMARY KEY,

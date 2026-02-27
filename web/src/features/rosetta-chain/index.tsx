@@ -7,7 +7,6 @@ import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ChainClientTable } from './components/chain-client-table'
 import { ChainDialogs } from './components/chain-dialogs'
-import { ChainKeyCard } from './components/chain-key-card'
 import { ChainPrimaryButtons } from './components/chain-primary-buttons'
 import { ChainProvider } from './components/chain-provider'
 import { DataExplorer } from './components/data-explorer'
@@ -47,9 +46,6 @@ export function RosettaChain() {
           </TabsList>
 
           <TabsContent value='clients' className='mt-0 flex-1 space-y-4'>
-            {/* Chain Key management card */}
-            <ChainKeyCard />
-
             {/* Chain Clients section */}
             <div className='mt-6 flex flex-wrap items-end justify-between gap-2'>
               <div>

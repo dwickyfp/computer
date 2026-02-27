@@ -1,22 +1,5 @@
 import { api } from './client'
 
-// ─── Chain Key ───────────────────────────────────────────────────────────────
-
-export interface ChainKey {
-  chain_key_masked: string
-  is_active: boolean
-  created_at: string | null
-}
-
-export interface ChainKeyGenerated {
-  chain_key: string
-  message: string
-}
-
-export interface ChainKeyGenerate {
-  is_active?: boolean
-}
-
 // ─── Chain Client ────────────────────────────────────────────────────────────
 
 export interface ChainTable {
@@ -58,7 +41,6 @@ export interface ChainClientCreate {
   name: string
   url: string
   port?: number
-  chain_key: string
   source_chain_id?: string | null
   description?: string
   is_active?: boolean
@@ -75,34 +57,6 @@ export interface ChainClientTestResult {
 // ─── Repo Object ─────────────────────────────────────────────────────────────
 
 export const chainRepo = {
-  // Chain Key
-  getKey: async () => {
-    const { data } = await api.get<ChainKey>('/chain/key')
-    return data
-  },
-
-  revealKey: async () => {
-    const { data } = await api.get<{ chain_key: string | null }>(
-      '/chain/key/reveal'
-    )
-    return data
-  },
-
-  generateKey: async (payload?: ChainKeyGenerate) => {
-    const { data } = await api.post<ChainKeyGenerated>(
-      '/chain/generate-key',
-      payload ?? {}
-    )
-    return data
-  },
-
-  toggleActive: async (is_active: boolean) => {
-    const { data } = await api.patch<ChainKey>('/chain/toggle-active', {
-      is_active,
-    })
-    return data
-  },
-
   // Chain Clients
   getClients: async () => {
     const { data } = await api.get<ChainClient[]>('/chain/clients')

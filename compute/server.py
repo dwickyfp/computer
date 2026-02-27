@@ -7,7 +7,7 @@ Provides health check, connection pool status, and chain ingestion endpoints.
 import json
 import logging
 import uvicorn
-from fastapi import FastAPI, Depends, Header, Request, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from config.config import get_config
 
@@ -58,38 +58,14 @@ def _get_schema_manager():
 
 
 @app.get("/chain/health")
-async def chain_health(x_chain_key: str = Header(default=None)):
-    """
-    Chain-specific health check.
-
-    Validates the chain key and returns capabilities.
-    """
+async def chain_health():
+    """Chain-specific health check."""
     config = get_config()
     if not config.chain.enabled:
         return JSONResponse(
             status_code=503,
             content={"status": "disabled", "message": "Chain ingestion is not enabled"},
         )
-
-    # Validate key if auth is enabled
-    if config.chain.auth_enabled:
-        if not x_chain_key:
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "status": "unauthorized",
-                    "message": "X-Chain-Key header is required",
-                },
-            )
-        from chain.auth import validate_chain_key
-
-        try:
-            validate_chain_key(x_chain_key)
-        except Exception:
-            return JSONResponse(
-                status_code=401,
-                content={"status": "unauthorized", "message": "Invalid chain key"},
-            )
 
     return {
         "status": "healthy",
@@ -98,24 +74,9 @@ async def chain_health(x_chain_key: str = Header(default=None)):
     }
 
 
-@app.post("/chain/invalidate-key-cache")
-async def chain_invalidate_key_cache():
-    """
-    Invalidate the cached chain key in the compute process.
-
-    Called by the backend after a key regeneration so that the new
-    key is picked up immediately instead of waiting for the TTL.
-    """
-    from chain.auth import invalidate_key_cache
-
-    invalidate_key_cache()
-    return {"status": "ok", "message": "Chain key cache invalidated"}
-
-
 @app.post("/chain/ingest")
 async def chain_ingest(
     request: Request,
-    x_chain_key: str = Header(...),
     x_chain_id: str = Header(...),
     x_table_name: str = Header(...),
     x_operation_type: str = Header(default="c"),
@@ -132,12 +93,6 @@ async def chain_ingest(
             status_code=503,
             content={"error": "Chain ingestion is not enabled"},
         )
-
-    # Validate key
-    if config.chain.auth_enabled:
-        from chain.auth import validate_chain_key
-
-        validate_chain_key(x_chain_key)
 
     content_type = request.headers.get("content-type", "")
     body = await request.body()
@@ -222,7 +177,6 @@ def _try_auto_map_source_chain_id(chain_id: str) -> None:
 @app.post("/chain/schema")
 async def chain_push_schema(
     request: Request,
-    x_chain_key: str = Header(...),
 ):
     """
     Receive a table schema definition from a remote Rosetta instance.
@@ -235,11 +189,6 @@ async def chain_push_schema(
             status_code=503,
             content={"error": "Chain ingestion is not enabled"},
         )
-
-    if config.chain.auth_enabled:
-        from chain.auth import validate_chain_key
-
-        validate_chain_key(x_chain_key)
 
     body = await request.json()
     table_name = body.get("table_name")
@@ -287,19 +236,9 @@ async def chain_push_schema(
 @app.get("/chain/schema/{table_name}")
 async def chain_get_schema(
     table_name: str,
-    x_chain_key: str = Header(default=None),
     chain_client_id: int = None,
 ):
     """Check if a table schema exists and return it."""
-    config = get_config()
-    if config.chain.auth_enabled and x_chain_key:
-        from chain.auth import validate_chain_key
-
-        try:
-            validate_chain_key(x_chain_key)
-        except Exception:
-            pass
-
     schema_mgr = _get_schema_manager()
     schema = schema_mgr.get_table_schema(table_name, chain_client_id)
 
@@ -313,38 +252,17 @@ async def chain_get_schema(
 
 @app.get("/chain/tables")
 async def chain_list_tables(
-    x_chain_key: str = Header(default=None),
     chain_client_id: int = None,
 ):
     """List all chain tables available on this instance."""
-    config = get_config()
-    if config.chain.auth_enabled and x_chain_key:
-        from chain.auth import validate_chain_key
-
-        try:
-            validate_chain_key(x_chain_key)
-        except Exception:
-            pass
-
     schema_mgr = _get_schema_manager()
     tables = schema_mgr.list_tables(chain_client_id)
     return tables
 
 
 @app.get("/chain/databases")
-async def chain_list_databases(
-    x_chain_key: str = Header(default=None),
-):
+async def chain_list_databases():
     """List all chain databases available on this instance."""
-    config = get_config()
-    if config.chain.auth_enabled and x_chain_key:
-        from chain.auth import validate_chain_key
-
-        try:
-            validate_chain_key(x_chain_key)
-        except Exception:
-            pass
-
     schema_mgr = _get_schema_manager()
     databases = schema_mgr.list_databases()
     return databases

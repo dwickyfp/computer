@@ -16,10 +16,8 @@ from app.domain.schemas.rosetta_chain import (
     ChainClientResponse,
     ChainClientTestResponse,
     ChainClientUpdate,
-    ChainKeyResponse,
     ChainTableResponse,
     RosettaChainDatabaseResponse,
-    ChainToggleActiveRequest,
 )
 from app.domain.services.rosetta_chain import RosettaChainService
 
@@ -36,56 +34,6 @@ def get_chain_service_readonly(
 ) -> RosettaChainService:
     """Get chain service dependency (read-only)."""
     return RosettaChainService(db)
-
-
-# ─── Chain Key Endpoints ────────────────────────────────────────────────────────
-
-
-@router.get("/key", response_model=ChainKeyResponse | None)
-def get_chain_key(
-    service: RosettaChainService = Depends(get_chain_service_readonly),
-):
-    """Get the current chain key (masked)."""
-    return service.get_chain_key()
-
-
-@router.get("/key/reveal")
-def reveal_chain_key(
-    service: RosettaChainService = Depends(get_chain_service_readonly),
-):
-    """Return the full decrypted chain key."""
-    raw = service.get_chain_key_raw()
-    if raw is None:
-        return {"chain_key": None}
-    return {"chain_key": raw}
-
-
-@router.post("/generate-key")
-def generate_chain_key(
-    service: RosettaChainService = Depends(get_chain_service),
-):
-    """
-    Generate a new chain key for this instance.
-
-    Returns the raw key — store it securely, it will only be shown once.
-    """
-    raw_key = service.generate_chain_key()
-    return {
-        "chain_key": raw_key,
-        "message": "Store this key securely. It will not be shown again.",
-    }
-
-
-@router.patch("/toggle-active")
-def toggle_chain_active(
-    body: ChainToggleActiveRequest,
-    service: RosettaChainService = Depends(get_chain_service),
-):
-    """Toggle chain ingestion active state."""
-    result = service.set_chain_active(body.is_active)
-    if result is None:
-        return {"message": "No chain key configured. Generate a key first."}
-    return result
 
 
 # ─── Client Endpoints ───────────────────────────────────────────────────────────
@@ -204,6 +152,7 @@ def sync_client_tables(
 
 from typing import Dict, Any
 from fastapi import Body
+
 
 @router.post(
     "/clients/{client_id}/catalog/register",

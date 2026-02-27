@@ -41,10 +41,10 @@ class RosettaChainConfig(Base, TimestampMixin):
         comment="Unique config identifier",
     )
 
-    chain_key: Mapped[str] = mapped_column(
+    chain_key: Mapped[Optional[str]] = mapped_column(
         Text,
-        nullable=False,
-        comment="Encrypted chain credential key for this instance",
+        nullable=True,
+        comment="Deprecated — authentication is disabled; kept for schema compatibility",
     )
 
     is_active: Mapped[bool] = mapped_column(
@@ -100,10 +100,10 @@ class RosettaChainClient(Base, TimestampMixin):
         comment="Port of the remote Rosetta compute service",
     )
 
-    chain_key: Mapped[str] = mapped_column(
+    chain_key: Mapped[Optional[str]] = mapped_column(
         Text,
-        nullable=False,
-        comment="Encrypted chain credential key of the remote instance",
+        nullable=True,
+        comment="Deprecated — authentication is disabled; kept for schema compatibility",
     )
 
     is_active: Mapped[bool] = mapped_column(
