@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   chainRepo,
   ChainClient,
@@ -31,6 +31,7 @@ import {
 type ViewState = 'clients' | 'databases' | 'tables' | 'schema'
 
 export function DataExplorer() {
+  const queryClient = useQueryClient()
   const [viewState, setViewState] = useState<ViewState>('clients')
   const [selectedClient, setSelectedClient] = useState<ChainClient | null>(null)
   const [selectedDb, setSelectedDb] = useState<ChainDatabase | null>(null)
@@ -51,8 +52,41 @@ export function DataExplorer() {
       (viewState === 'databases' ||
         viewState === 'tables' ||
         viewState === 'schema'),
-    staleTime: 5000,
+    staleTime: 0,
   })
+
+  const syncTablesMutation = useMutation({
+    mutationFn: () => chainRepo.syncClientTables(selectedClient!.id),
+    onSuccess: () => {
+      setTimeout(() => {
+        queryClient.invalidateQueries({
+          queryKey: ['chain-client-tables', selectedClient?.id],
+        })
+      }, 300)
+    },
+  })
+
+  const syncDbsMutation = useMutation({
+    mutationFn: () => chainRepo.syncClientDatabases(selectedClient!.id),
+    onSuccess: () => {
+      // After DB sync, re-sync tables so their database_id FK associations
+      // are updated to the (potentially renamed/recreated) database rows.
+      syncTablesMutation.mutate()
+      setTimeout(() => {
+        queryClient.invalidateQueries({
+          queryKey: ['chain-client-databases', selectedClient?.id],
+        })
+      }, 300)
+    },
+  })
+
+  // Auto-sync from remote whenever we navigate to the databases view
+  useEffect(() => {
+    if (viewState === 'databases' && selectedClient) {
+      syncDbsMutation.mutate()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewState, selectedClient?.id])
 
   // We fetch tables per client+database combination
   const {
@@ -229,6 +263,19 @@ export function DataExplorer() {
               <h3 className='text-lg font-medium'>
                 Databases in {selectedClient?.name}
               </h3>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => syncDbsMutation.mutate()}
+                disabled={syncDbsMutation.isPending}
+              >
+                <RefreshCw
+                  className={`mr-1.5 h-3.5 w-3.5 ${
+                    syncDbsMutation.isPending ? 'animate-spin' : ''
+                  }`}
+                />
+                Sync
+              </Button>
             </div>
 
             <div className='rounded-md border'>
