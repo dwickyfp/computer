@@ -1,4 +1,4 @@
-import { MoreHorizontal, Lock } from 'lucide-react'
+import { MoreHorizontal, Lock, Pencil } from 'lucide-react'
 import { type Row } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,6 +19,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { type Pipeline, pipelinesRepo } from '@/repo/pipelines'
 import { useQueryClient, useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -34,6 +44,8 @@ export function PipelineRowActions<TData>({ row }: DataTableRowActionsProps<TDat
   const pipeline = row.original as Pipeline
   const queryClient = useQueryClient()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false)
+  const [newName, setNewName] = useState('')
 
   const { mutate: deleteMutate, isPending: isDeleting } = useMutation({
     mutationFn: pipelinesRepo.delete,
@@ -71,6 +83,24 @@ export function PipelineRowActions<TData>({ row }: DataTableRowActionsProps<TDat
     }
   })
 
+  const { mutate: renameMutate, isPending: isRenaming } = useMutation({
+    mutationFn: (name: string) => pipelinesRepo.rename(pipeline.id, name),
+    onSuccess: async () => {
+      setRenameDialogOpen(false)
+      toast.success('Pipeline renamed')
+      await new Promise((r) => setTimeout(r, 300))
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || 'Failed to rename pipeline')
+    },
+  })
+
+  const handleRenameOpen = () => {
+    setNewName(pipeline.name)
+    setRenameDialogOpen(true)
+  }
+
   return (
     <>
       <DropdownMenu>
@@ -82,6 +112,10 @@ export function PipelineRowActions<TData>({ row }: DataTableRowActionsProps<TDat
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-[160px]'>
 
+          <DropdownMenuItem onClick={handleRenameOpen}>
+            <Pencil className='mr-2 h-3.5 w-3.5' />
+            Rename
+          </DropdownMenuItem>
           <DropdownMenuItem 
             onClick={() => refreshMutate(pipeline.id)}
             disabled={pipeline.status === 'PAUSE'}
@@ -99,6 +133,41 @@ export function PipelineRowActions<TData>({ row }: DataTableRowActionsProps<TDat
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Rename Dialog */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent className='sm:max-w-[400px]'>
+          <DialogHeader>
+            <DialogTitle>Rename Pipeline</DialogTitle>
+            <DialogDescription>
+              Enter a new name for the pipeline. Only lowercase letters, numbers, hyphens, and underscores are allowed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-2 py-2'>
+            <Label htmlFor='pipeline-name'>Name</Label>
+            <Input
+              id='pipeline-name'
+              value={newName}
+              onChange={(e) => setNewName(e.target.value.toLowerCase())}
+              placeholder={pipeline.name}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newName.trim() && newName !== pipeline.name) {
+                  renameMutate(newName.trim())
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setRenameDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => renameMutate(newName.trim())}
+              disabled={isRenaming || !newName.trim() || newName.trim() === pipeline.name}
+            >
+              {isRenaming ? 'Renaming...' : 'Rename'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation Modal */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

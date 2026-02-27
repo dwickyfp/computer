@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { catalogRepo } from '@/repo/catalog'
+import { chainRepo } from '@/repo/chains'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { sourcesRepo } from '@/repo/sources'
 import { toast } from 'sonner'
@@ -45,6 +46,7 @@ const formSchema = z
       ),
     source_type: z.enum(['POSTGRES', 'ROSETTA', 'CATALOG_TABLE']),
     source_id: z.string().optional(),
+    chain_client_id: z.string().optional(),
     catalog_database_id: z.string().optional(),
     catalog_table_id: z.string().optional(),
   })
@@ -60,6 +62,13 @@ const formSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Catalog table is required',
+        path: ['catalog_table_id'],
+      })
+    }
+    if (data.source_type === 'ROSETTA' && !data.catalog_table_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Catalog table is required for Rosetta Chain source',
         path: ['catalog_table_id'],
       })
     }
@@ -81,15 +90,31 @@ export function PipelineCreateDrawer({
       name: '',
       source_type: 'POSTGRES',
       source_id: '',
+      chain_client_id: '',
+      catalog_database_id: '',
+      catalog_table_id: '',
     },
   })
 
   const sourceType = form.watch('source_type')
 
+  // Reset dependent fields when source type changes
+  useEffect(() => {
+    form.setValue('source_id', '')
+    form.setValue('chain_client_id', '')
+    form.setValue('catalog_database_id', '')
+    form.setValue('catalog_table_id', '')
+  }, [sourceType, form])
+
   // Fetch sources, chain clients, and existing pipelines
   const { data: sources } = useQuery({
     queryKey: ['sources'],
     queryFn: sourcesRepo.getAll,
+  })
+  const { data: chainClients } = useQuery({
+    queryKey: ['chain-clients'],
+    queryFn: chainRepo.getClients,
+    enabled: sourceType === 'ROSETTA',
   })
   const { data: pipelines } = useQuery({
     queryKey: ['pipelines'],
@@ -109,6 +134,11 @@ export function PipelineCreateDrawer({
         payload.source_id = parseInt(values.source_id!)
       } else if (values.source_type === 'CATALOG_TABLE') {
         payload.catalog_table_id = parseInt(values.catalog_table_id!)
+      } else if (values.source_type === 'ROSETTA') {
+        payload.catalog_table_id = parseInt(values.catalog_table_id!)
+        if (values.chain_client_id) {
+          payload.chain_client_id = parseInt(values.chain_client_id)
+        }
       }
       return pipelinesRepo.create(payload)
     },
@@ -222,6 +252,99 @@ export function PipelineCreateDrawer({
                     </FormItem>
                   )}
                 />
+              )}
+
+              {sourceType === 'ROSETTA' && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name='chain_client_id'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Chain Client (optional)</FormLabel>
+                        <Select
+                          onValueChange={(val) => {
+                            field.onChange(val)
+                            form.setValue('catalog_database_id', '')
+                            form.setValue('catalog_table_id', '')
+                          }}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue placeholder='Select a chain client' />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {chainClients?.map((c) => (
+                              <SelectItem key={c.id} value={c.id.toString()}>
+                                {c.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='catalog_database_id'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>My Database</FormLabel>
+                        <Select
+                          onValueChange={(val) => {
+                            field.onChange(val)
+                            form.setValue('catalog_table_id', '')
+                          }}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue placeholder='Select a database' />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <CatalogDatabaseSelectOptions />
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {form.watch('catalog_database_id') && (
+                    <FormField
+                      control={form.control}
+                      name='catalog_table_id'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>My Table</FormLabel>
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue placeholder='Select a table' />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <CatalogTableSelectOptions
+                                dbId={parseInt(
+                                  form.watch('catalog_database_id')!
+                                )}
+                              />
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </>
               )}
 
               {sourceType === 'CATALOG_TABLE' && (

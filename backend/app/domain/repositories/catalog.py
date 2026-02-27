@@ -36,6 +36,16 @@ class CatalogDatabaseRepository:
             return True
         return False
 
+    def update(self, db_id: int, **kwargs) -> Optional[CatalogDatabase]:
+        obj = self.get_by_id(db_id)
+        if obj:
+            for key, value in kwargs.items():
+                if value is not None:
+                    setattr(obj, key, value)
+            self.db.commit()
+            self.db.refresh(obj)
+        return obj
+
 
 class CatalogTableRepository:
     def __init__(self, db: Session):

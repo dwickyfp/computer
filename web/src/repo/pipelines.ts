@@ -51,6 +51,7 @@ export interface CreatePipelineRequest {
   source_id?: number
   source_type?: string
   chain_client_id?: number
+  catalog_table_id?: number
   status?: string
 }
 
@@ -77,6 +78,10 @@ export const pipelinesRepo = {
   },
   delete: async (id: number): Promise<void> => {
     await api.delete(`/pipelines/${id}`)
+  },
+  rename: async (id: number, name: string): Promise<Pipeline> => {
+    const response: AxiosResponse<Pipeline> = await api.put(`/pipelines/${id}`, { name })
+    return response.data
   },
   start: async (id: number): Promise<Pipeline> => {
     const response: AxiosResponse<Pipeline> = await api.post(

@@ -7,6 +7,11 @@ export interface CatalogDatabase {
   created_at: string
 }
 
+export interface CatalogDatabaseUpdate {
+  name?: string
+  description?: string
+}
+
 export interface CatalogTable {
   id: number
   database_id: number
@@ -32,6 +37,11 @@ export const catalogRepo = {
 
   deleteDatabase: async (id: number) => {
     await api.delete(`/catalog/databases/${id}`)
+  },
+
+  updateDatabase: async (id: number, data: CatalogDatabaseUpdate) => {
+    const { data: result } = await api.put<CatalogDatabase>(`/catalog/databases/${id}`, data)
+    return result
   },
 
   getTables: async (dbId: number) => {

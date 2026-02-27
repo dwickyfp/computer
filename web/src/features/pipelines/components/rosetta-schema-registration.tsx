@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { chainRepo, ChainDatabase } from '@/repo/chains'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { Loader2, Database } from 'lucide-react'
+import { Loader2, Database, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -67,11 +67,24 @@ export function RosettaSchemaRegistration({
   }, [open, table])
 
   // Fetch available databases from the remote chain client
-  const { data: databases, isLoading: loadingDbs } = useQuery({
+  const { data: databases, isLoading: loadingDbs, refetch: refetchDbs } = useQuery({
     queryKey: ['chain-databases', chainId],
     queryFn: () => chainRepo.getClientDatabases(chainId),
-    enabled: open,
+    enabled: open && !!chainId,
   })
+
+  // Sync databases from remote if the list is empty when dialog opens
+  const syncDbsMutation = useMutation({
+    mutationFn: () => chainRepo.syncClientDatabases(chainId),
+    onSuccess: () => refetchDbs(),
+  })
+
+  useEffect(() => {
+    if (open && !!chainId && databases !== undefined && databases.length === 0) {
+      syncDbsMutation.mutate()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, chainId, databases?.length])
 
   const registerMutation = useMutation({
     mutationFn: (payload: any) => chainRepo.registerCatalogTable(chainId, payload),
@@ -157,7 +170,7 @@ export function RosettaSchemaRegistration({
           <div className='grid grid-cols-[1fr_1.5fr] gap-4'>
             <div className='space-y-2'>
               <Label>Destination Database</Label>
-              {loadingDbs ? (
+              {loadingDbs || syncDbsMutation.isPending ? (
                 <div className='flex items-center text-sm text-muted-foreground'>
                   <Loader2 className='w-4 h-4 mr-2 animate-spin' /> Loading databases...
                 </div>
@@ -179,8 +192,17 @@ export function RosettaSchemaRegistration({
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
-                </div>
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='icon'
+                      className='h-9 w-9 flex-shrink-0'
+                      disabled={syncDbsMutation.isPending}
+                      onClick={() => syncDbsMutation.mutate()}
+                      title='Sync databases from remote'
+                    >
+                      <RefreshCw className={`w-4 h-4 ${syncDbsMutation.isPending ? 'animate-spin' : ''}`} />
+                    </Button>
               )}
             </div>
 

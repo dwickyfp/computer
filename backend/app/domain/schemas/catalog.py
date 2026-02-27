@@ -17,6 +17,11 @@ class CatalogDatabaseCreate(CatalogDatabaseBase):
     pass
 
 
+class CatalogDatabaseUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, description="New database name")
+    description: Optional[str] = Field(None, description="Updated description")
+
+
 class CatalogDatabaseResponse(CatalogDatabaseBase):
     id: int
     created_at: datetime

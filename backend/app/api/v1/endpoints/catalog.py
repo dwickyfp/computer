@@ -11,6 +11,7 @@ from app.domain.services.catalog import CatalogService
 from app.domain.schemas.catalog import (
     CatalogDatabaseCreate,
     CatalogDatabaseResponse,
+    CatalogDatabaseUpdate,
     CatalogTableResponse,
     SchemaRegistrationRequest,
 )
@@ -50,6 +51,17 @@ def create_database(
 @router.delete("/databases/{db_id}", status_code=204)
 def delete_database(db_id: int, service: CatalogService = Depends(get_catalog_service)):
     """Delete a logical database container and all its tables."""
+    service.delete_database(db_id)
+
+
+@router.put("/databases/{db_id}", response_model=CatalogDatabaseResponse)
+def update_database(
+    db_id: int,
+    data: CatalogDatabaseUpdate,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Rename or update description of a logical database container."""
+    return service.update_database(db_id, name=data.name, description=data.description)
     service.delete_database(db_id)
 
 

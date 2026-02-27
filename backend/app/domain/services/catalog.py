@@ -49,6 +49,16 @@ class CatalogService:
         if not success:
             raise HTTPException(status_code=404, detail="Database not found")
 
+    def update_database(self, db_id: int, name: str | None = None, description: str | None = None) -> CatalogDatabaseResponse:
+        if name is not None:
+            existing = self.db_repo.get_by_name(name)
+            if existing and existing.id != db_id:
+                raise HTTPException(status_code=400, detail="A database with that name already exists")
+        obj = self.db_repo.update(db_id, **{k: v for k, v in {"name": name, "description": description}.items() if v is not None})
+        if not obj:
+            raise HTTPException(status_code=404, detail="Database not found")
+        return CatalogDatabaseResponse.from_orm(obj)
+
     # ─── Table Discovery ──────────────────────────────────────────────────────
 
     def list_tables(self, database_id: int) -> List[CatalogTableResponse]:
