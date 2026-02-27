@@ -270,7 +270,9 @@ class RosettaChainService:
         """
         Register a table schema to a remote Rosetta instance's catalog.
 
-        Acts as a proxy: Rosetta A -> Rosetta B.
+        Acts as a proxy: this instance -> remote instance.
+        After the remote registration succeeds, also writes to the local
+        rosetta_chain_tables so the table appears in the Data Client tab.
         """
         client = self._client_repo.get_by_id(client_id)
 
@@ -291,7 +293,37 @@ class RosettaChainService:
                 )
                 raise Exception(f"Remote registration failed: {resp.status_code}")
 
-            return resp.json()
+        # ── Mirror to local rosetta_chain_tables (Data Client visibility) ──
+        try:
+            database_name = payload.get("database_name")
+            table_name = payload.get("table_name")
+            schema_json = payload.get("schema_json", {})
+
+            database_id: int | None = None
+            if database_name:
+                db_entry = self._database_repo.upsert(client_id, database_name)
+                database_id = db_entry.id
+
+            if table_name:
+                self._table_repo.upsert(
+                    chain_client_id=client_id,
+                    table_name=table_name,
+                    table_schema=schema_json,
+                    source_chain_id=forwarded_payload.get("source_chain_id"),
+                    database_id=database_id,
+                )
+            self.db.commit()
+            logger.info(
+                f"Mirrored registration to local chain tables: "
+                f"client={client_id} db={database_name} table={table_name}"
+            )
+        except Exception as e:
+            self.db.rollback()
+            logger.warning(
+                f"Remote registration succeeded but local mirror failed: {e}"
+            )
+
+        return resp.json()
 
     # ─── Linked Destination Helpers ────────────────────────────────────────
 

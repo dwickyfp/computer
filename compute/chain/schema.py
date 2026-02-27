@@ -163,6 +163,63 @@ class ChainSchemaManager:
     discovery and auto-creation on the receiving side.
     """
 
+    def _upsert_catalog_entry(
+        self,
+        cursor: Any,
+        database_name: str,
+        table_name: str,
+        schema_json_str: str,
+        source_chain_id: Optional[str] = None,
+    ) -> None:
+        """
+        Write to catalog_databases + catalog_tables so the registered table
+        also appears in the Data Explorer (local catalog) of the receiver.
+        """
+        # Ensure catalog_databases row exists
+        cursor.execute(
+            "INSERT INTO catalog_databases (name, description) "
+            "VALUES (%s, %s) "
+            "ON CONFLICT (name) DO UPDATE SET updated_at = NOW() "
+            "RETURNING id",
+            (database_name, "Auto-created via chain registration"),
+        )
+        cat_db_id = cursor.fetchone()[0]
+
+        stream_name = f"rosetta:catalog:{database_name}:{table_name}"
+
+        # Upsert catalog_tables
+        cursor.execute(
+            "SELECT id FROM catalog_tables "
+            "WHERE database_id = %s AND table_name = %s",
+            (cat_db_id, table_name),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            cursor.execute(
+                "UPDATE catalog_tables "
+                "SET schema_json = %s::jsonb, "
+                "    source_chain_id = COALESCE(%s, source_chain_id), "
+                "    status = 'ACTIVE', "
+                "    updated_at = NOW() "
+                "WHERE database_id = %s AND table_name = %s",
+                (schema_json_str, source_chain_id, cat_db_id, table_name),
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO catalog_tables "
+                "(database_id, table_name, schema_json, stream_name, "
+                " source_chain_id, status) "
+                "VALUES (%s, %s, %s::jsonb, %s, %s, 'ACTIVE')",
+                (
+                    cat_db_id,
+                    table_name,
+                    schema_json_str,
+                    stream_name,
+                    source_chain_id,
+                ),
+            )
+        logger.info(f"Upserted catalog entry: {database_name}/{table_name}")
+
     def _resolve_or_create_database_id(
         self,
         cursor: Any,
@@ -425,6 +482,16 @@ class ChainSchemaManager:
                     logger.info(
                         f"Upserted cross-instance schema for table {table_name} "
                         f"(source {source_chain_id}, database_id={resolved_null_db_id})"
+                    )
+
+                # ── Also write to catalog_tables for Data Explorer visibility
+                if database_name:
+                    self._upsert_catalog_entry(
+                        cursor,
+                        database_name,
+                        table_name,
+                        schema_str,
+                        source_chain_id,
                     )
 
                 conn.commit()
