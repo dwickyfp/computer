@@ -9,6 +9,7 @@ import time
 from typing import Optional
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -57,11 +58,20 @@ class RosettaChainService:
 
     def create_client(self, data: ChainClientCreate) -> ChainClientResponse:
         """Register a new remote Rosetta instance."""
+        # Pre-flight: reject duplicate names with a clear message
+        existing = self._client_repo.get_by_name(data.name)
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A chain client named '{data.name}' already exists.",
+            )
+
         client = self._client_repo.create(
             name=data.name,
             url=data.url,
             port=data.port,
             is_active=True,
+            chain_key="",  # deprecated field; NOT NULL in DB schema, kept empty
             source_chain_id=data.source_chain_id or None,
         )
 
@@ -410,11 +420,28 @@ class RosettaChainService:
         """
         try:
             dest_name = self._destination_name(client.name)
-            # Guard: don't create duplicates (e.g. if retried)
-            existing = (
+
+            # Guard 1: already linked by chain_client_id
+            existing_by_client = (
                 self.db.query(Destination).filter_by(chain_client_id=client.id).first()
             )
-            if existing:
+            if existing_by_client:
+                return
+
+            # Guard 2: orphaned destination with the same name (e.g. previous
+            # client deleted without cleaning up its destination)
+            existing_by_name = (
+                self.db.query(Destination).filter_by(name=dest_name).first()
+            )
+            if existing_by_name:
+                # Re-link the orphaned destination to this client
+                existing_by_name.chain_client_id = client.id
+                existing_by_name.config = {"url": client.url, "port": client.port}
+                self.db.commit()
+                logger.info(
+                    f"Re-linked orphaned destination '{dest_name}' "
+                    f"to chain client '{client.name}'"
+                )
                 return
 
             dest = Destination(

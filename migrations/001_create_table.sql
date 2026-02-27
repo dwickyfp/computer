@@ -1027,6 +1027,9 @@ CREATE INDEX IF NOT EXISTS idx_destinations_chain_client ON destinations(chain_c
 ALTER TABLE rosetta_chain_clients ADD COLUMN IF NOT EXISTS source_chain_id VARCHAR(255) NULL;
 CREATE INDEX IF NOT EXISTS idx_chain_clients_source_chain_id ON rosetta_chain_clients(source_chain_id) WHERE source_chain_id IS NOT NULL;
 
+-- chain_key is deprecated; make it nullable so new clients can be created without it
+ALTER TABLE rosetta_chain_clients ALTER COLUMN chain_key DROP NOT NULL;
+
 -- Migration 008: Catalog Architecture
 
 -- Create catalog databases table

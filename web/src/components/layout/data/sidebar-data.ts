@@ -59,14 +59,14 @@ export const sidebarData: SidebarData = {
       title: 'Integrations',
       items: [
         {
-          title: 'Pipelines',
-          icon: Workflow,
-          url: '/pipelines',
-        },
-        {
           title: 'Rosetta Chain',
           icon: Unplug,
           url: '/rosetta-chain',
+        },
+        {
+          title: 'Pipelines',
+          icon: Workflow,
+          url: '/pipelines',
         },
       ],
     },
