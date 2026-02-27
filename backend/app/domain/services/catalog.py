@@ -116,13 +116,25 @@ class CatalogService:
             raise HTTPException(status_code=404, detail="Table not found")
         return CatalogTableResponse.from_orm(table_obj)
 
-    def delete_table(self, table_id: int) -> CatalogTableResponse:
+    def delete_table(self, table_id: int) -> None:
+        import redis
+        from app.core.config import settings
+
         table_obj = self.table_repo.get_by_id(table_id)
         if not table_obj:
             raise HTTPException(status_code=404, detail="Table not found")
-        response = CatalogTableResponse.from_orm(table_obj)
+
+        database_id = table_obj.database_id
         self.table_repo.delete(table_id)
-        return response
+
+        # Bust the Redis cache so the next list_tables call reads from DB
+        try:
+            redis_client = redis.Redis.from_url(
+                settings.redis_url, decode_responses=True, socket_timeout=1.0
+            )
+            redis_client.delete(f"rosetta:catalog:db:{database_id}:tables")
+        except Exception:
+            pass
 
     # ─── Schema Registration (Handshake) ──────────────────────────────────────
 
