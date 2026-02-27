@@ -87,9 +87,7 @@ def get_table(
 
 
 @router.delete("/tables/{table_id}", status_code=204)
-def delete_table(
-    table_id: int, service: CatalogService = Depends(get_catalog_service)
-):
+def delete_table(table_id: int, service: CatalogService = Depends(get_catalog_service)):
     """Delete a registered catalog table."""
     service.delete_table(table_id)
     return service.get_table(table_id)

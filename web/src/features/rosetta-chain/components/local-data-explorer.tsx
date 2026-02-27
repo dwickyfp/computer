@@ -542,7 +542,7 @@ export function LocalDataExplorer() {
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                                 <AlertDialogAction
-                                  className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                                  className='text-destructive-foreground bg-destructive hover:bg-destructive/90'
                                   onClick={() =>
                                     deleteTableMutation.mutate(tbl.id)
                                   }
