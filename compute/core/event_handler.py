@@ -135,11 +135,6 @@ class CDCEventHandler(BasePythonChangeHandler):
 
         # Split by dot to extract table name
         parts = dest_str.split(".")
-        if len(parts) == 0:
-            self._logger.warning(
-                f"Could not parse destination '{dest_str}', no parts after split"
-            )
-            return ""
 
         # Skip non-table destinations (heartbeats, transaction commits, etc.)
         # Valid table destinations have format: topic_prefix.schema.table_name (3 parts)
@@ -241,27 +236,14 @@ class CDCEventHandler(BasePythonChangeHandler):
         # Group records by table
         records_by_table: dict[str, list[CDCRecord]] = {}
         skipped_count = 0
-        ops_seen = []
 
         for record in records:
             cdc_record = self._parse_record(record)
             if cdc_record is None:
                 skipped_count += 1
-                # Log what's being skipped for debugging
-                try:
-                    value_data = record.value()
-                    if value_data:
-                        value_obj = json.loads(str(value_data))
-                        op = value_obj.get("payload", {}).get("op", "unknown")
-                        ops_seen.append(op)
-                    else:
-                        ops_seen.append("empty_value")
-                except Exception as parse_ex:
-                    ops_seen.append(f"parse_error:{parse_ex}")
                 continue
 
             table_name = cdc_record.table_name
-            ops_seen.append(cdc_record.operation)
             if table_name not in records_by_table:
                 records_by_table[table_name] = []
             records_by_table[table_name].append(cdc_record)
@@ -460,7 +442,7 @@ class CDCEventHandler(BasePythonChangeHandler):
         error_message: str,
     ) -> None:
         """
-        Enqueue failed records to dead letter queue.
+        Enqueue failed records to dead letter queue using batched Redis pipeline.
 
         IMPORTANT: Records stored in DLQ are RAW CDC records — before any
         filter_sql or custom_sql transformations. Transformations are applied
@@ -478,23 +460,21 @@ class CDCEventHandler(BasePythonChangeHandler):
         if not self._dlq_manager:
             return
 
-        for record in records:
-            try:
-                self._dlq_manager.enqueue(
-                    pipeline_id=self._pipeline.id,
-                    source_id=self._pipeline.source_id,
-                    destination_id=routing.destination.destination_id,
-                    table_name=record.table_name,
-                    table_name_target=routing.table_sync.table_name_target,
-                    cdc_record=record,
-                    table_sync=routing.table_sync,
-                    error_message=error_message,
-                )
-            except Exception as e:
-                self._logger.error(
-                    f"Failed to enqueue record to DLQ: {e}",
-                    exc_info=True,
-                )
+        try:
+            self._dlq_manager.enqueue_batch(
+                pipeline_id=self._pipeline.id,
+                source_id=self._pipeline.source_id,
+                destination_id=routing.destination.destination_id,
+                table_name_target=routing.table_sync.table_name_target,
+                cdc_records=records,
+                table_sync=routing.table_sync,
+                error_message=error_message,
+            )
+        except Exception as e:
+            self._logger.error(
+                f"Failed to enqueue batch to DLQ ({len(records)} records): {e}",
+                exc_info=True,
+            )
 
     def _create_destination_failure_notification(
         self,
@@ -518,8 +498,9 @@ class CDCEventHandler(BasePythonChangeHandler):
             error_type: Type of error (CONNECTION_ERROR, DESTINATION_ERROR)
         """
         try:
-            from datetime import datetime, timezone, timedelta
+            from datetime import timedelta
             from core.database import get_db_connection, return_db_connection
+            from core.timezone import now_in_target_tz
 
             # Create unique key for this destination+table combination
             key_notification = f"pipeline_{self._pipeline.id}_dest_{routing.destination.destination_id}_table_{table_name}_{error_type}"
@@ -557,12 +538,13 @@ class CDCEventHandler(BasePythonChangeHandler):
                                 f"Creating notification: last notification was {'sent' if is_sent else 'read'}"
                             )
                         else:
-                            # Check 5-minute gap
-                            now = datetime.now(timezone.utc)
+                            # Check 5-minute gap using configured timezone
+                            now = now_in_target_tz()
                             # Ensure last_created_at is timezone-aware
                             if last_created_at.tzinfo is None:
+                                from core.timezone import get_target_timezone
                                 last_created_at = last_created_at.replace(
-                                    tzinfo=timezone.utc
+                                    tzinfo=get_target_timezone()
                                 )
 
                             time_diff = now - last_created_at

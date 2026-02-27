@@ -349,6 +349,98 @@ class DLQManager:
             )
             return False
 
+    def enqueue_batch(
+        self,
+        pipeline_id: int,
+        source_id: int,
+        destination_id: int,
+        table_name_target: str,
+        cdc_records: list[CDCRecord],
+        table_sync: PipelineDestinationTableSync,
+        error_message: Optional[str] = None,
+    ) -> int:
+        """
+        Enqueue multiple CDC records to DLQ using a Redis pipeline for efficiency.
+
+        Groups records by stream key and uses a single Redis pipeline call
+        to execute all XADD operations atomically, significantly reducing
+        round trips compared to per-record enqueue.
+
+        Args:
+            pipeline_id: Pipeline ID
+            source_id: Source database ID
+            destination_id: Destination database ID
+            table_name_target: Target table name
+            cdc_records: List of raw CDC records that failed to write
+            table_sync: Table sync configuration
+            error_message: Optional error message
+
+        Returns:
+            Number of records successfully enqueued
+        """
+        if not cdc_records:
+            return 0
+
+        # Serialize table_sync once for all records
+        table_sync_dict = {
+            "id": table_sync.id,
+            "pipeline_destination_id": table_sync.pipeline_destination_id,
+            "table_name": table_sync.table_name,
+            "table_name_target": table_sync.table_name_target,
+            "filter_sql": table_sync.filter_sql,
+            "custom_sql": table_sync.custom_sql,
+        }
+
+        # Group messages by stream key
+        messages_by_stream: dict[str, list[dict]] = {}
+        for record in cdc_records:
+            stream_key = self._stream_key(source_id, record.table_name, destination_id)
+            message = DLQMessage(
+                pipeline_id=pipeline_id,
+                source_id=source_id,
+                destination_id=destination_id,
+                table_name=record.table_name,
+                table_name_target=table_name_target,
+                cdc_record=record,
+                table_sync_config=table_sync_dict,
+            )
+            if stream_key not in messages_by_stream:
+                messages_by_stream[stream_key] = []
+            messages_by_stream[stream_key].append(message.to_dict())
+
+        # Ensure consumer groups exist for all streams
+        for stream_key in messages_by_stream:
+            self._ensure_consumer_group(stream_key)
+
+        # Execute batched XADD via Redis pipeline
+        enqueued = 0
+        try:
+            pipe = self._redis.pipeline(transaction=False)
+            for stream_key, entries in messages_by_stream.items():
+                for entry_data in entries:
+                    pipe.xadd(
+                        stream_key,
+                        entry_data,
+                        maxlen=self._max_stream_length,
+                    )
+            pipe.execute()
+            enqueued = len(cdc_records)
+
+            self._logger.warning(
+                f"Batch enqueued {enqueued} records to DLQ: "
+                f"s{source_id}:d{destination_id} "
+                f"across {len(messages_by_stream)} stream(s)"
+                + (f", error={error_message}" if error_message else "")
+            )
+        except Exception as e:
+            self._logger.error(
+                f"Failed to batch enqueue to DLQ ({len(cdc_records)} records): {e}",
+                exc_info=True,
+            )
+            raise
+
+        return enqueued
+
     def dequeue_batch(
         self,
         source_id: int,

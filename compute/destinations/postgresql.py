@@ -483,10 +483,6 @@ class PostgreSQLDestination(BaseDestination):
                         return None
                 return value
 
-            elif pg_type == "ARRAY" or "[]" in str(pg_type):
-                # Handle array types
-                return value
-
             else:
                 # Default: return as-is (text, varchar, etc.)
                 return value
@@ -621,11 +617,25 @@ class PostgreSQLDestination(BaseDestination):
 
         return result
 
+    # Whitelist of allowed SQL operators for filter clauses
+    _ALLOWED_OPERATORS = frozenset({
+        "=", "!=", "<>", ">", "<", ">=", "<=",
+        "LIKE", "ILIKE", "NOT LIKE", "NOT ILIKE",
+        "IN", "NOT IN", "BETWEEN",
+        "IS NULL", "IS NOT NULL",
+    })
+
+    # Pattern for valid SQL identifiers (column names)
+    _IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_.]*$')
+
     def _build_single_clause(
         self, column: str, operator: str, value: str, value2: str = ""
     ) -> str:
         """
         Build a single SQL clause from filter components.
+
+        Validates operator against whitelist and sanitizes column names
+        to prevent SQL injection.
 
         Args:
             column: Column name
@@ -638,8 +648,25 @@ class PostgreSQLDestination(BaseDestination):
         """
         op_upper = operator.upper().strip()
 
+        # Validate operator against whitelist
+        if op_upper not in self._ALLOWED_OPERATORS:
+            self._logger.warning(
+                f"Rejected disallowed operator '{operator}' in filter SQL"
+            )
+            return ""
+
+        # Validate column name is a safe identifier
+        if not self._IDENTIFIER_PATTERN.match(column):
+            self._logger.warning(
+                f"Rejected invalid column name '{column}' in filter SQL"
+            )
+            return ""
+
+        # Quote column name for safety
+        safe_column = f'"{column}"'
+
         if op_upper in ("IS NULL", "IS NOT NULL"):
-            return f"{column} {op_upper}"
+            return f"{safe_column} {op_upper}"
 
         if not value and op_upper not in ("IS NULL", "IS NOT NULL"):
             return ""
@@ -647,26 +674,32 @@ class PostgreSQLDestination(BaseDestination):
         if op_upper == "BETWEEN" and value and value2:
             q_val = self._quote_filter_value(value)
             q_val2 = self._quote_filter_value(value2)
-            return f"{column} BETWEEN {q_val} AND {q_val2}"
+            return f"{safe_column} BETWEEN {q_val} AND {q_val2}"
 
-        if op_upper in ("LIKE", "ILIKE"):
-            return f"{column} {op_upper} '%{value}%'"
+        if op_upper in ("LIKE", "ILIKE", "NOT LIKE", "NOT ILIKE"):
+            safe_value = self._escape_sql_string(value)
+            return f"{safe_column} {op_upper} '%{safe_value}%'"
 
-        if op_upper == "IN":
+        if op_upper in ("IN", "NOT IN"):
             # Values are comma-separated
             values = [v.strip() for v in value.split(",") if v.strip()]
             quoted = [self._quote_filter_value(v) for v in values]
-            return f"{column} IN ({', '.join(quoted)})"
+            return f"{safe_column} {op_upper} ({', '.join(quoted)})"
 
-        return f"{column} {operator} {self._quote_filter_value(value)}"
+        return f"{safe_column} {operator} {self._quote_filter_value(value)}"
+
+    @staticmethod
+    def _escape_sql_string(value: str) -> str:
+        """Escape single quotes in a string value for safe SQL interpolation."""
+        return value.replace("'", "''")
 
     def _quote_filter_value(self, value: str) -> str:
-        """Quote a filter value - numeric values are unquoted, strings are quoted."""
+        """Quote a filter value - numeric values are unquoted, strings are quoted with escaping."""
         try:
             float(value)
             return value
         except (ValueError, TypeError):
-            return f"'{value}'"
+            return f"'{self._escape_sql_string(value)}'"
 
     def _parse_debezium_field_types(self, schema: Optional[dict]) -> dict[str, dict]:
         """
@@ -917,11 +950,11 @@ class PostgreSQLDestination(BaseDestination):
         if not records:
             return
 
-        # Sanitize table name for DuckDB
-        safe_table_name = table_name.replace(".", "_").replace("-", "_")
+        # Sanitize table name for DuckDB — strip to alphanumeric + underscores
+        safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
 
-        # Drop existing table if exists
-        self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {safe_table_name}")
+        # Drop existing table if exists (use identifier quoting for safety)
+        self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{safe_table_name}"')
 
         # Convert records to columnar format
         data = [record.value for record in records]
@@ -948,9 +981,8 @@ class PostgreSQLDestination(BaseDestination):
         # Create Arrow table — DuckDB's native format (zero-copy)
         arrow_table = pa.table(arrays)
 
-        # Register the Arrow table and create DuckDB table from it
         self._duckdb_conn.execute(
-            f"CREATE TABLE {safe_table_name} AS SELECT * FROM arrow_table"
+            f'CREATE TABLE "{safe_table_name}" AS SELECT * FROM arrow_table'
         )
 
         self._logger.debug(
@@ -978,7 +1010,7 @@ class PostgreSQLDestination(BaseDestination):
             return
 
         # Sanitize table name
-        safe_table_name = table_name.replace(".", "_").replace("-", "_")
+        safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
 
         # Build WHERE clause using the unified method
         where_conditions = self._build_where_clause_from_filter_sql(filter_sql)
@@ -987,7 +1019,7 @@ class PostgreSQLDestination(BaseDestination):
 
         # Delete rows that DON'T match the filter (keep only matching rows)
         delete_sql = f"""
-            DELETE FROM {safe_table_name}
+            DELETE FROM "{safe_table_name}"
             WHERE NOT ({where_conditions})
         """
 
@@ -1013,11 +1045,11 @@ class PostgreSQLDestination(BaseDestination):
             Transformed records as dicts
         """
         # Sanitize table name
-        safe_table_name = table_name.replace(".", "_").replace("-", "_")
+        safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
 
         if not custom_sql:
             # Return all rows from table
-            sql = f"SELECT * FROM {safe_table_name}"
+            sql = f'SELECT * FROM "{safe_table_name}"'
         else:
             # Replace original table name with sanitized version in user's SQL
             # This allows users to write: SELECT * FROM tbl_sales

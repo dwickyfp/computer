@@ -18,6 +18,7 @@ from core.engine import PipelineEngine
 from core.chain_engine import ChainPipelineEngine
 from core.repository import PipelineRepository, PipelineMetadataRepository
 from core.database import init_connection_pool, close_connection_pool
+from core.timezone import now_in_target_tz
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ class PipelineManager:
             pipeline_name=pipeline.name,
             process=proc,
             stop_event=stop_event,
-            last_updated_at=updated_at or datetime.now(timezone(timedelta(hours=7))),
+            last_updated_at=updated_at or now_in_target_tz(),
         )
 
         self._processes[pipeline_id] = pipeline_proc

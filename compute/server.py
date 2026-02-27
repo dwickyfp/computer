@@ -6,6 +6,7 @@ Provides health check, connection pool status, and chain ingestion endpoints.
 
 import json
 import logging
+import threading
 import uvicorn
 from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse
@@ -34,26 +35,32 @@ async def pool_health():
 # Rosetta Chain — Arrow IPC Ingestion Endpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Lazy-initialized singletons
+# Lazy-initialized singletons (thread-safe)
 _ingest_manager = None
 _schema_manager = None
+_manager_lock = threading.Lock()
+
+# Maximum request body size for chain ingest (50 MB)
+_MAX_CHAIN_BODY_SIZE = 50 * 1024 * 1024
 
 
 def _get_ingest_manager():
     global _ingest_manager
     if _ingest_manager is None:
-        from chain.ingest import ChainIngestManager
-
-        _ingest_manager = ChainIngestManager()
+        with _manager_lock:
+            if _ingest_manager is None:
+                from chain.ingest import ChainIngestManager
+                _ingest_manager = ChainIngestManager()
     return _ingest_manager
 
 
 def _get_schema_manager():
     global _schema_manager
     if _schema_manager is None:
-        from chain.schema import ChainSchemaManager
-
-        _schema_manager = ChainSchemaManager()
+        with _manager_lock:
+            if _schema_manager is None:
+                from chain.schema import ChainSchemaManager
+                _schema_manager = ChainSchemaManager()
     return _schema_manager
 
 
@@ -95,7 +102,32 @@ async def chain_ingest(
         )
 
     content_type = request.headers.get("content-type", "")
-    body = await request.body()
+
+    # Enforce body size limit to prevent memory exhaustion (M6)
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_CHAIN_BODY_SIZE:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": f"Request body too large. Maximum size is {_MAX_CHAIN_BODY_SIZE // (1024*1024)} MB"
+            },
+        )
+
+    # Use streaming read with size limit
+    chunks = []
+    total_size = 0
+    async for chunk in request.stream():
+        total_size += len(chunk)
+        if total_size > _MAX_CHAIN_BODY_SIZE:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "error": f"Request body too large. Maximum size is {_MAX_CHAIN_BODY_SIZE // (1024*1024)} MB"
+                },
+            )
+        chunks.append(chunk)
+    body = b"".join(chunks)
+
     manager = _get_ingest_manager()
 
     try:
