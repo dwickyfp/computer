@@ -116,10 +116,13 @@ class CatalogService:
             raise HTTPException(status_code=404, detail="Table not found")
         return CatalogTableResponse.from_orm(table_obj)
 
-    def delete_table(self, table_id: int) -> None:
-        success = self.table_repo.delete(table_id)
-        if not success:
+    def delete_table(self, table_id: int) -> CatalogTableResponse:
+        table_obj = self.table_repo.get_by_id(table_id)
+        if not table_obj:
             raise HTTPException(status_code=404, detail="Table not found")
+        response = CatalogTableResponse.from_orm(table_obj)
+        self.table_repo.delete(table_id)
+        return response
 
     # ─── Schema Registration (Handshake) ──────────────────────────────────────
 

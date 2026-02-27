@@ -63,6 +63,9 @@ export const catalogRepo = {
   },
 
   deleteTable: async (tableId: number) => {
-    await api.delete(`/catalog/tables/${tableId}`)
+    const { data } = await api.delete<CatalogTable>(
+      `/catalog/tables/${tableId}`
+    )
+    return data
   },
 }

@@ -86,10 +86,10 @@ def get_table(
     return service.get_table(table_id)
 
 
-@router.delete("/tables/{table_id}", status_code=204)
+@router.delete("/tables/{table_id}", response_model=CatalogTableResponse)
 def delete_table(table_id: int, service: CatalogService = Depends(get_catalog_service)):
-    """Delete a registered catalog table."""
-    service.delete_table(table_id)
+    """Delete a registered catalog table and return its data."""
+    return service.delete_table(table_id)
 
 
 # ─── Schema Registration (Handshake) ──────────────────────────────────────────

@@ -103,6 +103,7 @@ export function LocalDataExplorer() {
   const deleteTableMutation = useMutation({
     mutationFn: catalogRepo.deleteTable,
     onSuccess: () => {
+      setSelectedTable(null)
       setTimeout(() => {
         queryClient.invalidateQueries({
           queryKey: ['catalog-tables', selectedDb?.id],
