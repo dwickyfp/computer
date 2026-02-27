@@ -28,8 +28,8 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -598,7 +598,10 @@ export function LocalDataExplorer() {
                               <Checkbox checked={!!field.nullable} disabled />
                             </TableCell>
                             <TableCell>
-                              <Checkbox checked={!!field.primary_key} disabled />
+                              <Checkbox
+                                checked={!!field.primary_key}
+                                disabled
+                              />
                             </TableCell>
                           </TableRow>
                         )
