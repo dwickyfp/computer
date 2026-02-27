@@ -195,6 +195,7 @@ async def chain_push_schema(
     schema_json = body.get("schema_json", {})
     chain_client_id = body.get("chain_client_id")  # optional for cross-instance calls
     source_chain_id = body.get("source_chain_id")
+    database_name = body.get("database_name")  # logical database this table belongs to
 
     if not table_name:
         return JSONResponse(
@@ -225,6 +226,7 @@ async def chain_push_schema(
         schema_json=schema_json,
         chain_client_id=chain_client_id,
         source_chain_id=str(source_chain_id) if source_chain_id is not None else None,
+        database_name=database_name,
     )
 
     if success:

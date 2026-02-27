@@ -61,7 +61,7 @@ def normalize_schema_json(raw: dict[str, Any]) -> dict[str, Any]:
        ``chain_engine._register_chain_table()``.  Maps ``type`` →
        ``real_data_type`` / ``data_type``.
 
-    3. **Debezium struct schema** — ``{"type": "struct", "fields": [...]}``.  
+    3. **Debezium struct schema** — ``{"type": "struct", "fields": [...]}``.
        Each field has ``field`` (name) and ``type`` (Debezium logical type).
 
     Output format per column::
@@ -97,7 +97,9 @@ def normalize_schema_json(raw: dict[str, Any]) -> dict[str, Any]:
                 "is_nullable": field.get("optional", True),
                 "is_primary_key": False,
                 "has_default": field.get("default") is not None,
-                "default_value": str(field["default"]) if field.get("default") is not None else None,
+                "default_value": (
+                    str(field["default"]) if field.get("default") is not None else None
+                ),
                 "numeric_precision": None,
                 "numeric_scale": None,
             }
@@ -113,7 +115,11 @@ def normalize_schema_json(raw: dict[str, Any]) -> dict[str, Any]:
         # Already normalized: has column_name key
         if "column_name" in val:
             col_name = val["column_name"] or key
-            raw_type = val.get("real_data_type") or val.get("data_type") or val.get("type", "TEXT")
+            raw_type = (
+                val.get("real_data_type")
+                or val.get("data_type")
+                or val.get("type", "TEXT")
+            )
             pg_type = _resolve_pg_type(raw_type)
             result[col_name] = {
                 "column_name": col_name,
@@ -130,7 +136,9 @@ def normalize_schema_json(raw: dict[str, Any]) -> dict[str, Any]:
 
         # Minimal inferred: {col: {"type": "TEXT"}} or {col: {"type": "...", "is_primary_key": bool}}
         col_name = key
-        raw_type = val.get("type") or val.get("data_type") or val.get("real_data_type", "TEXT")
+        raw_type = (
+            val.get("type") or val.get("data_type") or val.get("real_data_type", "TEXT")
+        )
         pg_type = _resolve_pg_type(raw_type)
         result[col_name] = {
             "column_name": col_name,
@@ -204,6 +212,7 @@ class ChainSchemaManager:
         schema_json: dict[str, Any],
         chain_client_id: Optional[int] = None,
         source_chain_id: Optional[str] = None,
+        database_name: Optional[str] = None,
     ) -> bool:
         """
         Create or update a chain table schema.
@@ -228,6 +237,27 @@ class ChainSchemaManager:
 
                 if chain_client_id is not None:
                     # ── Local pipeline path ──────────────────────────────
+                    # Resolve database_id from database_name if provided
+                    resolved_database_id: Optional[int] = None
+                    if database_name:
+                        cursor.execute(
+                            "SELECT id FROM rosetta_chain_databases "
+                            "WHERE chain_client_id = %s AND name = %s LIMIT 1",
+                            (chain_client_id, database_name),
+                        )
+                        db_row = cursor.fetchone()
+                        if db_row:
+                            resolved_database_id = db_row[0]
+                            logger.debug(
+                                f"Resolved database_name={database_name!r} to "
+                                f"database_id={resolved_database_id} for client {chain_client_id}"
+                            )
+                        else:
+                            logger.warning(
+                                f"database_name={database_name!r} not found in "
+                                f"rosetta_chain_databases for client {chain_client_id}"
+                            )
+
                     cursor.execute(
                         "SELECT id FROM rosetta_chain_tables "
                         "WHERE chain_client_id = %s AND table_name = %s",
@@ -239,22 +269,35 @@ class ChainSchemaManager:
                             "UPDATE rosetta_chain_tables "
                             "SET schema_json = %s::jsonb, "
                             "    source_chain_id = COALESCE(%s, source_chain_id), "
+                            "    database_id = COALESCE(%s, database_id), "
                             "    last_synced_at = NOW(), "
                             "    updated_at = NOW() "
                             "WHERE chain_client_id = %s AND table_name = %s",
-                            (schema_str, source_chain_id, chain_client_id, table_name),
+                            (
+                                schema_str,
+                                source_chain_id,
+                                resolved_database_id,
+                                chain_client_id,
+                                table_name,
+                            ),
                         )
                     else:
                         cursor.execute(
                             "INSERT INTO rosetta_chain_tables "
                             "(chain_client_id, table_name, schema_json, "
-                            " source_chain_id, last_synced_at) "
-                            "VALUES (%s, %s, %s::jsonb, %s, NOW())",
-                            (chain_client_id, table_name, schema_str, source_chain_id),
+                            " source_chain_id, database_id, last_synced_at) "
+                            "VALUES (%s, %s, %s::jsonb, %s, %s, NOW())",
+                            (
+                                chain_client_id,
+                                table_name,
+                                schema_str,
+                                source_chain_id,
+                                resolved_database_id,
+                            ),
                         )
                     logger.info(
                         f"Upserted schema for chain table {table_name} "
-                        f"(client {chain_client_id})"
+                        f"(client {chain_client_id}, database_id={resolved_database_id})"
                     )
                 else:
                     # ── Cross-instance registration path ─────────────────
@@ -268,6 +311,28 @@ class ChainSchemaManager:
                     direct_client_id = None
                     if source_chain_id and source_chain_id.isdigit():
                         direct_client_id = int(source_chain_id)
+
+                        # Resolve database_id from database_name for the direct-linked client
+                        resolved_cross_db_id: Optional[int] = None
+                        if database_name:
+                            cursor.execute(
+                                "SELECT id FROM rosetta_chain_databases "
+                                "WHERE chain_client_id = %s AND name = %s LIMIT 1",
+                                (direct_client_id, database_name),
+                            )
+                            db_row = cursor.fetchone()
+                            if db_row:
+                                resolved_cross_db_id = db_row[0]
+                                logger.debug(
+                                    f"Cross-instance: resolved database_name={database_name!r} to "
+                                    f"database_id={resolved_cross_db_id} for client {direct_client_id}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Cross-instance: database_name={database_name!r} not found in "
+                                    f"rosetta_chain_databases for client {direct_client_id}"
+                                )
+
                         cursor.execute(
                             "SELECT id FROM rosetta_chain_tables "
                             "WHERE chain_client_id = %s AND table_name = %s",
@@ -278,19 +343,38 @@ class ChainSchemaManager:
                             cursor.execute(
                                 "UPDATE rosetta_chain_tables "
                                 "SET schema_json = %s::jsonb, "
+                                "    database_id = COALESCE(%s, database_id), "
                                 "    last_synced_at = NOW(), "
                                 "    updated_at = NOW() "
                                 "WHERE chain_client_id = %s AND table_name = %s",
-                                (schema_str, direct_client_id, table_name),
+                                (
+                                    schema_str,
+                                    resolved_cross_db_id,
+                                    direct_client_id,
+                                    table_name,
+                                ),
                             )
                             logger.info(
                                 f"Updated direct-linked schema for chain table {table_name} "
-                                f"via cross-instance registration (source {source_chain_id})"
+                                f"via cross-instance registration (source {source_chain_id}, "
+                                f"database_id={resolved_cross_db_id})"
                             )
                             conn.commit()
                             return True
 
                     # No direct row — proceed with NULL chain_client_id row
+                    # Resolve database_id if database_name provided (best-effort, no client scope)
+                    resolved_null_db_id: Optional[int] = None
+                    if database_name:
+                        cursor.execute(
+                            "SELECT id FROM rosetta_chain_databases "
+                            "WHERE name = %s ORDER BY id LIMIT 1",
+                            (database_name,),
+                        )
+                        db_row = cursor.fetchone()
+                        if db_row:
+                            resolved_null_db_id = db_row[0]
+
                     cursor.execute(
                         "SELECT id FROM rosetta_chain_tables "
                         "WHERE chain_client_id IS NULL AND table_name = %s "
@@ -302,23 +386,34 @@ class ChainSchemaManager:
                         cursor.execute(
                             "UPDATE rosetta_chain_tables "
                             "SET schema_json = %s::jsonb, "
+                            "    database_id = COALESCE(%s, database_id), "
                             "    last_synced_at = NOW(), "
                             "    updated_at = NOW() "
                             "WHERE chain_client_id IS NULL "
                             "  AND table_name = %s AND source_chain_id = %s",
-                            (schema_str, table_name, source_chain_id),
+                            (
+                                schema_str,
+                                resolved_null_db_id,
+                                table_name,
+                                source_chain_id,
+                            ),
                         )
                     else:
                         cursor.execute(
                             "INSERT INTO rosetta_chain_tables "
                             "(chain_client_id, table_name, schema_json, "
-                            " source_chain_id, last_synced_at) "
-                            "VALUES (NULL, %s, %s::jsonb, %s, NOW())",
-                            (table_name, schema_str, source_chain_id),
+                            " source_chain_id, database_id, last_synced_at) "
+                            "VALUES (NULL, %s, %s::jsonb, %s, %s, NOW())",
+                            (
+                                table_name,
+                                schema_str,
+                                source_chain_id,
+                                resolved_null_db_id,
+                            ),
                         )
                     logger.info(
                         f"Upserted cross-instance schema for table {table_name} "
-                        f"(source {source_chain_id})"
+                        f"(source {source_chain_id}, database_id={resolved_null_db_id})"
                     )
 
                 conn.commit()
@@ -338,7 +433,7 @@ class ChainSchemaManager:
     ) -> list[dict[str, Any]]:
         """
         List all outbound catalog tables along with their logical database name.
-        
+
         This exposes the local node's data catalog to remote Rosetta instances
         so they can discover what datasets are available to be streamed.
         """
