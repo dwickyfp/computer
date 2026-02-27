@@ -19,6 +19,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -464,49 +465,56 @@ export function DataExplorer() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {/* Assuming table_schema has fields array for this example, adjust based on actual structure */}
-                    {!selectedTable.table_schema ||
-                    Object.keys(selectedTable.table_schema).length === 0 ? (
-                      <TableRow>
-                        <TableCell
-                          colSpan={4}
-                          className='h-24 text-center text-muted-foreground'
-                        >
-                          No schema defined.
-                        </TableCell>
-                      </TableRow>
-                    ) : Array.isArray(selectedTable.table_schema) ? (
-                      selectedTable.table_schema.map(
-                        (field: any, idx: number) => (
-                          <TableRow key={idx}>
-                            <TableCell className='font-medium'>
-                              {field.name}
-                            </TableCell>
-                            <TableCell className='font-mono text-xs text-muted-foreground'>
-                              {field.type}
-                            </TableCell>
-                            <TableCell>
-                              {field.nullable ? 'Yes' : 'No'}
-                            </TableCell>
-                            <TableCell>
-                              {field.primary_key ? 'Yes' : 'No'}
+                    {(() => {
+                      const schema = selectedTable.table_schema
+                      // Normalise to a fields array regardless of storage format:
+                      // { fields: [...] }  ← standard format
+                      // [...]              ← bare array
+                      // anything else      ← no schema
+                      const fields: any[] = Array.isArray(schema)
+                        ? schema
+                        : Array.isArray(schema?.fields)
+                          ? schema.fields
+                          : []
+
+                      if (fields.length === 0) {
+                        return (
+                          <TableRow>
+                            <TableCell
+                              colSpan={4}
+                              className='h-24 text-center text-muted-foreground'
+                            >
+                              No schema defined.
                             </TableCell>
                           </TableRow>
                         )
-                      )
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={4}>
-                          <pre className='overflow-auto rounded bg-muted p-2 text-xs'>
-                            {JSON.stringify(
-                              selectedTable.table_schema,
-                              null,
-                              2
-                            )}
-                          </pre>
-                        </TableCell>
-                      </TableRow>
-                    )}
+                      }
+
+                      return fields.map((field: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell className='font-medium'>
+                            {field.name}
+                          </TableCell>
+                          <TableCell className='font-mono text-xs text-muted-foreground uppercase'>
+                            {field.type}
+                          </TableCell>
+                          <TableCell>
+                            <Checkbox
+                              checked={!!field.nullable}
+                              disabled
+                              className='cursor-default'
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Checkbox
+                              checked={!!field.primary_key}
+                              disabled
+                              className='cursor-default'
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    })()}
                   </TableBody>
                 </Table>
               </div>
