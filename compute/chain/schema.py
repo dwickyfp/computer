@@ -78,7 +78,42 @@ def normalize_schema_json(raw: dict[str, Any]) -> dict[str, Any]:
             "numeric_scale": None,
         }
     """
-    if not raw or not isinstance(raw, dict):
+    if not raw:
+        return {}
+
+    # ── Frontend array: [{name/column_name, type, nullable, primary_key}, ...]
+    if isinstance(raw, list):
+        result: dict[str, Any] = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            col_name = (
+                item.get("name") or item.get("column_name") or item.get("field") or ""
+            )
+            if not col_name:
+                continue
+            raw_type = (
+                item.get("type")
+                or item.get("data_type")
+                or item.get("real_data_type", "TEXT")
+            )
+            pg_type = _resolve_pg_type(raw_type)
+            result[col_name] = {
+                "column_name": col_name,
+                "real_data_type": pg_type,
+                "data_type": pg_type,
+                "is_nullable": item.get("nullable", item.get("is_nullable", True)),
+                "is_primary_key": item.get(
+                    "primary_key", item.get("is_primary_key", False)
+                ),
+                "has_default": False,
+                "default_value": None,
+                "numeric_precision": None,
+                "numeric_scale": None,
+            }
+        return result
+
+    if not isinstance(raw, dict):
         return {}
 
     # ── Debezium struct: {"type": "struct", "fields": [...]}
@@ -174,7 +209,31 @@ class ChainSchemaManager:
         """
         Write to catalog_databases + catalog_tables so the registered table
         also appears in the Data Explorer (local catalog) of the receiver.
+
+        The normalized schema dict {col: {...}} is converted to the
+        {"fields": [{name, type, nullable, primary_key}]} format that
+        local-data-explorer expects for column rendering.
         """
+        # Convert normalized {col_name: {column_name, real_data_type, ...}}
+        # → {"fields": [{name, type, nullable, primary_key}]}
+        fields: list = []
+        try:
+            schema_dict = json.loads(schema_json_str)
+            if isinstance(schema_dict, dict) and schema_dict:
+                fields = [
+                    {
+                        "name": v.get("column_name", k),
+                        "type": v.get("real_data_type") or v.get("data_type", "TEXT"),
+                        "nullable": v.get("is_nullable", True),
+                        "primary_key": v.get("is_primary_key", False),
+                    }
+                    for k, v in schema_dict.items()
+                    if isinstance(v, dict)
+                ]
+            catalog_schema_str = json.dumps({"fields": fields})
+        except Exception:
+            catalog_schema_str = schema_json_str
+
         # Ensure catalog_databases row exists
         cursor.execute(
             "INSERT INTO catalog_databases (name, description) "
@@ -202,7 +261,7 @@ class ChainSchemaManager:
                 "    status = 'ACTIVE', "
                 "    updated_at = NOW() "
                 "WHERE database_id = %s AND table_name = %s",
-                (schema_json_str, source_chain_id, cat_db_id, table_name),
+                (catalog_schema_str, source_chain_id, cat_db_id, table_name),
             )
         else:
             cursor.execute(
@@ -213,12 +272,15 @@ class ChainSchemaManager:
                 (
                     cat_db_id,
                     table_name,
-                    schema_json_str,
+                    catalog_schema_str,
                     stream_name,
                     source_chain_id,
                 ),
             )
-        logger.info(f"Upserted catalog entry: {database_name}/{table_name}")
+        logger.info(
+            f"Upserted catalog entry: {database_name}/{table_name} "
+            f"({len(fields)} columns)"
+        )
 
     def _resolve_or_create_database_id(
         self,
@@ -427,6 +489,15 @@ class ChainSchemaManager:
                                 f"via cross-instance registration (source {source_chain_id}, "
                                 f"database_id={resolved_cross_db_id})"
                             )
+                            # Also write to catalog_tables for Data Explorer visibility
+                            if database_name:
+                                self._upsert_catalog_entry(
+                                    cursor,
+                                    database_name,
+                                    table_name,
+                                    schema_str,
+                                    source_chain_id,
+                                )
                             conn.commit()
                             return True
 

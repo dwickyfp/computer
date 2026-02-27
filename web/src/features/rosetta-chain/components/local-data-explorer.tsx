@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -594,10 +595,10 @@ export function LocalDataExplorer() {
                               {field.type}
                             </TableCell>
                             <TableCell>
-                              {field.nullable ? 'Yes' : 'No'}
+                              <Checkbox checked={!!field.nullable} disabled />
                             </TableCell>
                             <TableCell>
-                              {field.primary_key ? 'Yes' : 'No'}
+                              <Checkbox checked={!!field.primary_key} disabled />
                             </TableCell>
                           </TableRow>
                         )
