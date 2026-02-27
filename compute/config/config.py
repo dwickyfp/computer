@@ -247,7 +247,7 @@ class Config:
                 batch_timeout_max=int(os.getenv("SNOWFLAKE_BATCH_TIMEOUT_MAX", "600")),
             ),
             chain=ChainConfig(
-                enabled=True,
+                enabled=os.getenv("CHAIN_ENABLED", "true").lower() == "true",
                 redis_stream_prefix=os.getenv("CHAIN_REDIS_PREFIX", "rosetta:chain"),
                 max_stream_length=int(os.getenv("CHAIN_MAX_STREAM_LENGTH", "100000")),
                 consumer_group=os.getenv("CHAIN_CONSUMER_GROUP", "chain_pipeline"),

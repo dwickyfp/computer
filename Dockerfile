@@ -181,7 +181,12 @@ USER rosetta
 # Run the application
 CMD ["python", "-m", "compute.main"]
 
-# Expose API port
+# Port 8001: serves the combined FastAPI server for:
+#   - Health/pool endpoints  (/health, /health/pool)
+#   - Rosetta Chain ingest   (/chain/ingest, /chain/schema, /chain/tables,
+#                             /chain/databases, /chain/health)
+# Remote Rosetta instances POST CDC batches to /chain/ingest on this port.
+# Controlled by SERVER_PORT env var (default 8001).
 EXPOSE 8001
 
 # Health check

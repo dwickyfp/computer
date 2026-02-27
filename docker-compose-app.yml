@@ -21,6 +21,9 @@ services:
     container_name: rosetta-compute
     restart: unless-stopped
     ports:
+      # Health API + Rosetta Chain ingest/schema endpoints.
+      # Remote Rosetta instances send CDC batches to POST /chain/ingest on this port.
+      # Set CHAIN_ENABLED=true to activate chain ingestion.
       - "${COMPUTE_PORT:-8001}:8001"
     environment:
       MODE: worker
@@ -64,14 +67,20 @@ services:
       # HTTP Server
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 8001
-      # Rosetta Chain (Arrow IPC inter-instance streaming)
+      # -----------------------------------------------------------------------
+      # Rosetta Chain — Arrow IPC inter-instance streaming
+      # Set CHAIN_ENABLED=true to activate. The chain server shares port 8001
+      # (SERVER_PORT) with the health API — no extra port is required.
+      # -----------------------------------------------------------------------
       CHAIN_ENABLED: ${CHAIN_ENABLED:-false}
       CHAIN_AUTH_ENABLED: ${CHAIN_AUTH_ENABLED:-true}
+      # Redis stream settings
       CHAIN_REDIS_PREFIX: ${CHAIN_REDIS_PREFIX:-rosetta:chain}
       CHAIN_MAX_STREAM_LENGTH: ${CHAIN_MAX_STREAM_LENGTH:-100000}
       CHAIN_CONSUMER_GROUP: ${CHAIN_CONSUMER_GROUP:-chain_pipeline}
       CHAIN_BATCH_SIZE: ${CHAIN_BATCH_SIZE:-100}
       CHAIN_BLOCK_MS: ${CHAIN_BLOCK_MS:-2000}
+      # Retention / cleanup
       CHAIN_STREAM_RETENTION_DAYS: ${CHAIN_STREAM_RETENTION_DAYS:-7}
       CHAIN_TRIM_INTERVAL_SECONDS: ${CHAIN_TRIM_INTERVAL_SECONDS:-3600}
       # Timezone — IANA timezone for TZ-aware timestamp conversion
