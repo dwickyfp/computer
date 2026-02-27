@@ -7,7 +7,7 @@ Provides health check, connection pool status, and chain ingestion endpoints.
 import json
 import logging
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse
 from config.config import get_config
 
