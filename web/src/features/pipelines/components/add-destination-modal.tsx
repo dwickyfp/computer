@@ -154,20 +154,20 @@ export function AddDestinationModal({
                       form.setValue('destination_id', dest.id.toString())
                     }}
                     className={cn(
-                      'cursor-pointer rounded-xl border p-4 transition-all hover:border-primary/50 hover:bg-slate-50',
+                      'group cursor-pointer rounded-xl border p-4 transition-all duration-200 ease-in-out hover:border-[#d6e6ff] hover:bg-accent/50 hover:shadow-md active:scale-[0.98]',
                       isSelected
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                        : 'border-border'
+                        ? 'border-[#d6e6ff] bg-primary/5 shadow-sm ring-1 ring-[#d6e6ff]'
+                        : 'border-border bg-card'
                     )}
                   >
                     <div className='flex items-start justify-between'>
                       <div className='flex items-center gap-3'>
                         <div
                           className={cn(
-                            'flex h-10 w-10 items-center justify-center rounded-lg border bg-white shadow-sm',
+                            'flex h-10 w-10 items-center justify-center rounded-lg border shadow-sm transition-all duration-200 group-hover:shadow',
                             isSelected
-                              ? 'border-primary/20'
-                              : 'border-slate-100'
+                              ? 'border-primary/20 bg-primary/5'
+                              : 'border-border bg-background'
                           )}
                         >
                           {getIconForType(dest.type)}
@@ -182,7 +182,7 @@ export function AddDestinationModal({
                         </div>
                       </div>
                       {isSelected && (
-                        <div className='flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground'>
+                        <div className='flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm'>
                           <Check className='h-3 w-3' />
                         </div>
                       )}
