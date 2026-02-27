@@ -352,17 +352,43 @@ class ChainPipelineEngine:
         all_columns: dict[str, str] = {}  # col → pg_type
         pk_columns: list[str] = []
 
-        # Determine primary key columns from the first record that has key info
-        for record in records:
-            if record.key:
-                pk_columns = list(record.key.keys())
-                break
+        # P7: Use pushed schema from rosetta_chain_tables if available
+        # This provides accurate types instead of Python-inferred ones
+        try:
+            from chain.schema import ChainSchemaManager
+            schema_mgr = ChainSchemaManager()
+            chain_client_id = getattr(self._pipeline, "chain_client_id", None)
+            pushed_schema = schema_mgr.get_table_schema(table_name, chain_client_id)
+            if pushed_schema and isinstance(pushed_schema, dict):
+                for col_name, col_info in pushed_schema.items():
+                    if isinstance(col_info, dict):
+                        pg_type = col_info.get("real_data_type", "TEXT")
+                        all_columns[col_name] = pg_type
+                        if col_info.get("is_primary_key"):
+                            pk_columns.append(col_name)
+                if all_columns:
+                    self._logger.info(
+                        f"Using pushed schema for chain table '{table_name}' "
+                        f"({len(all_columns)} columns from rosetta_chain_tables)"
+                    )
+        except Exception as schema_err:
+            self._logger.debug(
+                f"Could not fetch pushed schema for '{table_name}': {schema_err}"
+            )
 
-        # Infer column types from all record values
-        for record in records:
-            for col, val in record.value.items():
-                if col not in all_columns:
-                    all_columns[col] = self._infer_pg_type(val)
+        # Fall back to type inference from record values if no pushed schema
+        if not all_columns:
+            # Determine primary key columns from the first record that has key info
+            for record in records:
+                if record.key:
+                    pk_columns = list(record.key.keys())
+                    break
+
+            # Infer column types from all record values
+            for record in records:
+                for col, val in record.value.items():
+                    if col not in all_columns:
+                        all_columns[col] = self._infer_pg_type(val)
 
         if not all_columns:
             self._logger.warning(

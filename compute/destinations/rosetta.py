@@ -215,6 +215,9 @@ class RosettaDestination(BaseDestination):
         """Return per-request auth headers with the current chain key."""
         return {"X-Chain-Key": self.chain_key}
 
+    # Maximum body size matching server-side limit (50 MB)
+    _MAX_BODY_SIZE = 50 * 1024 * 1024
+
     def write_batch(
         self,
         records: list[CDCRecord],
@@ -224,6 +227,8 @@ class RosettaDestination(BaseDestination):
         Write a batch of CDC records to the remote Rosetta instance.
 
         Serializes records to Arrow IPC and POSTs to /chain/ingest.
+        If the serialized buffer exceeds _MAX_BODY_SIZE, the batch is
+        automatically split into smaller sub-batches and sent separately.
 
         Args:
             records: CDC records to send
@@ -249,9 +254,25 @@ class RosettaDestination(BaseDestination):
                 self._push_schema(table_name, records[0].schema)
             self._synced_schemas.add(table_name)
 
-        # Group records by operation type for efficient streaming
+        # Serialize and check size — split if too large
         ipc_buffer = self._records_to_arrow_ipc(records)
 
+        if len(ipc_buffer) > self._MAX_BODY_SIZE and len(records) > 1:
+            # Split into two halves and recurse
+            mid = len(records) // 2
+            self._logger.info(
+                f"Arrow IPC buffer ({len(ipc_buffer) // (1024*1024)}MB) exceeds "
+                f"max body size ({self._MAX_BODY_SIZE // (1024*1024)}MB), "
+                f"splitting {len(records)} records into sub-batches"
+            )
+            left = self.write_batch(records[:mid], table_sync)
+            right = self.write_batch(records[mid:], table_sync)
+            return left + right
+
+        return self._send_ipc_buffer(ipc_buffer, table_name)
+
+    def _send_ipc_buffer(self, ipc_buffer: bytes, table_name: str) -> int:
+        """Send a serialized IPC buffer to the remote Rosetta instance."""
         try:
             response = self._client.post(
                 "/chain/ingest",
@@ -266,15 +287,13 @@ class RosettaDestination(BaseDestination):
             response.raise_for_status()
 
             result = response.json()
-            ingested = result.get("records_ingested", len(records))
+            ingested = result.get("records_ingested", 0)
             self._logger.debug(
                 f"Sent {ingested} records for {table_name} to {self.base_url}"
             )
             return ingested
 
         except httpx.HTTPStatusError as e:
-            # If we get 401, the key may have been rotated — clear the
-            # cached key so the next attempt re-reads from DB.
             if e.response.status_code == 401:
                 self.refresh_chain_key()
             raise DestinationException(

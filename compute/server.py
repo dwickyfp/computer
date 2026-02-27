@@ -6,8 +6,11 @@ Provides health check, connection pool status, and chain ingestion endpoints.
 
 import json
 import logging
+import os
 import threading
+import time
 import uvicorn
+from collections import defaultdict
 from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse
 from config.config import get_config
@@ -29,6 +32,40 @@ async def pool_health():
     from core.database import get_pool_health
 
     return get_pool_health()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# R9: Simple in-memory sliding window rate limiter
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_rate_limit_lock = threading.Lock()
+_rate_limit_windows: dict[str, list[float]] = defaultdict(list)
+_RATE_LIMIT_PER_MINUTE = int(os.getenv("CHAIN_RATE_LIMIT_PER_MINUTE", "60"))
+
+
+def _check_rate_limit(chain_id: str) -> bool:
+    """
+    Check if a chain_id has exceeded its rate limit.
+
+    Returns True if the request is allowed, False if rate-limited.
+    Uses a sliding window of 60 seconds.
+    """
+    now = time.time()
+    window_start = now - 60.0
+
+    with _rate_limit_lock:
+        timestamps = _rate_limit_windows[chain_id]
+        # Remove expired entries
+        _rate_limit_windows[chain_id] = [
+            t for t in timestamps if t > window_start
+        ]
+        timestamps = _rate_limit_windows[chain_id]
+
+        if len(timestamps) >= _RATE_LIMIT_PER_MINUTE:
+            return False
+
+        timestamps.append(now)
+        return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -101,6 +138,16 @@ async def chain_ingest(
             content={"error": "Chain ingestion is not enabled"},
         )
 
+    # R9: Rate limiting per chain ID
+    if not _check_rate_limit(x_chain_id):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": f"Rate limit exceeded ({_RATE_LIMIT_PER_MINUTE} req/min)",
+                "chain_id": x_chain_id,
+            },
+            headers={"Retry-After": "60"},
+        )
     content_type = request.headers.get("content-type", "")
 
     # Enforce body size limit to prevent memory exhaustion (M6)

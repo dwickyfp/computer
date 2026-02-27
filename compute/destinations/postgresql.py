@@ -179,8 +179,10 @@ class PostgreSQLDestination(BaseDestination):
 
         try:
             # Create in-memory DuckDB connection with performance tuning
+            import os
+            duckdb_mem = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
             self._duckdb_conn = duckdb.connect(":memory:")
-            self._duckdb_conn.execute("SET memory_limit='4GB'")
+            self._duckdb_conn.execute(f"SET memory_limit='{duckdb_mem}'")
             self._duckdb_conn.execute("SET threads=4")
             self._duckdb_conn.execute("SET enable_progress_bar=false")
 

@@ -349,8 +349,10 @@ class BackfillManager:
         pg_conn_str = self._build_postgres_connection(job)
 
         # Initialize DuckDB connection (in-memory)
+        import os
+        duckdb_mem = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
         conn = duckdb.connect(":memory:")
-        conn.execute("SET memory_limit='8GB'")
+        conn.execute(f"SET memory_limit='{duckdb_mem}'")
         conn.execute("SET threads=4")
         conn.execute("SET enable_progress_bar=false")
 

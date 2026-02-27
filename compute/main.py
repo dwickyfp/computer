@@ -132,6 +132,15 @@ def setup_logging() -> None:
 
 def main() -> int:
     """Main entry point."""
+    # Use 'spawn' start method to avoid fork-related connection pool corruption.
+    # fork() can inherit parent's DB connection file descriptors into children,
+    # causing corruption. 'spawn' starts fresh child processes.
+    import multiprocessing
+    try:
+        multiprocessing.set_start_method("spawn")
+    except RuntimeError:
+        pass  # Already set (e.g., Windows defaults to spawn)
+
     # Setup logging
     setup_logging()
     logger = logging.getLogger(__name__)

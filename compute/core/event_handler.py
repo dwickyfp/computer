@@ -6,7 +6,9 @@ Parses Debezium events and routes them to appropriate destinations.
 
 import json
 import logging
+import threading
 import time as _time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 from dataclasses import dataclass
 
@@ -53,6 +55,7 @@ class CDCEventHandler(BasePythonChangeHandler):
         pipeline: Pipeline,
         destinations: dict[int, BaseDestination],
         dlq_manager: Optional[DLQManager] = None,
+        shutdown_event: Optional[threading.Event] = None,
     ):
         """
         Initialize CDC event handler.
@@ -61,10 +64,12 @@ class CDCEventHandler(BasePythonChangeHandler):
             pipeline: Pipeline configuration with destinations loaded
             destinations: Dict mapping destination_id to BaseDestination instances
             dlq_manager: Optional DLQ manager for handling failed writes
+            shutdown_event: Optional event set during shutdown to stop writes
         """
         self._pipeline = pipeline
         self._destinations = destinations
         self._dlq_manager = dlq_manager
+        self._shutdown_event = shutdown_event or threading.Event()
         self._logger = logging.getLogger(f"{__name__}.{pipeline.name}")
 
         # Build routing table: table_name -> list of RoutingInfo
@@ -260,7 +265,7 @@ class CDCEventHandler(BasePythonChangeHandler):
         """
         Process records for a specific table.
 
-        Routes to all configured destinations for this table.
+        Routes to all configured destinations for this table in parallel.
         Each destination is processed independently - if one fails, others continue.
 
         Args:
@@ -272,9 +277,28 @@ class CDCEventHandler(BasePythonChangeHandler):
         if not routing_list:
             return
 
-        # Process each destination independently with individual error handling
-        for routing in routing_list:
-            self._process_single_destination(routing, table_name, records)
+        # Process destinations in parallel for better throughput (5.2 bottleneck fix)
+        if len(routing_list) == 1:
+            # Single destination — no thread overhead
+            self._process_single_destination(routing_list[0], table_name, records)
+        else:
+            with ThreadPoolExecutor(max_workers=len(routing_list)) as executor:
+                futures = {
+                    executor.submit(
+                        self._process_single_destination, routing, table_name, records
+                    ): routing
+                    for routing in routing_list
+                }
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        routing = futures[future]
+                        self._logger.error(
+                            f"Unexpected error in parallel write to "
+                            f"{routing.destination.name}: {e}",
+                            exc_info=True,
+                        )
 
     def _process_single_destination(
         self,
@@ -294,12 +318,20 @@ class CDCEventHandler(BasePythonChangeHandler):
             records: CDC records to write
         """
         try:
+            # C4/R5: Check shutdown flag before writing — prevents writing to
+            # destinations that are about to be closed
+            if self._shutdown_event.is_set():
+                self._logger.info(
+                    f"Shutdown in progress, skipping write to "
+                    f"{routing.destination.name} for table {table_name}"
+                )
+                return
+
             dest_type = (
                 routing.destination._config.type
                 if hasattr(routing.destination, "_config")
                 else "unknown"
             )
-            dest_name = routing.destination.name
 
             # Write to destination - this is where connection/table errors can occur
             written = routing.destination.write_batch(records, routing.table_sync)

@@ -103,13 +103,11 @@ def decrypt_value(encrypted_value: str) -> str:
     except ConfigurationException:
         raise  # Re-raise key validation errors from get_cipher()
     except base64.binascii.Error:
-        # Value is not base64 encoded — likely a plaintext value
-        # (e.g., pre-encryption migration). Return as-is with warning.
-        logger.warning(
-            f"Value is not base64 encoded — returning as plaintext. "
-            f"If credentials should be encrypted, re-save them via the UI."
+        raise ConfigurationException(
+            "Value is not valid base64 — cannot decrypt. "
+            "If this credential was stored before encryption was enabled, "
+            "re-save it via the UI to encrypt it properly."
         )
-        return encrypted_value
     except Exception as e:
         raise ConfigurationException(
             f"Decryption failed — CREDENTIAL_ENCRYPTION_KEY likely does not match "

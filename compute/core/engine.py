@@ -5,6 +5,8 @@ Provides high-level interface for creating and running Debezium engines.
 """
 
 import logging
+import os
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -91,9 +93,16 @@ def _ensure_jvm_started() -> None:
         if isinstance(jvm_path, bytes):
             jvm_path = jvm_path.decode("utf-8")
 
-        logger.debug("Pre-starting JVM with explicit org.jpype.jar on classpath")
-        jpype.startJVM(jvm_path, classpath=class_paths)
-        logger.debug("JVM pre-started successfully")
+        # C3/R3: Add configurable JVM heap size to prevent unbounded memory growth
+        jvm_max_heap = os.getenv("JVM_MAX_HEAP", "16G")
+        jvm_args = [f"-Xmx{jvm_max_heap}"]
+
+        logger.debug(
+            "Pre-starting JVM with explicit org.jpype.jar on classpath "
+            "(heap max=%s)", jvm_max_heap
+        )
+        jpype.startJVM(jvm_path, *jvm_args, classpath=class_paths)
+        logger.debug("JVM pre-started successfully (heap max=%s)", jvm_max_heap)
 
     except Exception as exc:
         logger.warning(
@@ -127,6 +136,9 @@ class PipelineEngine:
         self._engine: Optional[DebeziumJsonEngine] = None
         self._logger = logging.getLogger(f"{__name__}.Pipeline_{pipeline_id}")
         self._is_running = False
+
+        # C4/R5: Shutdown synchronization — event handler checks this before writing
+        self._shutdown_event = threading.Event()
 
         # DLQ components
         self._dlq_manager: Optional[DLQManager] = None
@@ -444,6 +456,7 @@ class PipelineEngine:
             pipeline=self._pipeline,
             destinations=self._destinations,
             dlq_manager=self._dlq_manager,
+            shutdown_event=self._shutdown_event,
         )
 
         # Start DLQ recovery worker
@@ -491,6 +504,11 @@ class PipelineEngine:
     def stop(self) -> None:
         """Stop the pipeline engine."""
         self._is_running = False
+
+        # C4/R5: Signal event handler to stop writing BEFORE closing destinations.
+        # This prevents the race condition where event handler tries to write
+        # to a destination that has already been closed.
+        self._shutdown_event.set()
 
         # CRITICAL: Stop all Python threads BEFORE stopping Debezium/JPype
         # This prevents GIL conflicts during JPype shutdown
