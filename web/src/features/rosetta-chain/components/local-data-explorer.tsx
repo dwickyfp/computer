@@ -100,6 +100,18 @@ export function LocalDataExplorer() {
     onError: () => {},
   })
 
+  const deleteTableMutation = useMutation({
+    mutationFn: catalogRepo.deleteTable,
+    onSuccess: () => {
+      setTimeout(() => {
+        queryClient.invalidateQueries({
+          queryKey: ['catalog-tables', selectedDb?.id],
+        })
+      }, 300)
+    },
+    onError: () => {},
+  })
+
   const renameMutation = useMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) =>
       catalogRepo.updateDatabase(id, { name }),
@@ -500,8 +512,46 @@ export function LocalDataExplorer() {
                               )
                             : '—'}
                         </TableCell>
-                        <TableCell>
-                          <ChevronRight className='ml-auto h-5 w-5 text-muted-foreground' />
+                        <TableCell
+                          onClick={(e) => e.stopPropagation()}
+                          className='flex items-center justify-end gap-0.5'
+                        >
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='h-8 w-8 text-muted-foreground hover:text-destructive'
+                                disabled={deleteTableMutation.isPending}
+                              >
+                                <Trash2 className='h-4 w-4' />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>
+                                  Delete "{tbl.table_name}"?
+                                </AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will permanently delete the table
+                                  registration and its schema. The underlying
+                                  data stream is not affected. This action
+                                  cannot be undone.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                                  onClick={() =>
+                                    deleteTableMutation.mutate(tbl.id)
+                                  }
+                                >
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
                         </TableCell>
                       </TableRow>
                     ))

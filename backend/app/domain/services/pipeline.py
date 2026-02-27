@@ -1557,68 +1557,55 @@ class PipelineService:
         response_list = []
 
         if pipeline.source_type == "ROSETTA":
-            # 1a. For ROSETTA source, get tables from chain client
-            from app.domain.models.rosetta_chain import RosettaChainTable
+            # 1a. For ROSETTA source, get tables from local catalog_tables
+            # filtered by catalog_database_id.  This uses the (database_id, table_name)
+            # unique constraint so re-registering the same table never creates duplicates.
+            from app.domain.models.catalog import CatalogTable
 
-            chain_tables = (
-                self.db.query(RosettaChainTable)
-                .filter_by(chain_client_id=pipeline.chain_client_id)
-                .order_by(RosettaChainTable.table_name)
-                .all()
+            database_id = pipeline.catalog_database_id
+            catalog_rows = (
+                (
+                    self.db.query(CatalogTable)
+                    .filter_by(database_id=database_id)
+                    .order_by(CatalogTable.table_name)
+                    .all()
+                )
+                if database_id
+                else []
             )
 
-            for chain_table in chain_tables:
-                # Parse columns from chain table schema_json
+            for catalog_table in catalog_rows:
+                # schema_json is stored as {"fields": [{name, type, nullable, primary_key}]}
                 columns = []
-                schema_data = chain_table.table_schema or {}
-                # schema_json is a flat dict of col defs keyed by column name.
-                # Older rows may have the minimal {col: {"type": "TEXT"}} format;
-                # newer rows have the normalized {col: {column_name, real_data_type, ...}}.
-                # Both are handled below via the multi-key fallback.
-                col_list = (
-                    schema_data.get("columns")
+                schema_data = catalog_table.schema_json or {}
+                fields = (
+                    schema_data.get("fields", [])
                     if isinstance(schema_data, dict)
-                    else None
+                    else []
                 )
-                if col_list is None and isinstance(schema_data, dict):
-                    col_list = list(schema_data.values())
-                for col in col_list or []:
-                    if isinstance(col, dict):
-                        # Multi-key fallback: normalized, legacy "data_type", old inferred "type"
+                for field in fields:
+                    if isinstance(field, dict):
+                        col_name = field.get("name") or field.get("column_name", "")
                         data_type = (
-                            col.get("real_data_type")
-                            or col.get("data_type")
-                            or col.get("type", "TEXT")
+                            field.get("type")
+                            or field.get("real_data_type")
+                            or field.get("data_type", "TEXT")
                         )
-                        col_name = col.get("column_name") or col.get("name", "")
                         columns.append(
                             ColumnSchemaResponse(
                                 column_name=col_name,
                                 data_type=data_type,
-                                real_data_type=col.get("real_data_type") or data_type,
-                                is_nullable=col.get("is_nullable") in [True, "YES"],
-                                is_primary_key=col.get("is_primary_key", False),
-                                has_default=col.get("has_default", False),
-                                default_value=(
-                                    str(col.get("default_value"))
-                                    if col.get("default_value") is not None
-                                    else None
-                                ),
-                                numeric_precision=col.get("numeric_precision"),
-                                numeric_scale=col.get("numeric_scale"),
-                            )
-                        )
-                    elif isinstance(col, str):
-                        columns.append(
-                            ColumnSchemaResponse(
-                                column_name=col,
-                                data_type="TEXT",
-                                is_nullable=True,
-                                is_primary_key=False,
+                                real_data_type=data_type,
+                                is_nullable=field.get("nullable", True),
+                                is_primary_key=field.get("primary_key", False),
+                                has_default=False,
+                                default_value=None,
+                                numeric_precision=None,
+                                numeric_scale=None,
                             )
                         )
 
-                current_syncs = syncs_map[chain_table.table_name]
+                current_syncs = syncs_map[catalog_table.table_name]
                 sync_configs_response = [
                     PipelineDestinationTableSyncResponse.from_orm(s)
                     for s in current_syncs
@@ -1626,7 +1613,7 @@ class PipelineService:
 
                 response_list.append(
                     TableWithSyncInfoResponse(
-                        table_name=chain_table.table_name,
+                        table_name=catalog_table.table_name,
                         columns=columns,
                         sync_configs=sync_configs_response,
                         is_exists_table_landing=False,

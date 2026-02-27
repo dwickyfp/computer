@@ -299,6 +299,32 @@ class RosettaChainService:
             table_name = payload.get("table_name")
             schema_json = payload.get("schema_json", {})
 
+            # Convert frontend array schema [{name, type, nullable, primary_key}]
+            # → {"fields": [...]} for storage in catalog_tables
+            if isinstance(schema_json, list):
+                catalog_schema = {
+                    "fields": [
+                        {
+                            "name": item.get("name") or item.get("column_name", ""),
+                            "type": (
+                                item.get("type")
+                                or item.get("real_data_type")
+                                or item.get("data_type", "TEXT")
+                            ),
+                            "nullable": item.get(
+                                "nullable", item.get("is_nullable", True)
+                            ),
+                            "primary_key": item.get(
+                                "primary_key", item.get("is_primary_key", False)
+                            ),
+                        }
+                        for item in schema_json
+                        if isinstance(item, dict)
+                    ]
+                }
+            else:
+                catalog_schema = schema_json
+
             database_id: int | None = None
             if database_name:
                 db_entry = self._database_repo.upsert(client_id, database_name)
@@ -308,13 +334,50 @@ class RosettaChainService:
                 self._table_repo.upsert(
                     chain_client_id=client_id,
                     table_name=table_name,
-                    table_schema=schema_json,
+                    table_schema=catalog_schema,
                     source_chain_id=forwarded_payload.get("source_chain_id"),
                     database_id=database_id,
                 )
+
+            # ── Also write to local catalog_databases + catalog_tables ──
+            # This populates the ROSETTA pipeline source table list
+            # (get_destination_tables reads from catalog_tables by catalog_database_id).
+            if database_name and table_name:
+                from app.domain.repositories.catalog import (
+                    CatalogDatabaseRepository,
+                    CatalogTableRepository,
+                )
+
+                cat_db_repo = CatalogDatabaseRepository(self.db)
+                cat_tbl_repo = CatalogTableRepository(self.db)
+
+                cat_db = cat_db_repo.get_by_name(database_name)
+                if not cat_db:
+                    cat_db = cat_db_repo.create(
+                        name=database_name,
+                        description="Auto-created via chain registration",
+                    )
+
+                stream_name = f"rosetta:catalog:{database_name}:{table_name}"
+                existing_tbl = cat_tbl_repo.get_by_name(cat_db.id, table_name)
+                if existing_tbl:
+                    cat_tbl_repo.update_schema(
+                        table_id=existing_tbl.id,
+                        schema_json=catalog_schema,
+                        source_chain_id=forwarded_payload.get("source_chain_id"),
+                    )
+                else:
+                    cat_tbl_repo.create(
+                        database_id=cat_db.id,
+                        table_name=table_name,
+                        schema_json=catalog_schema,
+                        stream_name=stream_name,
+                        source_chain_id=forwarded_payload.get("source_chain_id"),
+                    )
+
             self.db.commit()
             logger.info(
-                f"Mirrored registration to local chain tables: "
+                f"Mirrored registration to local chain + catalog tables: "
                 f"client={client_id} db={database_name} table={table_name}"
             )
         except Exception as e:
