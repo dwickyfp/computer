@@ -1,6 +1,9 @@
 import { DotsHorizontalIcon } from '@radix-ui/react-icons'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { type Row } from '@tanstack/react-table'
+import { chainRepo } from '@/repo/chains'
 import { Pencil, Trash2, Zap, RefreshCw } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -11,9 +14,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { type ChainClient, chainClientSchema } from '../data/schema'
 import { useChain } from './chain-provider'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { chainRepo } from '@/repo/chains'
-import { toast } from 'sonner'
 
 interface ChainClientRowActionsProps {
   row: Row<ChainClient>
@@ -31,8 +31,10 @@ export function ChainClientRowActions({ row }: ChainClientRowActionsProps) {
       queryClient.invalidateQueries({ queryKey: ['chain-clients'] })
     },
     onError: (err: any) => {
-      toast.error(`Failed to refresh databases: ${err.message || 'Unknown error'}`)
-    }
+      toast.error(
+        `Failed to refresh databases: ${err.message || 'Unknown error'}`
+      )
+    },
   })
 
   return (
@@ -46,12 +48,13 @@ export function ChainClientRowActions({ row }: ChainClientRowActionsProps) {
           <span className='sr-only'>Open menu</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align='end' className='w-[160px]'>
+      <DropdownMenuContent align='end' className='w-auto min-w-[180px]'>
         <DropdownMenuItem
           onClick={() => {
             setCurrentRow(client)
             setOpen('test')
           }}
+          className='whitespace-nowrap'
         >
           <Zap className='mr-2 h-4 w-4' />
           Test Connection
@@ -63,8 +66,11 @@ export function ChainClientRowActions({ row }: ChainClientRowActionsProps) {
             syncMutation.mutate()
           }}
           disabled={syncMutation.isPending}
+          className='whitespace-nowrap'
         >
-          <RefreshCw className={`mr-2 h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+          <RefreshCw
+            className={`mr-2 h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`}
+          />
           Refresh Databases
         </DropdownMenuItem>
         <DropdownMenuSeparator />
