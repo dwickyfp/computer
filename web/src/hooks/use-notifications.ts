@@ -97,6 +97,14 @@ export function useNotifications() {
         return () => clearInterval(interval)
     }, [fetchNotifications])
 
+    useEffect(() => {
+        if (unreadCount > 0) {
+            document.title = `(${unreadCount}) Rosetta`
+        } else {
+            document.title = 'Rosetta'
+        }
+    }, [unreadCount])
+
     return {
         notifications,
         unreadCount,
