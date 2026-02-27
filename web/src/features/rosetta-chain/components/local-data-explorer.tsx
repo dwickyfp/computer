@@ -181,10 +181,20 @@ export function LocalDataExplorer() {
   }
 
   const getStatusBadge = (status: string) => {
+    if (status === 'PENDING')
+      return (
+        <Badge className='bg-amber-500 text-white hover:bg-amber-600'>
+          Has Data
+        </Badge>
+      )
+    if (status === 'NO_DATA') return <Badge variant='secondary'>No Data</Badge>
+    // legacy values
     if (status === 'ACTIVE')
       return <Badge className='bg-green-500 hover:bg-green-600'>Active</Badge>
-    if (status === 'INACTIVE')
-      return <Badge variant='secondary'>Inactive</Badge>
+    if (status === 'INACTIVE' || status === 'IDLE')
+      return <Badge variant='secondary'>No Data</Badge>
+    if (status === 'MISSING' || status === 'ERROR')
+      return <Badge variant='secondary'>No Data</Badge>
     return <Badge variant='outline'>{status}</Badge>
   }
 

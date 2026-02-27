@@ -162,8 +162,13 @@ class CatalogService:
                 source_chain_id=req.source_chain_id,
             )
         else:
-            # Creation of new stream
-            stream_name = f"rosetta:catalog:{db_obj.name}:{req.table_name}"
+            # Creation of new stream — key must match rosetta:chain:{source_chain_id}:{table}
+            # which is what ChainIngestManager.get_stream_key() writes to.
+            stream_name = (
+                f"rosetta:chain:{req.source_chain_id}:{req.table_name}"
+                if req.source_chain_id
+                else f"rosetta:catalog:{db_obj.name}:{req.table_name}"
+            )
             table_obj = self.table_repo.create(
                 database_id=db_obj.id,
                 table_name=req.table_name,

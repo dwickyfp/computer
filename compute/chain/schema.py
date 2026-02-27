@@ -244,7 +244,11 @@ class ChainSchemaManager:
         )
         cat_db_id = cursor.fetchone()[0]
 
-        stream_name = f"rosetta:catalog:{database_name}:{table_name}"
+        stream_name = (
+            f"rosetta:chain:{source_chain_id}:{table_name}"
+            if source_chain_id
+            else f"rosetta:catalog:{database_name}:{table_name}"
+        )
 
         # Upsert catalog_tables
         cursor.execute(

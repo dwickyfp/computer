@@ -290,9 +290,14 @@ class RosettaChainService:
 
         # Strip any local chain_client_id — it references this instance's DB
         # and is meaningless in the remote DB (causes FK violation).
-        # Use the client name as source_chain_id so the remote can identify us.
+        # Prefer the auto-mapped source_chain_id (= X-Chain-ID the sender stamps)
+        # so the remote's catalog_tables.source_chain_id matches actual Redis keys.
+        # Fall back to client.name only when the ID hasn't been observed yet.
         forwarded_payload = {k: v for k, v in payload.items() if k != "chain_client_id"}
-        forwarded_payload.setdefault("source_chain_id", client.name)
+        effective_source_chain_id = (
+            getattr(client, "source_chain_id", None) or client.name
+        )
+        forwarded_payload.setdefault("source_chain_id", effective_source_chain_id)
 
         with httpx.Client(timeout=10.0) as http:
             resp = http.post(url, json=forwarded_payload)
@@ -368,7 +373,12 @@ class RosettaChainService:
                         description="Auto-created via chain registration",
                     )
 
-                stream_name = f"rosetta:catalog:{database_name}:{table_name}"
+                _source_chain_id = forwarded_payload.get("source_chain_id")
+                stream_name = (
+                    f"rosetta:chain:{_source_chain_id}:{table_name}"
+                    if _source_chain_id
+                    else f"rosetta:catalog:{database_name}:{table_name}"
+                )
                 existing_tbl = cat_tbl_repo.get_by_name(cat_db.id, table_name)
                 if existing_tbl:
                     cat_tbl_repo.update_schema(
