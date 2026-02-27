@@ -68,7 +68,6 @@ def update_database(
 ):
     """Rename or update description of a logical database container."""
     return service.update_database(db_id, name=data.name, description=data.description)
-    service.delete_database(db_id)
 
 
 @router.get("/databases/{db_id}/tables", response_model=List[CatalogTableResponse])

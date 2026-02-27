@@ -163,6 +163,45 @@ class ChainSchemaManager:
     discovery and auto-creation on the receiving side.
     """
 
+    def _resolve_or_create_database_id(
+        self,
+        cursor: Any,
+        chain_client_id: int,
+        database_name: str,
+    ) -> int:
+        """
+        Return the rosetta_chain_databases.id for (chain_client_id, database_name).
+
+        Creates the row on-the-fly if it doesn't exist yet, so that a schema
+        registration is never left with database_id=NULL just because the
+        periodic sync hasn't run yet.
+        """
+        cursor.execute(
+            "SELECT id FROM rosetta_chain_databases "
+            "WHERE chain_client_id = %s AND name = %s LIMIT 1",
+            (chain_client_id, database_name),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row[0]
+
+        # Not cached yet — insert it so the table can be linked immediately
+        cursor.execute(
+            "INSERT INTO rosetta_chain_databases (chain_client_id, name) "
+            "VALUES (%s, %s) "
+            "ON CONFLICT ON CONSTRAINT uq_rosetta_chain_databases_client_name DO UPDATE "
+            "SET updated_at = NOW() "
+            "RETURNING id",
+            (chain_client_id, database_name),
+        )
+        new_row = cursor.fetchone()
+        db_id = new_row[0]
+        logger.info(
+            f"Auto-created rosetta_chain_databases entry: "
+            f"client={chain_client_id} name={database_name!r} id={db_id}"
+        )
+        return db_id
+
     def get_table_schema(
         self, table_name: str, chain_client_id: Optional[int] = None
     ) -> Optional[dict[str, Any]]:
@@ -237,26 +276,12 @@ class ChainSchemaManager:
 
                 if chain_client_id is not None:
                     # ── Local pipeline path ──────────────────────────────
-                    # Resolve database_id from database_name if provided
+                    # Resolve (or auto-create) database_id from database_name
                     resolved_database_id: Optional[int] = None
                     if database_name:
-                        cursor.execute(
-                            "SELECT id FROM rosetta_chain_databases "
-                            "WHERE chain_client_id = %s AND name = %s LIMIT 1",
-                            (chain_client_id, database_name),
+                        resolved_database_id = self._resolve_or_create_database_id(
+                            cursor, chain_client_id, database_name
                         )
-                        db_row = cursor.fetchone()
-                        if db_row:
-                            resolved_database_id = db_row[0]
-                            logger.debug(
-                                f"Resolved database_name={database_name!r} to "
-                                f"database_id={resolved_database_id} for client {chain_client_id}"
-                            )
-                        else:
-                            logger.warning(
-                                f"database_name={database_name!r} not found in "
-                                f"rosetta_chain_databases for client {chain_client_id}"
-                            )
 
                     cursor.execute(
                         "SELECT id FROM rosetta_chain_tables "
@@ -312,26 +337,12 @@ class ChainSchemaManager:
                     if source_chain_id and source_chain_id.isdigit():
                         direct_client_id = int(source_chain_id)
 
-                        # Resolve database_id from database_name for the direct-linked client
+                        # Resolve (or auto-create) database_id from database_name
                         resolved_cross_db_id: Optional[int] = None
                         if database_name:
-                            cursor.execute(
-                                "SELECT id FROM rosetta_chain_databases "
-                                "WHERE chain_client_id = %s AND name = %s LIMIT 1",
-                                (direct_client_id, database_name),
+                            resolved_cross_db_id = self._resolve_or_create_database_id(
+                                cursor, direct_client_id, database_name
                             )
-                            db_row = cursor.fetchone()
-                            if db_row:
-                                resolved_cross_db_id = db_row[0]
-                                logger.debug(
-                                    f"Cross-instance: resolved database_name={database_name!r} to "
-                                    f"database_id={resolved_cross_db_id} for client {direct_client_id}"
-                                )
-                            else:
-                                logger.warning(
-                                    f"Cross-instance: database_name={database_name!r} not found in "
-                                    f"rosetta_chain_databases for client {direct_client_id}"
-                                )
 
                         cursor.execute(
                             "SELECT id FROM rosetta_chain_tables "
