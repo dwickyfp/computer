@@ -1487,12 +1487,32 @@ class PostgreSQLDestination(BaseDestination):
                 # Use base type for others
                 return pg_type
 
-            # 1. DELETE existing rows that match keys
+            # 1a. Deduplicate staging table by PK — keep last row per key.
+            # This prevents intra-batch duplicate key violations when the DLQ
+            # replays multiple CDC events (e.g. op=c) for the same primary key.
             if key_columns:
-                pk_conditions = " AND ".join(
-                    [f'target."{k}" = source."{k}"' for k in key_columns]
-                )
+                pk_row_num_expr = ", ".join([f'"{k}"' for k in key_columns])
+                dedup_sql = f"""
+                    DELETE FROM {temp_source}
+                    WHERE rowid NOT IN (
+                        SELECT MAX(rowid)
+                        FROM {temp_source}
+                        GROUP BY {pk_row_num_expr}
+                    )
+                """
+                try:
+                    self._duckdb_conn.execute(dedup_sql)
+                    self._logger.debug(
+                        f"Deduped staging table '{temp_source}' by keys {key_columns}"
+                    )
+                except Exception as e_dedup:
+                    # rowid may not exist on all DuckDB versions; log and continue
+                    self._logger.debug(
+                        f"Staging dedup skipped (rowid unavailable): {e_dedup}"
+                    )
 
+            # 1b. DELETE existing rows that match keys
+            if key_columns:
                 # DuckDB doesn't support DELETE ... FROM ... USING directly for Postgres attached tables
                 # We use a subquery with IN or a JOIN-like condition if possible,
                 # but the most reliable way in DuckDB for this is a combined DELETE via the scanner
