@@ -98,11 +98,31 @@ export function useNotifications() {
   }, [fetchNotifications])
 
   useEffect(() => {
-    if (unreadCount > 0) {
-      document.title = `(${unreadCount}) Rosetta`
-    } else {
-      document.title = 'Rosetta'
+    const applyTitle = () => {
+      // Strip any existing count prefix before reapplying
+      const base = document.title.replace(/^\(\d+\) /, '')
+      document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base
     }
+
+    applyTitle()
+
+    // Reapply whenever any page component changes document.title
+    const titleEl = document.querySelector('title')
+    if (!titleEl) return
+
+    const observer = new MutationObserver(() => {
+      if (unreadCount > 0 && !document.title.startsWith(`(${unreadCount})`)) {
+        applyTitle()
+      }
+    })
+
+    observer.observe(titleEl, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    })
+
+    return () => observer.disconnect()
   }, [unreadCount])
 
   return {
