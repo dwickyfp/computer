@@ -63,6 +63,11 @@ class PipelineCreate(PipelineBase):
         ge=1,
         description="Catalog table ID (required for CATALOG_TABLE source_type)",
     )
+    catalog_database_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Catalog database ID (optional for ROSETTA source_type)",
+    )
     status: PipelineStatus = Field(
         default=PipelineStatus.START,
         description="Initial pipeline status",
@@ -425,6 +430,9 @@ class PipelineResponse(PipelineBase, TimestampSchema):
     )
     chain_client_id: Optional[int] = Field(
         default=None, description="Chain client ID (for ROSETTA source type)"
+    )
+    catalog_database_id: Optional[int] = Field(
+        default=None, description="Catalog database ID (for ROSETTA source type)"
     )
     status: PipelineStatus = Field(..., description="Pipeline operational status")
     ready_refresh: bool = Field(

@@ -65,13 +65,6 @@ const formSchema = z
         path: ['catalog_table_id'],
       })
     }
-    if (data.source_type === 'ROSETTA' && !data.catalog_table_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Catalog table is required for Rosetta Chain source',
-        path: ['catalog_table_id'],
-      })
-    }
   })
 
 interface PipelineCreateDrawerProps {
@@ -135,9 +128,11 @@ export function PipelineCreateDrawer({
       } else if (values.source_type === 'CATALOG_TABLE') {
         payload.catalog_table_id = parseInt(values.catalog_table_id!)
       } else if (values.source_type === 'ROSETTA') {
-        payload.catalog_table_id = parseInt(values.catalog_table_id!)
         if (values.chain_client_id) {
           payload.chain_client_id = parseInt(values.chain_client_id)
+        }
+        if (values.catalog_database_id) {
+          payload.catalog_database_id = parseInt(values.catalog_database_id)
         }
       }
       return pipelinesRepo.create(payload)
@@ -295,10 +290,7 @@ export function PipelineCreateDrawer({
                       <FormItem>
                         <FormLabel>My Database</FormLabel>
                         <Select
-                          onValueChange={(val) => {
-                            field.onChange(val)
-                            form.setValue('catalog_table_id', '')
-                          }}
+                          onValueChange={field.onChange}
                           value={field.value}
                         >
                           <FormControl>
@@ -314,36 +306,6 @@ export function PipelineCreateDrawer({
                       </FormItem>
                     )}
                   />
-
-                  {form.watch('catalog_database_id') && (
-                    <FormField
-                      control={form.control}
-                      name='catalog_table_id'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>My Table</FormLabel>
-                          <Select
-                            onValueChange={field.onChange}
-                            value={field.value}
-                          >
-                            <FormControl>
-                              <SelectTrigger className='w-full'>
-                                <SelectValue placeholder='Select a table' />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <CatalogTableSelectOptions
-                                dbId={parseInt(
-                                  form.watch('catalog_database_id')!
-                                )}
-                              />
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
                 </>
               )}
 

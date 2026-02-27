@@ -112,6 +112,15 @@ class Pipeline(Base, TimestampMixin):
         comment="Reference to catalog table (only when source_type=CATALOG_TABLE)",
     )
 
+    # Catalog Database Reference (only for source_type=ROSETTA)
+    catalog_database_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("catalog_databases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Reference to local catalog database (only when source_type=ROSETTA)",
+    )
+
     # Pipeline Status
     status: Mapped[str] = mapped_column(
         String(20),

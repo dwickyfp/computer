@@ -7,6 +7,7 @@ export interface Pipeline {
   source_id: number | null
   source_type?: string
   chain_client_id?: number | null
+  catalog_database_id?: number | null
   destination_id: number
   status: 'START' | 'PAUSE' | 'REFRESH'
   ready_refresh?: boolean
@@ -52,6 +53,7 @@ export interface CreatePipelineRequest {
   source_type?: string
   chain_client_id?: number
   catalog_table_id?: number
+  catalog_database_id?: number
   status?: string
 }
 

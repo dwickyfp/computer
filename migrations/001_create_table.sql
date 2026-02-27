@@ -1068,6 +1068,13 @@ ADD COLUMN IF NOT EXISTS catalog_table_id INTEGER REFERENCES catalog_tables(id) 
 CREATE INDEX IF NOT EXISTS idx_pipelines_catalog_table_id ON pipelines(catalog_table_id);
 COMMENT ON COLUMN pipelines.catalog_table_id IS 'Reference to catalog table (only when source_type=CATALOG_TABLE)';
 
+-- Add catalog_database_id to pipelines table (for ROSETTA source pipelines)
+ALTER TABLE pipelines
+ADD COLUMN IF NOT EXISTS catalog_database_id INTEGER REFERENCES catalog_databases(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_pipelines_catalog_database_id ON pipelines(catalog_database_id);
+COMMENT ON COLUMN pipelines.catalog_database_id IS 'Reference to local catalog database (only when source_type=ROSETTA)';
+
 -- Migration 010: Add rosetta_chain_databases table
 -- Creates a table to cache virtual databases from remote Rosetta clients
 
