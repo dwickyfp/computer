@@ -144,7 +144,7 @@ export function DataExplorer() {
   }
 
   return (
-    <Card className='flex h-full flex-col'>
+    <Card className='flex h-full flex-col bg-sidebar'>
       <CardHeader className='border-b pb-3'>
         {/* Breadcrumb Navigation */}
         <div className='flex items-center space-x-2 text-sm text-muted-foreground'>
@@ -207,9 +207,9 @@ export function DataExplorer() {
               </div>
             </div>
 
-            <div className='rounded-md border'>
+            <div className='relative max-h-[360px] overflow-auto rounded-md border'>
               <Table>
-                <TableHeader>
+                <TableHeader className='sticky top-0 z-10 bg-sidebar'>
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>URL</TableHead>
@@ -279,9 +279,9 @@ export function DataExplorer() {
               </Button>
             </div>
 
-            <div className='rounded-md border'>
+            <div className='relative max-h-[360px] overflow-auto rounded-md border'>
               <Table>
-                <TableHeader>
+                <TableHeader className='sticky top-0 z-10 bg-sidebar'>
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Discovered At</TableHead>
@@ -348,9 +348,9 @@ export function DataExplorer() {
                 Refresh
               </Button>
             </div>
-            <div className='rounded-md border'>
+            <div className='relative max-h-[360px] overflow-auto rounded-md border'>
               <Table>
-                <TableHeader>
+                <TableHeader className='sticky top-0 z-10 bg-sidebar'>
                   <TableRow>
                     <TableHead>Table Name</TableHead>
                     <TableHead>Record Count</TableHead>
@@ -454,9 +454,9 @@ export function DataExplorer() {
 
             <div>
               <h4 className='mb-3 font-medium'>Columns</h4>
-              <div className='rounded-md border'>
+              <div className='relative max-h-[360px] overflow-auto rounded-md border'>
                 <Table>
-                  <TableHeader>
+                  <TableHeader className='sticky top-0 z-10 bg-sidebar'>
                     <TableRow className='bg-muted/50'>
                       <TableHead className='w-[200px]'>Field Name</TableHead>
                       <TableHead>Type</TableHead>

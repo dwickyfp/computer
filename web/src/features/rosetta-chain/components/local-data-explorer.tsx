@@ -199,7 +199,7 @@ export function LocalDataExplorer() {
   }
 
   return (
-    <Card className='flex h-full flex-col'>
+    <Card className='flex h-full flex-col bg-sidebar'>
       <CardHeader className='border-b pb-3'>
         {/* Breadcrumb */}
         <div className='flex items-center space-x-2 text-sm text-muted-foreground'>
@@ -312,9 +312,9 @@ export function LocalDataExplorer() {
               </form>
             )}
 
-            <div className='rounded-md border'>
+            <div className='relative max-h-[360px] overflow-auto rounded-md border'>
               <Table>
-                <TableHeader>
+                <TableHeader className='sticky top-0 z-10 bg-sidebar'>
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Description</TableHead>
@@ -470,9 +470,9 @@ export function LocalDataExplorer() {
                 Tables in {selectedDb?.name}
               </h3>
             </div>
-            <div className='rounded-md border'>
+            <div className='relative max-h-[360px] overflow-auto rounded-md border'>
               <Table>
-                <TableHeader>
+                <TableHeader className='sticky top-0 z-10 bg-sidebar'>
                   <TableRow>
                     <TableHead>Table Name</TableHead>
                     <TableHead>Stream</TableHead>
@@ -621,9 +621,9 @@ export function LocalDataExplorer() {
 
             <div>
               <h4 className='mb-3 font-medium'>Columns</h4>
-              <div className='rounded-md border'>
+              <div className='relative max-h-[360px] overflow-auto rounded-md border'>
                 <Table>
-                  <TableHeader>
+                  <TableHeader className='sticky top-0 z-10 bg-sidebar'>
                     <TableRow className='bg-muted/50'>
                       <TableHead className='w-[200px]'>Field Name</TableHead>
                       <TableHead>Type</TableHead>
