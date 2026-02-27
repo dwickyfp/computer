@@ -80,7 +80,10 @@ export const pipelinesRepo = {
     await api.delete(`/pipelines/${id}`)
   },
   rename: async (id: number, name: string): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.put(`/pipelines/${id}`, { name })
+    const response: AxiosResponse<Pipeline> = await api.put(
+      `/pipelines/${id}`,
+      { name }
+    )
     return response.data
   },
   start: async (id: number): Promise<Pipeline> => {

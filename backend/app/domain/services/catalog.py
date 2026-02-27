@@ -8,7 +8,10 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from app.domain.repositories.catalog import CatalogDatabaseRepository, CatalogTableRepository
+from app.domain.repositories.catalog import (
+    CatalogDatabaseRepository,
+    CatalogTableRepository,
+)
 from app.domain.schemas.catalog import (
     CatalogDatabaseCreate,
     CatalogDatabaseResponse,
@@ -40,7 +43,9 @@ class CatalogService:
     def create_database(self, data: CatalogDatabaseCreate) -> CatalogDatabaseResponse:
         existing = self.db_repo.get_by_name(data.name)
         if existing:
-            raise HTTPException(status_code=400, detail="Database with this name already exists")
+            raise HTTPException(
+                status_code=400, detail="Database with this name already exists"
+            )
         db_obj = self.db_repo.create(name=data.name, description=data.description)
         return CatalogDatabaseResponse.from_orm(db_obj)
 
@@ -49,12 +54,23 @@ class CatalogService:
         if not success:
             raise HTTPException(status_code=404, detail="Database not found")
 
-    def update_database(self, db_id: int, name: str | None = None, description: str | None = None) -> CatalogDatabaseResponse:
+    def update_database(
+        self, db_id: int, name: str | None = None, description: str | None = None
+    ) -> CatalogDatabaseResponse:
         if name is not None:
             existing = self.db_repo.get_by_name(name)
             if existing and existing.id != db_id:
-                raise HTTPException(status_code=400, detail="A database with that name already exists")
-        obj = self.db_repo.update(db_id, **{k: v for k, v in {"name": name, "description": description}.items() if v is not None})
+                raise HTTPException(
+                    status_code=400, detail="A database with that name already exists"
+                )
+        obj = self.db_repo.update(
+            db_id,
+            **{
+                k: v
+                for k, v in {"name": name, "description": description}.items()
+                if v is not None
+            },
+        )
         if not obj:
             raise HTTPException(status_code=404, detail="Database not found")
         return CatalogDatabaseResponse.from_orm(obj)
@@ -72,16 +88,14 @@ class CatalogService:
         try:
             # We use a short timeout for the cache connection to not block
             redis_client = redis.Redis.from_url(
-                settings.redis_url,
-                decode_responses=True,
-                socket_timeout=1.0
+                settings.redis_url, decode_responses=True, socket_timeout=1.0
             )
             cached = redis_client.get(cache_key)
             if cached:
                 data = json.loads(cached)
                 return [CatalogTableResponse(**t) for t in data]
         except Exception:
-            pass # fallback to DB
+            pass  # fallback to DB
 
         tables = self.table_repo.get_by_database(database_id)
         responses = [CatalogTableResponse.from_orm(t) for t in tables]
@@ -113,11 +127,13 @@ class CatalogService:
         db_obj = self.db_repo.get_by_name(req.database_name)
         if not db_obj:
             # Auto-create database if it doesn't exist
-            db_obj = self.db_repo.create(name=req.database_name, description="Auto-created via registration")
+            db_obj = self.db_repo.create(
+                name=req.database_name, description="Auto-created via registration"
+            )
 
         # Check if table already exists in this DB
         table_obj = self.table_repo.get_by_name(db_obj.id, req.table_name)
-        
+
         if table_obj:
             # Updating existing schema
             table_obj = self.table_repo.update_schema(
@@ -135,5 +151,5 @@ class CatalogService:
                 stream_name=stream_name,
                 source_chain_id=req.source_chain_id,
             )
-            
+
         return CatalogTableResponse.from_orm(table_obj)

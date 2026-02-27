@@ -120,7 +120,11 @@ export function LocalDataExplorer() {
 
   const handleRenameConfirm = (id: number, e?: React.MouseEvent) => {
     e?.stopPropagation()
-    if (renameValue.trim() && renameValue.trim() !== databases?.find((d: CatalogDatabase) => d.id === id)?.name) {
+    if (
+      renameValue.trim() &&
+      renameValue.trim() !==
+        databases?.find((d: CatalogDatabase) => d.id === id)?.name
+    ) {
       renameMutation.mutate({ id, name: renameValue.trim() })
     } else {
       setRenamingDbId(null)
@@ -318,19 +322,29 @@ export function LocalDataExplorer() {
                       <TableRow
                         key={db.id}
                         className='cursor-pointer transition-colors hover:bg-muted/50'
-                        onClick={() => renamingDbId === db.id ? undefined : handleDbClick(db)}
+                        onClick={() =>
+                          renamingDbId === db.id ? undefined : handleDbClick(db)
+                        }
                       >
-                        <TableCell className='flex items-center font-medium' onClick={(e) => renamingDbId === db.id ? e.stopPropagation() : undefined}>
+                        <TableCell
+                          className='flex items-center font-medium'
+                          onClick={(e) =>
+                            renamingDbId === db.id
+                              ? e.stopPropagation()
+                              : undefined
+                          }
+                        >
                           <Database className='mr-2 h-4 w-4 flex-shrink-0 text-muted-foreground' />
                           {renamingDbId === db.id ? (
                             <input
                               autoFocus
-                              className='border-b border-primary bg-transparent px-1 text-sm font-medium outline-none w-40'
+                              className='w-40 border-b border-primary bg-transparent px-1 text-sm font-medium outline-none'
                               value={renameValue}
                               onChange={(e) => setRenameValue(e.target.value)}
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleRenameConfirm(db.id)
+                                if (e.key === 'Enter')
+                                  handleRenameConfirm(db.id)
                                 if (e.key === 'Escape') handleRenameCancel()
                               }}
                             />
@@ -344,7 +358,10 @@ export function LocalDataExplorer() {
                         <TableCell className='text-sm text-muted-foreground'>
                           {format(new Date(db.created_at), 'MMM d, yyyy')}
                         </TableCell>
-                        <TableCell onClick={(e) => e.stopPropagation()} className='flex items-center gap-0.5'>
+                        <TableCell
+                          onClick={(e) => e.stopPropagation()}
+                          className='flex items-center gap-0.5'
+                        >
                           {renamingDbId === db.id ? (
                             <>
                               <Button
@@ -392,16 +409,20 @@ export function LocalDataExplorer() {
                                       Delete "{db.name}"?
                                     </AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      This will permanently delete the database and
-                                      all its registered tables. This action cannot
-                                      be undone.
+                                      This will permanently delete the database
+                                      and all its registered tables. This action
+                                      cannot be undone.
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogCancel>
+                                      Cancel
+                                    </AlertDialogCancel>
                                     <AlertDialogAction
                                       className='text-destructive-foreground bg-destructive hover:bg-destructive/90'
-                                      onClick={() => deleteMutation.mutate(db.id)}
+                                      onClick={() =>
+                                        deleteMutation.mutate(db.id)
+                                      }
                                     >
                                       Delete
                                     </AlertDialogAction>

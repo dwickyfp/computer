@@ -29,9 +29,12 @@ export const catalogRepo = {
     const { data } = await api.get<CatalogDatabase[]>('/catalog/databases')
     return data
   },
-  
+
   createDatabase: async (payload: { name: string; description?: string }) => {
-    const { data } = await api.post<CatalogDatabase>('/catalog/databases', payload)
+    const { data } = await api.post<CatalogDatabase>(
+      '/catalog/databases',
+      payload
+    )
     return data
   },
 
@@ -40,17 +43,22 @@ export const catalogRepo = {
   },
 
   updateDatabase: async (id: number, data: CatalogDatabaseUpdate) => {
-    const { data: result } = await api.put<CatalogDatabase>(`/catalog/databases/${id}`, data)
+    const { data: result } = await api.put<CatalogDatabase>(
+      `/catalog/databases/${id}`,
+      data
+    )
     return result
   },
 
   getTables: async (dbId: number) => {
-    const { data } = await api.get<CatalogTable[]>(`/catalog/databases/${dbId}/tables`)
+    const { data } = await api.get<CatalogTable[]>(
+      `/catalog/databases/${dbId}/tables`
+    )
     return data
   },
-  
+
   getTable: async (tableId: number) => {
     const { data } = await api.get<CatalogTable>(`/catalog/tables/${tableId}`)
     return data
-  }
+  },
 }

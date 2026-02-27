@@ -33,8 +33,12 @@ class CatalogDatabaseResponse(CatalogDatabaseBase):
 
 class CatalogTableBase(BaseModel):
     table_name: str = Field(..., description="Name of the table")
-    schema_definition: Dict[str, Any] = Field(..., alias="schema_json", description="Table schema definition")
-    source_chain_id: Optional[str] = Field(None, description="Source chain ID if remote")
+    schema_definition: Dict[str, Any] = Field(
+        ..., alias="schema_json", description="Table schema definition"
+    )
+    source_chain_id: Optional[str] = Field(
+        None, description="Source chain ID if remote"
+    )
 
     class Config:
         allow_population_by_field_name = True
@@ -62,9 +66,12 @@ class SchemaRegistrationRequest(BaseModel):
     """
     Payload sent by Rosetta A to register a table in Rosetta B.
     """
+
     table_name: str = Field(..., description="Name of the table to register")
     database_name: str = Field(..., description="Target database name in Catalog")
-    schema_definition: Dict[str, Any] = Field(..., alias="schema_json", description="Full schema definition")
+    schema_definition: Dict[str, Any] = Field(
+        ..., alias="schema_json", description="Full schema definition"
+    )
     source_chain_id: Optional[str] = Field(None, description="Identifier of Rosetta A")
 
     class Config:

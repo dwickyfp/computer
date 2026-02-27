@@ -16,10 +16,14 @@ class CatalogDatabaseRepository:
         return self.db.query(CatalogDatabase).order_by(CatalogDatabase.name).all()
 
     def get_by_id(self, db_id: int) -> Optional[CatalogDatabase]:
-        return self.db.query(CatalogDatabase).filter(CatalogDatabase.id == db_id).first()
+        return (
+            self.db.query(CatalogDatabase).filter(CatalogDatabase.id == db_id).first()
+        )
 
     def get_by_name(self, name: str) -> Optional[CatalogDatabase]:
-        return self.db.query(CatalogDatabase).filter(CatalogDatabase.name == name).first()
+        return (
+            self.db.query(CatalogDatabase).filter(CatalogDatabase.name == name).first()
+        )
 
     def create(self, name: str, description: Optional[str] = None) -> CatalogDatabase:
         db_obj = CatalogDatabase(name=name, description=description)

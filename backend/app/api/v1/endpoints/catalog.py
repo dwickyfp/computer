@@ -23,10 +23,14 @@ def get_catalog_service(db: Session = Depends(get_db)) -> CatalogService:
     return CatalogService(db)
 
 
-def get_catalog_service_readonly(db: Session = Depends(get_db_readonly)) -> CatalogService:
+def get_catalog_service_readonly(
+    db: Session = Depends(get_db_readonly),
+) -> CatalogService:
     return CatalogService(db)
 
+
 # ─── Data Explorer ────────────────────────────────────────────────────────────
+
 
 @router.get("/databases", response_model=List[CatalogDatabaseResponse])
 def get_databases(service: CatalogService = Depends(get_catalog_service_readonly)):
@@ -35,7 +39,9 @@ def get_databases(service: CatalogService = Depends(get_catalog_service_readonly
 
 
 @router.get("/databases/{db_id}", response_model=CatalogDatabaseResponse)
-def get_database(db_id: int, service: CatalogService = Depends(get_catalog_service_readonly)):
+def get_database(
+    db_id: int, service: CatalogService = Depends(get_catalog_service_readonly)
+):
     """Get a specific database by ID."""
     return service.get_database(db_id)
 
@@ -74,16 +80,20 @@ def get_database_tables(
 
 
 @router.get("/tables/{table_id}", response_model=CatalogTableResponse)
-def get_table(table_id: int, service: CatalogService = Depends(get_catalog_service_readonly)):
+def get_table(
+    table_id: int, service: CatalogService = Depends(get_catalog_service_readonly)
+):
     """Get a specific table's definition and metadata by ID."""
     return service.get_table(table_id)
 
 
 # ─── Schema Registration (Handshake) ──────────────────────────────────────────
 
+
 @router.post("/register", response_model=CatalogTableResponse, status_code=200)
 def register_schema(
-    req: SchemaRegistrationRequest, service: CatalogService = Depends(get_catalog_service)
+    req: SchemaRegistrationRequest,
+    service: CatalogService = Depends(get_catalog_service),
 ):
     """
     Schema Registration Endpoint (Rosetta A -> B Handshake).
