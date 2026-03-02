@@ -45,7 +45,7 @@ export function ChainDialogs() {
       <ChainClientMutateDrawer
         key='chain-client-create'
         open={open === 'create'}
-        onOpenChange={() => setOpen('create')}
+        onOpenChange={(v) => !v && setOpen(null)}
       />
 
       {/* Update drawer (requires currentRow) */}
@@ -54,7 +54,7 @@ export function ChainDialogs() {
           <ChainClientMutateDrawer
             key={`chain-client-update-${currentRow.id}`}
             open={open === 'update'}
-            onOpenChange={() => setOpen('update')}
+            onOpenChange={(v) => !v && setOpen(null)}
             currentRow={currentRow}
           />
 
@@ -63,7 +63,7 @@ export function ChainDialogs() {
             key='chain-client-delete'
             destructive
             open={open === 'delete'}
-            onOpenChange={() => setOpen('delete')}
+            onOpenChange={(v) => !v && setOpen(null)}
             handleConfirm={() => deleteMutation.mutate(currentRow.id)}
             isLoading={deleteMutation.isPending}
             title={`Delete "${currentRow.name}"?`}
@@ -76,7 +76,7 @@ export function ChainDialogs() {
           <ConfirmDialog
             key='chain-client-test'
             open={open === 'test'}
-            onOpenChange={() => setOpen('test')}
+            onOpenChange={(v) => !v && setOpen(null)}
             handleConfirm={() => testMutation.mutate(currentRow.id)}
             isLoading={testMutation.isPending}
             title={`Test "${currentRow.name}"?`}

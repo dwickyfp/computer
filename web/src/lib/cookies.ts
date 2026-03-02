@@ -30,7 +30,8 @@ export function setCookie(
 ): void {
   if (typeof document === 'undefined') return
 
-  document.cookie = `${name}=${value}; path=/; max-age=${maxAge}`
+  const secure = location.protocol === 'https:' ? '; Secure' : ''
+  document.cookie = `${name}=${value}; path=/; max-age=${maxAge}; SameSite=Strict${secure}`
 }
 
 /**

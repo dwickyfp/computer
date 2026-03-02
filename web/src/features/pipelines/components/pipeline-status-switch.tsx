@@ -39,7 +39,7 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
         return pipelinesRepo.pause(pipeline.id)
       }
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, checked) => {
       // Invalidate queries to get fresh data
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pipelines'] }),
@@ -53,7 +53,7 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
       }, 500)
 
       toast.success(
-        `Pipeline ${displayState ? 'started' : 'paused'} successfully`
+        `Pipeline ${checked ? 'started' : 'paused'} successfully`
       )
     },
     onError: (error) => {

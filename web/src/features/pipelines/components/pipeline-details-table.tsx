@@ -30,9 +30,10 @@ import { getPipelineDetailsTableColumns } from './pipeline-details-table-columns
 interface PipelineDetailsTableProps {
     pipelineId: number
     tables: SourceTableInfo[]
+    destinationId?: number | null
 }
 
-export function PipelineDetailsTable({ pipelineId, tables, destinationId }: PipelineDetailsTableProps & { destinationId?: number | null }) {
+export function PipelineDetailsTable({ pipelineId, tables, destinationId }: PipelineDetailsTableProps) {
     const [rowSelection, setRowSelection] = useState({})
     const [sorting, setSorting] = useState<SortingState>([])
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})

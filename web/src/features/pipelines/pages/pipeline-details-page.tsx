@@ -193,11 +193,15 @@ export default function PipelineDetailsPage() {
 
   const handleRefresh = async () => {
     if (!pipeline) return
-    await pipelinesRepo.refresh(id)
-    if (pipeline.source_id !== null) {
-      await sourcesRepo.refreshSource(pipeline.source_id)
+    try {
+      await pipelinesRepo.refresh(id)
+      if (pipeline.source_id !== null) {
+        await sourcesRepo.refreshSource(pipeline.source_id)
+      }
+      toast.success('Pipeline and Source restarted successfully')
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to restart pipeline')
     }
-    toast.success('Pipeline and Source restarted successfully')
   }
 
   const handleBackToOverview = () => {
