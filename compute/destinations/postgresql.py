@@ -180,6 +180,7 @@ class PostgreSQLDestination(BaseDestination):
         try:
             # Create in-memory DuckDB connection with performance tuning
             import os
+
             duckdb_mem = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
             self._duckdb_conn = duckdb.connect(":memory:")
             self._duckdb_conn.execute(f"SET memory_limit='{duckdb_mem}'")
@@ -620,15 +621,29 @@ class PostgreSQLDestination(BaseDestination):
         return result
 
     # Whitelist of allowed SQL operators for filter clauses
-    _ALLOWED_OPERATORS = frozenset({
-        "=", "!=", "<>", ">", "<", ">=", "<=",
-        "LIKE", "ILIKE", "NOT LIKE", "NOT ILIKE",
-        "IN", "NOT IN", "BETWEEN",
-        "IS NULL", "IS NOT NULL",
-    })
+    _ALLOWED_OPERATORS = frozenset(
+        {
+            "=",
+            "!=",
+            "<>",
+            ">",
+            "<",
+            ">=",
+            "<=",
+            "LIKE",
+            "ILIKE",
+            "NOT LIKE",
+            "NOT ILIKE",
+            "IN",
+            "NOT IN",
+            "BETWEEN",
+            "IS NULL",
+            "IS NOT NULL",
+        }
+    )
 
     # Pattern for valid SQL identifiers (column names)
-    _IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_.]*$')
+    _IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
 
     def _build_single_clause(
         self, column: str, operator: str, value: str, value2: str = ""
@@ -953,7 +968,7 @@ class PostgreSQLDestination(BaseDestination):
             return
 
         # Sanitize table name for DuckDB — strip to alphanumeric + underscores
-        safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
+        safe_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
 
         # Drop existing table if exists (use identifier quoting for safety)
         self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{safe_table_name}"')
@@ -1012,7 +1027,7 @@ class PostgreSQLDestination(BaseDestination):
             return
 
         # Sanitize table name
-        safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
+        safe_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
 
         # Build WHERE clause using the unified method
         where_conditions = self._build_where_clause_from_filter_sql(filter_sql)
@@ -1047,7 +1062,7 @@ class PostgreSQLDestination(BaseDestination):
             Transformed records as dicts
         """
         # Sanitize table name
-        safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
+        safe_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
 
         if not custom_sql:
             # Return all rows from table
@@ -1683,7 +1698,13 @@ class PostgreSQLDestination(BaseDestination):
                 )
 
             # Determine primary key columns for MERGE
-            # Priority: custom primary keys > target table PK (for custom SQL) > source CDC PK
+            # Priority:
+            #   1. primary_key_column_target  – explicit user override
+            #   2. custom_sql present         – target table PK (SQL may reshape schema)
+            #   3. filter_sql present         – target table PK (source CDC key may not
+            #                                   be present in record.value columns)
+            #   4. base query                 – source CDC record PK, validated against
+            #                                   actual output columns before use
             if table_sync.primary_key_column_target:
                 # User has specified custom primary key columns
                 custom_keys = [
@@ -1719,8 +1740,51 @@ class PostgreSQLDestination(BaseDestination):
                             f"and source PK {source_pk} not in output columns. "
                             f"Using first output column as key: {key_columns}"
                         )
+            elif table_sync.filter_sql:
+                # filter_sql only filters rows; it does not reshape columns.  However
+                # the source CDC record key (e.g. "sale_key_id") may be a logical key
+                # that is absent from record.value columns — causing a Binder Error when
+                # it is referenced in the MERGE DELETE subquery.
+                # Prefer the target table's actual PK; fall back gracefully.
+                key_columns = self._get_target_primary_key(target_table)
+                if not key_columns:
+                    source_pk = self._get_primary_key_columns(records[0])
+                    output_cols = set(transformed[0].keys()) if transformed else set()
+                    if all(k in output_cols for k in source_pk):
+                        key_columns = source_pk
+                        self._logger.warning(
+                            f"Could not detect target PK for '{target_table}' (filter_sql path), "
+                            f"falling back to source PK: {source_pk}"
+                        )
+                    else:
+                        key_columns = (
+                            [list(output_cols)[0]] if output_cols else source_pk
+                        )
+                        self._logger.warning(
+                            f"Could not detect target PK for '{target_table}' and source PK "
+                            f"{source_pk} not in output columns (filter_sql path). "
+                            f"Using first output column as key: {key_columns}"
+                        )
             else:
-                key_columns = self._get_primary_key_columns(records[0])
+                # Base query: use source CDC record PK but verify it is actually present
+                # in the output columns.  The CDC key dict may name a column that is
+                # absent from record.value (different logical vs physical PK), which
+                # would cause a DuckDB Binder Error in the MERGE DELETE subquery.
+                source_pk = self._get_primary_key_columns(records[0])
+                output_cols = set(transformed[0].keys()) if transformed else set()
+                if all(k in output_cols for k in source_pk):
+                    key_columns = source_pk
+                else:
+                    # Source PK column(s) not present in output — fall back to target PK
+                    key_columns = self._get_target_primary_key(target_table)
+                    if not key_columns:
+                        key_columns = (
+                            [list(output_cols)[0]] if output_cols else source_pk
+                        )
+                    self._logger.warning(
+                        f"Source PK {source_pk} not found in output columns for '{target_table}'. "
+                        f"Using target PK instead: {key_columns}"
+                    )
 
             # Step 4: MERGE INTO destination
             written = self._merge_into_postgres(transformed, target_table, key_columns)
