@@ -350,6 +350,7 @@ class BackfillManager:
 
         # Initialize DuckDB connection (in-memory)
         import os
+
         duckdb_mem = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
         conn = duckdb.connect(":memory:")
         conn.execute(f"SET memory_limit='{duckdb_mem}'")
@@ -645,6 +646,7 @@ class BackfillManager:
         from core.models import DestinationType
         from destinations.snowflake import SnowflakeDestination
         from destinations.postgresql import PostgreSQLDestination
+        from destinations.rosetta import RosettaDestination
 
         cache = {}
         try:
@@ -701,13 +703,7 @@ class BackfillManager:
                     elif (
                         destination_config.type.upper() == DestinationType.ROSETTA.value
                     ):
-                        # ROSETTA is a forwarding destination — backfill is not
-                        # applicable for chain-to-chain replication.
-                        logger.info(
-                            f"Skipping ROSETTA destination '{destination_config.name}' "
-                            f"for backfill (ROSETTA forwarding does not support backfill)"
-                        )
-                        continue
+                        dest = RosettaDestination(destination_config)
                     else:
                         logger.warning(
                             f"Unsupported destination type: {destination_config.type}"
@@ -795,6 +791,7 @@ class BackfillManager:
         from destinations.base import CDCRecord
         from destinations.snowflake import SnowflakeDestination
         from destinations.postgresql import PostgreSQLDestination
+        from destinations.rosetta import RosettaDestination
         from decimal import Decimal
         from datetime import date, datetime
         import json
@@ -921,13 +918,7 @@ class BackfillManager:
                     elif (
                         destination_config.type.upper() == DestinationType.ROSETTA.value
                     ):
-                        # ROSETTA is a forwarding destination — backfill is not
-                        # applicable for chain-to-chain replication.
-                        logger.info(
-                            f"Skipping ROSETTA destination '{destination_config.name}' "
-                            f"for backfill (ROSETTA forwarding does not support backfill)"
-                        )
-                        continue
+                        destination = RosettaDestination(destination_config)
                     else:
                         logger.warning(
                             f"Unsupported destination type: {destination_config.type}"
