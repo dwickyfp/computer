@@ -74,6 +74,13 @@ services:
       CHAIN_BLOCK_MS: ${CHAIN_BLOCK_MS:-2000}
       CHAIN_STREAM_RETENTION_DAYS: ${CHAIN_STREAM_RETENTION_DAYS:-7}
       CHAIN_TRIM_INTERVAL_SECONDS: ${CHAIN_TRIM_INTERVAL_SECONDS:-3600}
+      # Chain Rate Limiting
+      CHAIN_RATE_LIMIT_PER_MINUTE: ${CHAIN_RATE_LIMIT_PER_MINUTE:-60}
+      # DuckDB & JVM Memory
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-8GB}
+      JVM_MAX_HEAP: ${JVM_MAX_HEAP:-16G}
+      # Pipeline Per-Process Connection Pool
+      PIPELINE_POOL_MAX_CONN: ${PIPELINE_POOL_MAX_CONN:-20}
       # Timezone — IANA timezone for TZ-aware timestamp conversion
       TZ: Asia/Jakarta
       ROSETTA_TIMEZONE: ${ROSETTA_TIMEZONE:-Asia/Jakarta}
@@ -107,12 +114,19 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
       DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
       DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-3600}
+      DB_ECHO: ${DB_ECHO:-False}
+      DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-True}
+      DB_POOL_USE_LIFO: ${DB_POOL_USE_LIFO:-True}
       # Application Configuration
       APP_NAME: ${APP_NAME:-Rosetta ETL Platform}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
       APP_ENV: ${APP_ENV:-production}
       DEBUG: ${DEBUG:-False}
       LOG_LEVEL: ${LOG_LEVEL:-ERROR}
       LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_FILE_PATH: ${LOG_FILE_PATH:-logs/app.log}
+      LOG_FILE_MAX_BYTES: ${LOG_FILE_MAX_BYTES:-10485760}
+      LOG_FILE_BACKUP_COUNT: ${LOG_FILE_BACKUP_COUNT:-5}
       HOST: 0.0.0.0
       PORT: 8000
       # Security (SECRET_KEY must be at least 32 characters)
@@ -139,6 +153,12 @@ services:
       CELERY_RESULT_BACKEND: redis://rosetta-redis:6379/2
       WORKER_ENABLED: ${WORKER_ENABLED:-true}
       WORKER_HEALTH_URL: ${WORKER_HEALTH_URL:-http://rosetta-worker:8002}
+      # Metrics & Monitoring
+      ENABLE_METRICS: ${ENABLE_METRICS:-True}
+      METRICS_PORT: ${METRICS_PORT:-9090}
+      # Rate Limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-True}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
 
     depends_on:
       rosetta-postgres:
