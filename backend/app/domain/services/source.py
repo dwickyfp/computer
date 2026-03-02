@@ -89,19 +89,19 @@ class SourceService:
         try:
             logger.info(
                 "Initializing WAL monitor status for new source",
-                extra={"source_id": source.id, "name": source.name}
+                extra={"source_id": source.id, "name": source.name},
             )
             wal_monitor_service = WALMonitorService()
             wal_monitor_service.monitor_source_sync(source, self.db)
             logger.info(
                 "WAL monitor status initialized successfully",
-                extra={"source_id": source.id}
+                extra={"source_id": source.id},
             )
         except Exception as e:
             # Don't fail source creation if WAL monitoring fails
             logger.warning(
                 "Failed to initialize WAL monitor status",
-                extra={"source_id": source.id, "error": str(e)}
+                extra={"source_id": source.id, "error": str(e)},
             )
 
         logger.info(
@@ -284,7 +284,9 @@ class SourceService:
 
         return self.test_connection_config(config)
 
-    def get_source_details(self, source_id: int, force_refresh: bool = False) -> SourceDetailResponse:
+    def get_source_details(
+        self, source_id: int, force_refresh: bool = False
+    ) -> SourceDetailResponse:
         """
         Get detailed information for a source.
 
@@ -302,18 +304,18 @@ class SourceService:
             try:
                 from app.infrastructure.redis import RedisClient
                 import json
-                
+
                 cache_key = f"source_details:{source_id}"
                 redis_client = RedisClient.get_instance()
                 cached = redis_client.get(cache_key)
-                
+
                 if cached:
                     logger.info("Cache HIT for source details %s", source_id)
                     cached_data = json.loads(cached)
                     return SourceDetailResponse(**cached_data)
             except Exception as e:
                 logger.warning("Cache read error for source %s: %s", source_id, e)
-        
+
         # 1. Get Source
         source = self.get_source(source_id)
 
@@ -387,12 +389,12 @@ class SourceService:
             tables=source_tables,
             destinations=destination_names,
         )
-        
+
         # Cache the result for 30 seconds
         try:
             from app.infrastructure.redis import RedisClient
             import json
-            
+
             cache_key = f"source_details:{source_id}"
             redis_client = RedisClient.get_instance()
             # Convert to dict for caching
@@ -401,7 +403,7 @@ class SourceService:
             logger.info("Cached source details for %s with 30s TTL", source_id)
         except Exception as e:
             logger.warning("Failed to cache source details for %s: %s", source_id, e)
-        
+
         return result
 
     def get_table_schema_by_version(
@@ -554,7 +556,7 @@ class SourceService:
         except Exception as e:
             logger.error("Error fetching metadata for source %s: %s", source.name, e)
             pass
-    
+
     def _pause_running_pipelines_for_source(self, source_id: int) -> None:
         """
         Pause all running pipelines for a given source.
@@ -563,42 +565,46 @@ class SourceService:
         try:
             # Local import to avoid circular dependency
             from app.domain.services.pipeline import PipelineService
-            
+
             pipeline_repo = PipelineRepository(self.db)
             pipelines = pipeline_repo.get_by_source_id(source_id)
-            
+
             # Filter for running pipelines only
             running_pipelines = [
-                p for p in pipelines 
-                if p.status in ['START', 'REFRESH']
+                p for p in pipelines if p.status in ["START", "REFRESH"]
             ]
-            
+
             if not running_pipelines:
                 logger.info("No running pipelines found for source %s", source_id)
                 return
-            
+
             logger.info(
-                "Pausing %s running pipeline(s) for source %s", len(running_pipelines), source_id
+                "Pausing %s running pipeline(s) for source %s",
+                len(running_pipelines),
+                source_id,
             )
-            
+
             pipeline_service = PipelineService(self.db)
             for pipeline in running_pipelines:
                 try:
                     pipeline_service.pause_pipeline(pipeline.id)
                     logger.info(
-                        "Successfully paused pipeline %s (%s)", pipeline.id, pipeline.name
+                        "Successfully paused pipeline %s (%s)",
+                        pipeline.id,
+                        pipeline.name,
                     )
                 except Exception as e:
                     logger.error(
-                        "Failed to pause pipeline %s (%s): %s", pipeline.id, pipeline.name, e
+                        "Failed to pause pipeline %s (%s): %s",
+                        pipeline.id,
+                        pipeline.name,
+                        e,
                     )
                     # Continue pausing other pipelines even if one fails
                     continue
-            
+
         except Exception as e:
-            logger.error(
-                "Error pausing pipelines for source %s: %s", source_id, e
-            )
+            logger.error("Error pausing pipelines for source %s: %s", source_id, e)
             # Don't raise - this is a best-effort operation
 
     def _sync_publication_tables(self, source: Source) -> None:
@@ -641,7 +647,8 @@ class SourceService:
 
                         if not schema_list:
                             logger.warning(
-                                "Skipping table %s: No schema columns found. Table may be empty or inaccessible.", table_name
+                                "Skipping table %s: No schema columns found. Table may be empty or inaccessible.",
+                                table_name,
                             )
                             continue
 
@@ -674,7 +681,9 @@ class SourceService:
                             self.db.commit()
 
                             logger.info(
-                                "Added table %s with schema (%s columns)", table_name, len(schema_list)
+                                "Added table %s with schema (%s columns)",
+                                table_name,
+                                len(schema_list),
                             )
                         except Exception as e:
                             # Likely IntegrityError if race condition
@@ -690,7 +699,8 @@ class SourceService:
                     # Check if schema is missing or empty
                     if not table.schema_table or table.schema_table == {}:
                         logger.info(
-                            "Found existing table %s without schema, fetching now...", table.table_name
+                            "Found existing table %s without schema, fetching now...",
+                            table.table_name,
                         )
                         try:
                             schema_list = monitor.fetch_table_schema(
@@ -699,7 +709,8 @@ class SourceService:
 
                             if not schema_list:
                                 logger.warning(
-                                    "Could not fetch schema for %s. Table may be empty or inaccessible.", table.table_name
+                                    "Could not fetch schema for %s. Table may be empty or inaccessible.",
+                                    table.table_name,
                                 )
                                 continue
 
@@ -740,18 +751,24 @@ class SourceService:
                                 self.db.add(history)
                                 self.db.commit()
                                 logger.info(
-                                    "Fixed table %s: Added schema and history (%s columns)", table.table_name, len(schema_list)
+                                    "Fixed table %s: Added schema and history (%s columns)",
+                                    table.table_name,
+                                    len(schema_list),
                                 )
                             else:
                                 # Update existing INITIAL_LOAD with correct schema
                                 existing_history.schema_table_new = schema_dict
                                 self.db.commit()
                                 logger.info(
-                                    "Fixed table %s: Updated schema (%s columns)", table.table_name, len(schema_list)
+                                    "Fixed table %s: Updated schema (%s columns)",
+                                    table.table_name,
+                                    len(schema_list),
                                 )
                         except Exception as e:
                             logger.error(
-                                "Failed to fetch schema for existing table %s: %s", table.table_name, e
+                                "Failed to fetch schema for existing table %s: %s",
+                                table.table_name,
+                                e,
                             )
                             self.db.rollback()
                             continue
@@ -776,10 +793,10 @@ class SourceService:
         """
         Fast fetch of registered tables from pg_publication_tables.
         Lightweight alternative to _sync_publication_tables for read-only operations.
-        
+
         Args:
             source: Source entity
-            
+
         Returns:
             Set of table names in the publication
         """
@@ -803,21 +820,23 @@ class SourceService:
     def refresh_source_metadata(self, source_id: int) -> None:
         """Manually refresh source metadata."""
         source = self.get_source(source_id)
-        
+
         # Store previous state to detect external drops
         previous_publication_enabled = source.is_publication_enabled
         previous_replication_enabled = source.is_replication_enabled
-        
+
         self._update_source_table_list(source)
         self._sync_publication_tables(source)
         self.db.commit()
         self.db.refresh(source)
-        
+
         # Check if publication or replication was dropped externally
-        if (previous_publication_enabled and not source.is_publication_enabled) or \
-           (previous_replication_enabled and not source.is_replication_enabled):
+        if (previous_publication_enabled and not source.is_publication_enabled) or (
+            previous_replication_enabled and not source.is_replication_enabled
+        ):
             logger.warning(
-                "Publication or replication slot dropped externally for source %s. Auto-pausing running pipelines.", source_id
+                "Publication or replication slot dropped externally for source %s. Auto-pausing running pipelines.",
+                source_id,
             )
             self._pause_running_pipelines_for_source(source_id)
 
@@ -851,9 +870,12 @@ class SourceService:
         source = self.get_source(source_id)
         try:
             # Pause running pipelines first
-            logger.info("Auto-pausing running pipelines for source %s before dropping publication", source_id)
+            logger.info(
+                "Auto-pausing running pipelines for source %s before dropping publication",
+                source_id,
+            )
             self._pause_running_pipelines_for_source(source_id)
-            
+
             conn = self._get_connection(source)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             with conn.cursor() as cur:
@@ -864,41 +886,63 @@ class SourceService:
 
             # Cleanup pipeline table sync configurations for this source
             # This will CASCADE delete associated tags via ondelete="CASCADE"
-            from app.domain.models.pipeline import Pipeline, PipelineDestination, PipelineDestinationTableSync
+            from app.domain.models.pipeline import (
+                Pipeline,
+                PipelineDestination,
+                PipelineDestinationTableSync,
+            )
             from app.domain.models.tag import PipelineDestinationTableSyncTag, TagList
-            
-            logger.info("Cleaning up pipeline table sync configurations for source %s", source_id)
-            pipelines = self.db.query(Pipeline).filter(Pipeline.source_id == source_id).all()
-            
+
+            logger.info(
+                "Cleaning up pipeline table sync configurations for source %s",
+                source_id,
+            )
+            pipelines = (
+                self.db.query(Pipeline).filter(Pipeline.source_id == source_id).all()
+            )
+
             # Collect all tag IDs before deletion for cleanup
             all_tag_ids = set()
             for pipeline in pipelines:
                 # Get all destinations for this pipeline
                 pipeline_dest_ids = [pd.id for pd in pipeline.destinations]
-                
+
                 if pipeline_dest_ids:
                     # Get all tag IDs associated with these table syncs
                     tag_ids = (
                         self.db.query(PipelineDestinationTableSyncTag.tag_id)
                         .join(
                             PipelineDestinationTableSync,
-                            PipelineDestinationTableSync.id == PipelineDestinationTableSyncTag.pipelines_destination_table_sync_id
+                            PipelineDestinationTableSync.id
+                            == PipelineDestinationTableSyncTag.pipelines_destination_table_sync_id,
                         )
-                        .filter(PipelineDestinationTableSync.pipeline_destination_id.in_(pipeline_dest_ids))
+                        .filter(
+                            PipelineDestinationTableSync.pipeline_destination_id.in_(
+                                pipeline_dest_ids
+                            )
+                        )
                         .distinct()
                         .all()
                     )
                     all_tag_ids.update([tag_id[0] for tag_id in tag_ids])
-                    
+
                     # Delete all table sync configurations for these destinations
                     # CASCADE will automatically delete associated tag associations
                     deleted_count = (
                         self.db.query(PipelineDestinationTableSync)
-                        .filter(PipelineDestinationTableSync.pipeline_destination_id.in_(pipeline_dest_ids))
+                        .filter(
+                            PipelineDestinationTableSync.pipeline_destination_id.in_(
+                                pipeline_dest_ids
+                            )
+                        )
                         .delete(synchronize_session=False)
                     )
-                    logger.info("Deleted %s table sync configurations for pipeline %s", deleted_count, pipeline.id)
-            
+                    logger.info(
+                        "Deleted %s table sync configurations for pipeline %s",
+                        deleted_count,
+                        pipeline.id,
+                    )
+
             self.db.commit()
 
             # Cleanup unused tags after deletion
@@ -911,17 +955,19 @@ class SourceService:
                         .filter(PipelineDestinationTableSyncTag.tag_id == tag_id)
                         .count()
                     )
-                    
+
                     if count == 0:
                         # Tag is unused, delete it
-                        tag = self.db.query(TagList).filter(TagList.id == tag_id).first()
+                        tag = (
+                            self.db.query(TagList).filter(TagList.id == tag_id).first()
+                        )
                         if tag:
                             logger.info(
                                 f"Auto-deleting unused tag: {tag.tag}",
                                 extra={"tag_id": tag_id, "tag_name": tag.tag},
                             )
                             self.db.delete(tag)
-                
+
                 self.db.commit()
 
             # Cleanup Metadata (this CASCADE deletes history_schema_evolution)
@@ -956,9 +1002,12 @@ class SourceService:
         source = self.get_source(source_id)
         try:
             # Pause running pipelines first
-            logger.info("Auto-pausing running pipelines for source %s before dropping replication slot", source_id)
+            logger.info(
+                "Auto-pausing running pipelines for source %s before dropping replication slot",
+                source_id,
+            )
             self._pause_running_pipelines_for_source(source_id)
-            
+
             conn = self._get_connection(source)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             with conn.cursor() as cur:
@@ -1000,7 +1049,9 @@ class SourceService:
 
                 if pipelines:
                     logger.info(
-                        "Triggering auto-provisioning for table %s on %s pipelines", table_name, len(pipelines)
+                        "Triggering auto-provisioning for table %s on %s pipelines",
+                        table_name,
+                        len(pipelines),
                     )
 
                     # Fetch table info (metadata)
@@ -1024,7 +1075,11 @@ class SourceService:
                                         )
                                     except Exception as exc:
                                         logger.error(
-                                            "Failed to auto-provision table %s for pipeline %s destination %s: %s", table_name, pipeline.id, pd.destination.name, exc
+                                            "Failed to auto-provision table %s for pipeline %s destination %s: %s",
+                                            table_name,
+                                            pipeline.id,
+                                            pd.destination.name,
+                                            exc,
                                         )
 
                         # Commit the ready_refresh changes
@@ -1034,7 +1089,8 @@ class SourceService:
                         )
                     else:
                         logger.warning(
-                            "Metadata for table %s not found after refresh, skipping provisioning", table_name
+                            "Metadata for table %s not found after refresh, skipping provisioning",
+                            table_name,
                         )
 
             except Exception as e:
@@ -1153,12 +1209,16 @@ class SourceService:
                 redis_client.setex(cache_key, 300, json.dumps(tables))
             except Exception as e:
                 logger.error(
-                    "Failed to update cache during refresh for source %s: %s", source_id, e
+                    "Failed to update cache during refresh for source %s: %s",
+                    source_id,
+                    e,
                 )
 
             return tables
         except Exception as e:
-            logger.error("Failed to refresh table list for source %s: %s", source.name, e)
+            logger.error(
+                "Failed to refresh table list for source %s: %s", source.name, e
+            )
             raise ValueError(f"Failed to refresh tables: {str(e)}")
 
     def fetch_schema(

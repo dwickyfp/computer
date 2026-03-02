@@ -725,7 +725,9 @@ class DestinationService:
             return task_id
         except Exception as e:
             logger.error(
-                "Failed to dispatch destination table list task for %s: %s", destination_id, e
+                "Failed to dispatch destination table list task for %s: %s",
+                destination_id,
+                e,
             )
             return None
 
@@ -793,5 +795,7 @@ class DestinationService:
                 self.dispatch_table_list_task(dest.id)
             except Exception as e:
                 logger.error(
-                    "Failed to dispatch table list task for destination %s: %s", dest.id, e
+                    "Failed to dispatch table list task for destination %s: %s",
+                    dest.id,
+                    e,
                 )

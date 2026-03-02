@@ -1033,7 +1033,9 @@ class PipelineService:
             q_t_db = self._quote_sf_identifier(target_db)
             q_t_sc = self._quote_sf_identifier(target_schema)
 
-            logger.info("Recreating task %s.%s.%s", landing_db, landing_schema, task_name)
+            logger.info(
+                "Recreating task %s.%s.%s", landing_db, landing_schema, task_name
+            )
             # Drop existing task first
             cursor.execute(f"DROP TASK IF EXISTS {q_l_db}.{q_l_sc}.{q_task}")
 
@@ -2188,7 +2190,9 @@ class PipelineService:
                     if cached:
                         try:
                             data = json.loads(cached)
-                            logger.info("Returning cached preview for key %s", cache_key)
+                            logger.info(
+                                "Returning cached preview for key %s", cache_key
+                            )
                             return PipelinePreviewResponse(**data)
                         except Exception as e:
                             logger.warning("Failed to parse cached preview: %s", e)
