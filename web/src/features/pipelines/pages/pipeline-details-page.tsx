@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link, useLocation, useRouter } from '@tanstack/react-router'
-import { api } from '@/repo/client'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { sourcesRepo } from '@/repo/sources'
 import {
@@ -140,11 +139,10 @@ export default function PipelineDetailsPage() {
     error: pipelineError,
   } = useQuery({
     queryKey: ['pipeline', id],
-    queryFn: async () => {
-      return await pipelinesRepo.get(id)
-    },
+    queryFn: () => pipelinesRepo.get(id),
     retry: false,
-    refetchInterval: 5000, // Refetch every 5 seconds
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   })
 
   // 2. Fetch Source Details using pipeline.source_id
@@ -162,22 +160,18 @@ export default function PipelineDetailsPage() {
   } = useQuery<TableSyncDetails>({
     queryKey: ['table-sync-details', id, selectedDestId, selectedSyncId],
     queryFn: () =>
-      api
-        .get(
-          `/pipelines/${id}/destinations/${selectedDestId}/tables/${selectedSyncId}`
-        )
-        .then((r) => r.data),
+      pipelinesRepo.getTableSyncDetail(id, selectedDestId!, selectedSyncId!),
     enabled: !!selectedDestId && !!selectedSyncId && !isNaN(id),
-    refetchInterval: 5000,
+    // Only poll when a table is actually selected
+    refetchInterval: selectedSyncId ? 5000 : false,
+    refetchIntervalInBackground: false,
     retry: 2,
   })
 
   // 4. Generate Lineage Mutation
   const generateLineage = useMutation({
     mutationFn: () =>
-      api.post(
-        `/pipelines/${id}/destinations/${selectedDestId}/tables/${selectedSyncId}/lineage/generate`
-      ),
+      pipelinesRepo.generateLineage(id, selectedDestId!, selectedSyncId!),
     onSuccess: () => {
       toast.success('Lineage generation started')
       setTimeout(() => {

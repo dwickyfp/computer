@@ -43,7 +43,8 @@ export function PipelineDetailsTable({ pipelineId, tables, destinationId }: Pipe
         queryKey: ['pipeline-stats', pipelineId],
         queryFn: () => pipelinesRepo.getStats(pipelineId),
         enabled: !!pipelineId,
-        refetchInterval: 5000, // Refetch every 5 seconds
+        refetchInterval: 5000,
+        refetchIntervalInBackground: false,
     })
 
     const statsMap = useMemo(() => {

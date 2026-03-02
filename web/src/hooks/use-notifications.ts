@@ -1,112 +1,36 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useEffect, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notificationRepo, type NotificationLog } from '../repo/notifications'
 
+const NOTIFICATIONS_KEY = ['notifications'] as const
+
 export function useNotifications() {
-  const [notifications, setNotifications] = useState<NotificationLog[]>([])
-  const [unreadCount, setUnreadCount] = useState(0)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
+  const queryClient = useQueryClient()
 
-  const fetchNotifications = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      // Fetch all active notifications (is_deleted=False is default in backend)
-      // We want both read and unread to show in the list, but we need unread count.
-      const data = await notificationRepo.getAll({ limit: 50 })
-      setNotifications(data)
+  // ── Data fetching ────────────────────────────────────────────────────────
+  const {
+    data: notifications = [],
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: NOTIFICATIONS_KEY,
+    queryFn: () => notificationRepo.getAll({ limit: 50 }),
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    staleTime: 5_000,
+  })
 
-      // Calculate unread count from the fetched data
-      // This assumes the limit is high enough to capture most unread ones,
-      // or we might need a separate endpoint for count if pagination is used.
-      // For now, filtering the fetched list is a reasonable started.
-      const unread = data.filter((n) => !n.is_read).length
-      setUnreadCount(unread)
-      setError(null)
-    } catch (err: any) {
-      setError(err)
-      console.error('Failed to fetch notifications:', err)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
+  const unreadCount = notifications.filter((n) => !n.is_read).length
 
-  const markAsRead = async (id: number) => {
-    try {
-      await notificationRepo.markAsRead(id)
-      // Optimistic update
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
-      )
-      setUnreadCount((prev) => Math.max(0, prev - 1))
-    } catch (err) {
-      console.error('Failed to mark notification as read:', err)
-      // Revert or re-fetch would be ideal here
-      fetchNotifications()
-    }
-  }
-
-  const markAllAsRead = async () => {
-    try {
-      await notificationRepo.markAllAsRead()
-      // Optimistic update
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
-      setUnreadCount(0)
-    } catch (err) {
-      console.error('Failed to mark all as read:', err)
-      fetchNotifications()
-    }
-  }
-
-  const deleteNotification = async (id: number) => {
-    try {
-      await notificationRepo.delete(id)
-      // Optimistic update
-      setNotifications((prev) => {
-        const target = prev.find((n) => n.id === id)
-        const newNotifications = prev.filter((n) => n.id !== id)
-
-        // If the deleted one was unread, decrement count
-        if (target && !target.is_read) {
-          setUnreadCount((prevCount) => Math.max(0, prevCount - 1))
-        }
-        return newNotifications
-      })
-    } catch (err) {
-      console.error('Failed to delete notification:', err)
-      fetchNotifications()
-    }
-  }
-
-  const deleteAllNotifications = async () => {
-    try {
-      await notificationRepo.deleteAll()
-      // Optimistic update
-      setNotifications([])
-      setUnreadCount(0)
-    } catch (err) {
-      console.error('Failed to delete all notifications:', err)
-      fetchNotifications()
-    }
-  }
-
-  useEffect(() => {
-    fetchNotifications()
-
-    // Polling every 30 seconds
-    const interval = setInterval(fetchNotifications, 30000)
-    return () => clearInterval(interval)
-  }, [fetchNotifications])
-
+  // ── Document title badge ─────────────────────────────────────────────────
   useEffect(() => {
     const applyTitle = () => {
-      // Strip any existing count prefix before reapplying
       const base = document.title.replace(/^\(\d+\) /, '')
       document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base
     }
 
     applyTitle()
 
-    // Reapply whenever any page component changes document.title
     const titleEl = document.querySelector('title')
     if (!titleEl) return
 
@@ -125,15 +49,87 @@ export function useNotifications() {
     return () => observer.disconnect()
   }, [unreadCount])
 
+  // ── markAsRead ────────────────────────────────────────────────────────────
+  const markAsReadMutation = useMutation({
+    mutationFn: notificationRepo.markAsRead,
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY })
+      const prev = queryClient.getQueryData<NotificationLog[]>(NOTIFICATIONS_KEY)
+      queryClient.setQueryData<NotificationLog[]>(NOTIFICATIONS_KEY, (old = []) =>
+        old.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+      )
+      return { prev }
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(NOTIFICATIONS_KEY, ctx.prev)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
+  })
+
+  // ── markAllAsRead ─────────────────────────────────────────────────────────
+  const markAllAsReadMutation = useMutation({
+    mutationFn: notificationRepo.markAllAsRead,
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY })
+      const prev = queryClient.getQueryData<NotificationLog[]>(NOTIFICATIONS_KEY)
+      queryClient.setQueryData<NotificationLog[]>(NOTIFICATIONS_KEY, (old = []) =>
+        old.map((n) => ({ ...n, is_read: true }))
+      )
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(NOTIFICATIONS_KEY, ctx.prev)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
+  })
+
+  // ── deleteNotification ────────────────────────────────────────────────────
+  const deleteMutation = useMutation({
+    mutationFn: notificationRepo.delete,
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY })
+      const prev = queryClient.getQueryData<NotificationLog[]>(NOTIFICATIONS_KEY)
+      queryClient.setQueryData<NotificationLog[]>(NOTIFICATIONS_KEY, (old = []) =>
+        old.filter((n) => n.id !== id)
+      )
+      return { prev }
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(NOTIFICATIONS_KEY, ctx.prev)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
+  })
+
+  // ── deleteAllNotifications ────────────────────────────────────────────────
+  const deleteAllMutation = useMutation({
+    mutationFn: notificationRepo.deleteAll,
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY })
+      const prev = queryClient.getQueryData<NotificationLog[]>(NOTIFICATIONS_KEY)
+      queryClient.setQueryData<NotificationLog[]>(NOTIFICATIONS_KEY, [])
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(NOTIFICATIONS_KEY, ctx.prev)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
+  })
+
+  // ── Manual refetch (backward-compat) ─────────────────────────────────────
+  const fetchNotifications = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
+    [queryClient]
+  )
+
   return {
     notifications,
     unreadCount,
     isLoading,
-    error,
+    error: error as Error | null,
     fetchNotifications,
-    markAsRead,
-    markAllAsRead,
-    deleteNotification,
-    deleteAllNotifications,
+    markAsRead: (id: number) => markAsReadMutation.mutate(id),
+    markAllAsRead: () => markAllAsReadMutation.mutate(),
+    deleteNotification: (id: number) => deleteMutation.mutate(id),
+    deleteAllNotifications: () => deleteAllMutation.mutate(),
   }
 }

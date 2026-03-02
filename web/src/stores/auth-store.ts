@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
 
-const ACCESS_TOKEN = 'thisisjustarandomstring'
+const AUTH_COOKIE_KEY = 'rosetta_auth'
 
 interface AuthUser {
   accountNo: string
@@ -22,7 +22,7 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>()((set) => {
-  const cookieState = getCookie(ACCESS_TOKEN)
+  const cookieState = getCookie(AUTH_COOKIE_KEY)
   const initToken = cookieState ? JSON.parse(cookieState) : ''
   return {
     auth: {
@@ -32,17 +32,17 @@ export const useAuthStore = create<AuthState>()((set) => {
       accessToken: initToken,
       setAccessToken: (accessToken) =>
         set((state) => {
-          setCookie(ACCESS_TOKEN, JSON.stringify(accessToken))
+          setCookie(AUTH_COOKIE_KEY, JSON.stringify(accessToken))
           return { ...state, auth: { ...state.auth, accessToken } }
         }),
       resetAccessToken: () =>
         set((state) => {
-          removeCookie(ACCESS_TOKEN)
+          removeCookie(AUTH_COOKIE_KEY)
           return { ...state, auth: { ...state.auth, accessToken: '' } }
         }),
       reset: () =>
         set((state) => {
-          removeCookie(ACCESS_TOKEN)
+          removeCookie(AUTH_COOKIE_KEY)
           return {
             ...state,
             auth: { ...state.auth, user: null, accessToken: '' },

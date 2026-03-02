@@ -139,6 +139,25 @@ export const pipelinesRepo = {
     )
     return response.data
   },
+  getTableSyncDetail: async (
+    pipelineId: number,
+    destId: number,
+    syncId: number
+  ): Promise<any> => {
+    const response: AxiosResponse<any> = await api.get(
+      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}`
+    )
+    return response.data
+  },
+  generateLineage: async (
+    pipelineId: number,
+    destId: number,
+    syncId: number
+  ): Promise<void> => {
+    await api.post(
+      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}/lineage/generate`
+    )
+  },
 }
 
 export interface PipelineStats {

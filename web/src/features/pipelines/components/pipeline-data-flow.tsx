@@ -200,6 +200,7 @@ function FlowContent({ pipeline }: PipelineDataFlowProps) {
     queryKey: ['pipeline-stats', pipeline.id],
     queryFn: () => pipelinesRepo.getStats(pipeline.id),
     refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   })
 
   // Helper to sum today's stats

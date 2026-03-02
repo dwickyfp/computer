@@ -121,7 +121,9 @@ export function ChainClientMutateDrawer({
     if (!payload.source_chain_id || payload.source_chain_id.trim() === '') {
       payload.source_chain_id = null
     }
-    delete payload.description
+    if (!payload.description || payload.description.trim() === '') {
+      payload.description = null
+    }
 
     if (isUpdate) {
       updateMutation.mutate(payload)
