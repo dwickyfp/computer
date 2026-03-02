@@ -98,8 +98,6 @@ def decrypt_value(encrypted_value: str) -> str:
         plaintext = aesgcm.decrypt(nonce, ciphertext, None)
         return plaintext.decode("utf-8")
     except Exception as e:
-        # Log error? Return original if failed?
-        # For security, failing explicitly is better than returning garbage.
-        # But if it wasn't encrypted (legacy), maybe return as is?
-        # For this implementation, we assume all values passed here ARE encrypted.
-        raise ValueError(f"Decryption failed")
+        # Preserve the original exception chain so failures are debuggable.
+        # Never return garbage or the raw encrypted value on failure.
+        raise ValueError("Decryption failed") from e

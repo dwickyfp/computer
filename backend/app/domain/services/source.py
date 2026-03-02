@@ -83,7 +83,7 @@ class SourceService:
             self.db.commit()
             self.db.refresh(source)
         except Exception as e:
-            logger.error(f"Failed to fetch table list: {e}")
+            logger.error("Failed to fetch table list: %s", e)
 
         # Initialize WAL monitor status immediately
         try:
@@ -195,7 +195,7 @@ class SourceService:
                 self.db.commit()
                 self.db.refresh(source)
             except Exception as e:
-                logger.error(f"Failed to refresh table list: {e}")
+                logger.error("Failed to refresh table list: %s", e)
 
         logger.info("Source updated successfully", extra={"source_id": source.id})
 
@@ -252,8 +252,8 @@ class SourceService:
             conn.close()
             return True
         except ImportError:
-            logger.warning("psycopg2 not installed, simulating successful connection")
-            return True
+            logger.error("psycopg2 is not installed — cannot test connection")
+            return False
         except Exception as e:
             logger.error(
                 "Connection test failed",
@@ -300,7 +300,7 @@ class SourceService:
         # Check cache first (unless force_refresh)
         if not force_refresh:
             try:
-                from app.infrastructure.redis_client import RedisClient
+                from app.infrastructure.redis import RedisClient
                 import json
                 
                 cache_key = f"source_details:{source_id}"
@@ -308,11 +308,11 @@ class SourceService:
                 cached = redis_client.get(cache_key)
                 
                 if cached:
-                    logger.info(f"Cache HIT for source details {source_id}")
+                    logger.info("Cache HIT for source details %s", source_id)
                     cached_data = json.loads(cached)
                     return SourceDetailResponse(**cached_data)
             except Exception as e:
-                logger.warning(f"Cache read error for source {source_id}: {e}")
+                logger.warning("Cache read error for source %s: %s", source_id, e)
         
         # 1. Get Source
         source = self.get_source(source_id)
@@ -390,7 +390,7 @@ class SourceService:
         
         # Cache the result for 30 seconds
         try:
-            from app.infrastructure.redis_client import RedisClient
+            from app.infrastructure.redis import RedisClient
             import json
             
             cache_key = f"source_details:{source_id}"
@@ -398,9 +398,9 @@ class SourceService:
             # Convert to dict for caching
             result_dict = result.dict()
             redis_client.setex(cache_key, 30, json.dumps(result_dict))
-            logger.info(f"Cached source details for {source_id} with 30s TTL")
+            logger.info("Cached source details for %s with 30s TTL", source_id)
         except Exception as e:
-            logger.warning(f"Failed to cache source details for {source_id}: {e}")
+            logger.warning("Failed to cache source details for %s: %s", source_id, e)
         
         return result
 
@@ -454,7 +454,7 @@ class SourceService:
         # Validate schema data is not empty
         if not schema_data:
             logger.warning(
-                f"Empty schema data for table {table.table_name} version {version}"
+                "Empty schema data for table %s version %s", table.table_name, version
             )
             # Return empty columns list instead of failing
             schema_data = {}
@@ -552,7 +552,7 @@ class SourceService:
             conn.close()
 
         except Exception as e:
-            logger.error(f"Error fetching metadata for source {source.name}: {e}")
+            logger.error("Error fetching metadata for source %s: %s", source.name, e)
             pass
     
     def _pause_running_pipelines_for_source(self, source_id: int) -> None:
@@ -574,11 +574,11 @@ class SourceService:
             ]
             
             if not running_pipelines:
-                logger.info(f"No running pipelines found for source {source_id}")
+                logger.info("No running pipelines found for source %s", source_id)
                 return
             
             logger.info(
-                f"Pausing {len(running_pipelines)} running pipeline(s) for source {source_id}"
+                "Pausing %s running pipeline(s) for source %s", len(running_pipelines), source_id
             )
             
             pipeline_service = PipelineService(self.db)
@@ -586,18 +586,18 @@ class SourceService:
                 try:
                     pipeline_service.pause_pipeline(pipeline.id)
                     logger.info(
-                        f"Successfully paused pipeline {pipeline.id} ({pipeline.name})"
+                        "Successfully paused pipeline %s (%s)", pipeline.id, pipeline.name
                     )
                 except Exception as e:
                     logger.error(
-                        f"Failed to pause pipeline {pipeline.id} ({pipeline.name}): {e}"
+                        "Failed to pause pipeline %s (%s): %s", pipeline.id, pipeline.name, e
                     )
                     # Continue pausing other pipelines even if one fails
                     continue
             
         except Exception as e:
             logger.error(
-                f"Error pausing pipelines for source {source_id}: {e}"
+                "Error pausing pipelines for source %s: %s", source_id, e
             )
             # Don't raise - this is a best-effort operation
 
@@ -641,8 +641,7 @@ class SourceService:
 
                         if not schema_list:
                             logger.warning(
-                                f"Skipping table {table_name}: No schema columns found. "
-                                "Table may be empty or inaccessible."
+                                "Skipping table %s: No schema columns found. Table may be empty or inaccessible.", table_name
                             )
                             continue
 
@@ -675,11 +674,11 @@ class SourceService:
                             self.db.commit()
 
                             logger.info(
-                                f"Added table {table_name} with schema ({len(schema_list)} columns)"
+                                "Added table %s with schema (%s columns)", table_name, len(schema_list)
                             )
                         except Exception as e:
                             # Likely IntegrityError if race condition
-                            logger.warning(f"Skipping creation of {table_name}: {e}")
+                            logger.warning("Skipping creation of %s: %s", table_name, e)
                             self.db.rollback()
 
                 # 4. Fix existing tables without schemas
@@ -691,7 +690,7 @@ class SourceService:
                     # Check if schema is missing or empty
                     if not table.schema_table or table.schema_table == {}:
                         logger.info(
-                            f"Found existing table {table.table_name} without schema, fetching now..."
+                            "Found existing table %s without schema, fetching now...", table.table_name
                         )
                         try:
                             schema_list = monitor.fetch_table_schema(
@@ -700,8 +699,7 @@ class SourceService:
 
                             if not schema_list:
                                 logger.warning(
-                                    f"Could not fetch schema for {table.table_name}. "
-                                    "Table may be empty or inaccessible."
+                                    "Could not fetch schema for %s. Table may be empty or inaccessible.", table.table_name
                                 )
                                 continue
 
@@ -742,20 +740,18 @@ class SourceService:
                                 self.db.add(history)
                                 self.db.commit()
                                 logger.info(
-                                    f"Fixed table {table.table_name}: Added schema and history "
-                                    f"({len(schema_list)} columns)"
+                                    "Fixed table %s: Added schema and history (%s columns)", table.table_name, len(schema_list)
                                 )
                             else:
                                 # Update existing INITIAL_LOAD with correct schema
                                 existing_history.schema_table_new = schema_dict
                                 self.db.commit()
                                 logger.info(
-                                    f"Fixed table {table.table_name}: Updated schema "
-                                    f"({len(schema_list)} columns)"
+                                    "Fixed table %s: Updated schema (%s columns)", table.table_name, len(schema_list)
                                 )
                         except Exception as e:
                             logger.error(
-                                f"Failed to fetch schema for existing table {table.table_name}: {e}"
+                                "Failed to fetch schema for existing table %s: %s", table.table_name, e
                             )
                             self.db.rollback()
                             continue
@@ -772,7 +768,7 @@ class SourceService:
 
         except Exception as e:
             logger.error(
-                f"Error syncing publication tables for source {source.name}: {e}"
+                "Error syncing publication tables for source %s: %s", source.name, e
             )
             return set()
 
@@ -797,7 +793,7 @@ class SourceService:
             return registered_tables
         except Exception as e:
             logger.warning(
-                f"Failed to fetch publication tables for source {source.name}: {e}"
+                "Failed to fetch publication tables for source %s: %s", source.name, e
             )
             # Fallback: return tables from local metadata
             table_repo = TableMetadataRepository(self.db)
@@ -821,8 +817,7 @@ class SourceService:
         if (previous_publication_enabled and not source.is_publication_enabled) or \
            (previous_replication_enabled and not source.is_replication_enabled):
             logger.warning(
-                f"Publication or replication slot dropped externally for source {source_id}. "
-                "Auto-pausing running pipelines."
+                "Publication or replication slot dropped externally for source %s. Auto-pausing running pipelines.", source_id
             )
             self._pause_running_pipelines_for_source(source_id)
 
@@ -831,7 +826,7 @@ class SourceService:
             redis_client = RedisClient.get_instance()
             redis_client.delete(f"source:{source_id}:tables")
         except Exception as e:
-            logger.warning(f"Failed to invalidate cache for source {source_id}: {e}")
+            logger.warning("Failed to invalidate cache for source %s: %s", source_id, e)
 
     def create_publication(self, source_id: int, tables: List[str]) -> None:
         source = self.get_source(source_id)
@@ -844,26 +839,26 @@ class SourceService:
             with conn.cursor() as cur:
                 tables_str = ", ".join([f'"{t}"' for t in tables])
                 query = f"CREATE PUBLICATION {source.publication_name} FOR TABLE {tables_str} WITH (publish = 'insert, update, delete');"
-                logger.info(f"Executing: {query}")
+                logger.info("Executing: %s", query)
                 cur.execute(query)
             conn.close()
             self.refresh_source_metadata(source_id)
         except Exception as e:
-            logger.error(f"Failed to create publication: {e}")
+            logger.error("Failed to create publication: %s", e)
             raise ValueError(f"Failed to create publication: {str(e)}")
 
     def drop_publication(self, source_id: int) -> None:
         source = self.get_source(source_id)
         try:
             # Pause running pipelines first
-            logger.info(f"Auto-pausing running pipelines for source {source_id} before dropping publication")
+            logger.info("Auto-pausing running pipelines for source %s before dropping publication", source_id)
             self._pause_running_pipelines_for_source(source_id)
             
             conn = self._get_connection(source)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             with conn.cursor() as cur:
                 query = f"DROP PUBLICATION IF EXISTS {source.publication_name};"
-                logger.info(f"Executing: {query}")
+                logger.info("Executing: %s", query)
                 cur.execute(query)
             conn.close()
 
@@ -872,7 +867,7 @@ class SourceService:
             from app.domain.models.pipeline import Pipeline, PipelineDestination, PipelineDestinationTableSync
             from app.domain.models.tag import PipelineDestinationTableSyncTag, TagList
             
-            logger.info(f"Cleaning up pipeline table sync configurations for source {source_id}")
+            logger.info("Cleaning up pipeline table sync configurations for source %s", source_id)
             pipelines = self.db.query(Pipeline).filter(Pipeline.source_id == source_id).all()
             
             # Collect all tag IDs before deletion for cleanup
@@ -902,13 +897,13 @@ class SourceService:
                         .filter(PipelineDestinationTableSync.pipeline_destination_id.in_(pipeline_dest_ids))
                         .delete(synchronize_session=False)
                     )
-                    logger.info(f"Deleted {deleted_count} table sync configurations for pipeline {pipeline.id}")
+                    logger.info("Deleted %s table sync configurations for pipeline %s", deleted_count, pipeline.id)
             
             self.db.commit()
 
             # Cleanup unused tags after deletion
             if all_tag_ids:
-                logger.info(f"Checking {len(all_tag_ids)} tags for cleanup")
+                logger.info("Checking %s tags for cleanup", len(all_tag_ids))
                 for tag_id in all_tag_ids:
                     # Check if tag is still used
                     count = (
@@ -935,7 +930,7 @@ class SourceService:
 
             self.refresh_source_metadata(source_id)
         except Exception as e:
-            logger.error(f"Failed to drop publication: {e}")
+            logger.error("Failed to drop publication: %s", e)
             self.db.rollback()
             raise ValueError(f"Failed to drop publication: {str(e)}")
 
@@ -949,19 +944,19 @@ class SourceService:
                 # Check if exists first to avoid error? Or just try create
                 # The user asked for specific query
                 query = f"SELECT pg_create_logical_replication_slot('{slot_name}', 'pgoutput');"
-                logger.info(f"Executing: {query}")
+                logger.info("Executing: %s", query)
                 cur.execute(query)
             conn.close()
             self.refresh_source_metadata(source_id)
         except Exception as e:
-            logger.error(f"Failed to create replication slot: {e}")
+            logger.error("Failed to create replication slot: %s", e)
             raise ValueError(f"Failed to create replication slot: {str(e)}")
 
     def drop_replication_slot(self, source_id: int) -> None:
         source = self.get_source(source_id)
         try:
             # Pause running pipelines first
-            logger.info(f"Auto-pausing running pipelines for source {source_id} before dropping replication slot")
+            logger.info("Auto-pausing running pipelines for source %s before dropping replication slot", source_id)
             self._pause_running_pipelines_for_source(source_id)
             
             conn = self._get_connection(source)
@@ -969,12 +964,12 @@ class SourceService:
             with conn.cursor() as cur:
                 slot_name = source.replication_name
                 query = f"SELECT pg_drop_replication_slot('{slot_name}');"
-                logger.info(f"Executing: {query}")
+                logger.info("Executing: %s", query)
                 cur.execute(query)
             conn.close()
             self.refresh_source_metadata(source_id)
         except Exception as e:
-            logger.error(f"Failed to drop replication slot: {e}")
+            logger.error("Failed to drop replication slot: %s", e)
             raise ValueError(f"Failed to drop replication slot: {str(e)}")
 
     def register_table_to_publication(self, source_id: int, table_name: str) -> None:
@@ -987,7 +982,7 @@ class SourceService:
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             with conn.cursor() as cur:
                 query = f'ALTER PUBLICATION {source.publication_name} ADD TABLE "{table_name}"'
-                logger.info(f"Executing: {query}")
+                logger.info("Executing: %s", query)
                 cur.execute(query)
             conn.close()
             self.refresh_source_metadata(source_id)
@@ -1005,7 +1000,7 @@ class SourceService:
 
                 if pipelines:
                     logger.info(
-                        f"Triggering auto-provisioning for table {table_name} on {len(pipelines)} pipelines"
+                        "Triggering auto-provisioning for table %s on %s pipelines", table_name, len(pipelines)
                     )
 
                     # Fetch table info (metadata)
@@ -1029,25 +1024,25 @@ class SourceService:
                                         )
                                     except Exception as exc:
                                         logger.error(
-                                            f"Failed to auto-provision table {table_name} for pipeline {pipeline.id} destination {pd.destination.name}: {exc}"
+                                            "Failed to auto-provision table %s for pipeline %s destination %s: %s", table_name, pipeline.id, pd.destination.name, exc
                                         )
 
                         # Commit the ready_refresh changes
                         self.db.commit()
                         logger.info(
-                            f"Marked {len(pipelines)} pipeline(s) as ready for refresh"
+                            "Marked %s pipeline(s) as ready for refresh", len(pipelines)
                         )
                     else:
                         logger.warning(
-                            f"Metadata for table {table_name} not found after refresh, skipping provisioning"
+                            "Metadata for table %s not found after refresh, skipping provisioning", table_name
                         )
 
             except Exception as e:
-                logger.error(f"Auto-provisioning process failed: {e}")
+                logger.error("Auto-provisioning process failed: %s", e)
                 # Don't raise here to avoid failing the registration itself if provisioning fails
 
         except Exception as e:
-            logger.error(f"Failed to register table {table_name}: {e}")
+            logger.error("Failed to register table %s: %s", table_name, e)
             raise ValueError(f"Failed to register table: {str(e)}")
 
     def unregister_table_from_publication(
@@ -1062,7 +1057,7 @@ class SourceService:
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             with conn.cursor() as cur:
                 query = f'ALTER PUBLICATION {source.publication_name} DROP TABLE "{table_name}"'
-                logger.info(f"Executing: {query}")
+                logger.info("Executing: %s", query)
                 cur.execute(query)
             conn.close()
 
@@ -1072,7 +1067,7 @@ class SourceService:
 
             self.refresh_source_metadata(source_id)
         except Exception as e:
-            logger.error(f"Failed to unregister table {table_name}: {e}")
+            logger.error("Failed to unregister table %s: %s", table_name, e)
             raise ValueError(f"Failed to unregister table: {str(e)}")
 
     def fetch_available_tables(self, source_id: int) -> List[str]:
@@ -1096,7 +1091,7 @@ class SourceService:
 
                 return json.loads(cached_tables)
         except Exception as e:
-            logger.warning(f"Redis cache error: {e}")
+            logger.warning("Redis cache error: %s", e)
 
         # 2. Fetch from DB
         try:
@@ -1120,12 +1115,12 @@ class SourceService:
                 redis_client = RedisClient.get_instance()
                 redis_client.setex(cache_key, 300, json.dumps(tables))
             except Exception as e:
-                logger.warning(f"Failed to cache tables for source {source_id}: {e}")
+                logger.warning("Failed to cache tables for source %s: %s", source_id, e)
 
             return tables
         except Exception as e:
             logger.error(
-                f"Failed to fetch available tables for source {source.name}: {e}"
+                "Failed to fetch available tables for source %s: %s", source.name, e
             )
             raise ValueError(f"Failed to fetch tables: {str(e)}")
 
@@ -1158,12 +1153,12 @@ class SourceService:
                 redis_client.setex(cache_key, 300, json.dumps(tables))
             except Exception as e:
                 logger.error(
-                    f"Failed to update cache during refresh for source {source_id}: {e}"
+                    "Failed to update cache during refresh for source %s: %s", source_id, e
                 )
 
             return tables
         except Exception as e:
-            logger.error(f"Failed to refresh table list for source {source.name}: {e}")
+            logger.error("Failed to refresh table list for source %s: %s", source.name, e)
             raise ValueError(f"Failed to refresh tables: {str(e)}")
 
     def fetch_schema(
@@ -1198,7 +1193,7 @@ class SourceService:
 
                 return json.loads(cached_schema)
         except Exception as e:
-            logger.warning(f"Redis cache error: {e}")
+            logger.warning("Redis cache error: %s", e)
 
         schema_data = {}
 
@@ -1256,12 +1251,12 @@ class SourceService:
                 redis_client = RedisClient.get_instance()
                 redis_client.setex(cache_key, 300, json.dumps(schema_data))
             except Exception as e:
-                logger.warning(f"Failed to cache source schema: {e}")
+                logger.warning("Failed to cache source schema: %s", e)
 
             return schema_data
 
         except Exception as e:
-            logger.error(f"Failed to fetch source schema: {e}")
+            logger.error("Failed to fetch source schema: %s", e)
             raise ValueError(f"Failed to fetch source schema: {str(e)}")
 
     def duplicate_source(self, source_id: int) -> Source:

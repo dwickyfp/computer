@@ -40,6 +40,7 @@ import hashlib
 import json
 import re
 import base64
+from urllib.parse import quote as _url_quote
 from app.infrastructure.redis import get_redis
 from app.domain.schemas.pipeline_preview import (
     PipelinePreviewRequest,
@@ -74,13 +75,15 @@ class PipelineService:
             if pipeline.status == "START":
                 pipeline.ready_refresh = True
                 self.db.commit()
-                logger.info(f"Marked pipeline {pipeline_id} as ready for refresh")
+                logger.info("Marked pipeline %s as ready for refresh", pipeline_id)
             else:
                 logger.info(
-                    f"Skipping ready_refresh for pipeline {pipeline_id} (status: {pipeline.status})"
+                    "Skipping ready_refresh for pipeline %s (status: %s)",
+                    pipeline_id,
+                    pipeline.status,
                 )
         except Exception as e:
-            logger.error(f"Failed to mark pipeline {pipeline_id} for refresh: {e}")
+            logger.error("Failed to mark pipeline %s for refresh: %s", pipeline_id, e)
 
     def _cleanup_unused_tags(self, tag_ids: list[int]) -> None:
         """
@@ -91,28 +94,30 @@ class PipelineService:
         """
         from app.domain.models.tag import PipelineDestinationTableSyncTag, TagList
 
-        for tag_id in tag_ids:
-            # Check if tag is still used
-            count = (
-                self.db.query(PipelineDestinationTableSyncTag)
-                .filter(PipelineDestinationTableSyncTag.tag_id == tag_id)
-                .count()
-            )
+        if not tag_ids:
+            return
 
-            if count == 0:
-                # Tag is unused, delete it
-                tag = self.db.query(TagList).filter(TagList.id == tag_id).first()
-                if tag:
-                    logger.info(
-                        f"Auto-deleting unused tag: {tag.tag}",
-                        extra={"tag_id": tag_id, "tag_name": tag.tag},
-                    )
-                    self.db.delete(tag)
-                    self.db.commit()
-                    logger.info(
-                        f"Unused tag deleted: {tag.tag}",
-                        extra={"tag_id": tag_id},
-                    )
+        # Single bulk query: find which tag_ids are still referenced after the deletion
+        used_tag_ids = set(
+            row[0]
+            for row in self.db.query(PipelineDestinationTableSyncTag.tag_id)
+            .filter(PipelineDestinationTableSyncTag.tag_id.in_(tag_ids))
+            .all()
+        )
+        unused_tag_ids = [tid for tid in tag_ids if tid not in used_tag_ids]
+
+        if unused_tag_ids:
+            # Bulk-load and delete all unused tags, then commit once
+            unused_tags = (
+                self.db.query(TagList).filter(TagList.id.in_(unused_tag_ids)).all()
+            )
+            for tag in unused_tags:
+                logger.info(
+                    f"Auto-deleting unused tag: {tag.tag}",
+                    extra={"tag_id": tag.id, "tag_name": tag.tag},
+                )
+                self.db.delete(tag)
+            self.db.commit()
 
     def create_pipeline(self, pipeline_data: PipelineCreate) -> Pipeline:
         """
@@ -249,11 +254,10 @@ class PipelineService:
         # Cleanup unused tags after deletion
         if tag_ids:
             logger.info(
-                f"Checking {len(tag_ids)} tags for cleanup after removing destination from pipeline"
+                "Checking %s tags for cleanup after removing destination from pipeline",
+                len(tag_ids),
             )
             self._cleanup_unused_tags(tag_ids)
-
-        self.db.refresh(pipeline)
 
         # Mark for refresh
         self.mark_ready_for_refresh(pipeline_id)
@@ -424,7 +428,7 @@ class PipelineService:
                     cursor.close()
                     conn.close()
             except Exception as e:
-                logger.error(f"Failed to validate Postgres table: {e}")
+                logger.error("Failed to validate Postgres table: %s", e)
                 return TableValidationResponse(
                     valid=False,  # If we can't connect, can we validate? Maybe allow it if it's just connectivity issue?
                     # Ideally we fail validation if we can't check.
@@ -477,7 +481,7 @@ class PipelineService:
                 cursor.close()
                 conn.close()
         except Exception as e:
-            logger.error(f"Failed to validate table name against destination: {e}")
+            logger.error("Failed to validate table name against destination: %s", e)
             return TableValidationResponse(
                 valid=False,
                 exists=False,
@@ -567,10 +571,7 @@ class PipelineService:
             },
         )
 
-        # Get existing pipeline to ensure it exists
-        pipeline = self.repository.get_by_id(pipeline_id)
-
-        # Update pipeline
+        # Update pipeline (repository.update internally verifies the entity exists)
         updated_pipeline = self.repository.update(
             pipeline_id, **pipeline_data.dict(exclude_unset=True)
         )
@@ -612,7 +613,8 @@ class PipelineService:
         # Cleanup unused tags after deletion
         if tag_ids:
             logger.info(
-                f"Checking {len(tag_ids)} tags for cleanup after pipeline deletion"
+                "Checking %s tags for cleanup after pipeline deletion",
+                len(tag_ids),
             )
             self._cleanup_unused_tags(list(tag_ids))
 
@@ -753,6 +755,10 @@ class PipelineService:
             "Starting pipeline initialization", extra={"pipeline_id": pipeline_id}
         )
 
+        # Initialize progress to None before the try block so the except
+        # handler never hits UnboundLocalError if the exception fires early.
+        progress = None
+
         try:
             # 1. Get Pipeline and Progress
             pipeline = self.repository.get_by_id_with_relations(pipeline_id)
@@ -861,7 +867,7 @@ class PipelineService:
             self.db.commit()
 
         except Exception as e:
-            logger.error(f"Pipeline initialization failed: {e}", exc_info=True)
+            logger.error("Pipeline initialization failed: %s", e, exc_info=True)
             # Re-fetch progress attached to session if needed, but it should be attached
             try:
                 if progress:
@@ -872,7 +878,7 @@ class PipelineService:
                         "FAILED",
                         str(e),
                     )
-            except:
+            except Exception:
                 pass
 
     def provision_table(
@@ -947,7 +953,6 @@ class PipelineService:
             # Handle different object structures (SourceTableInfo vs Pydantic model)
             if isinstance(table_info, dict):
                 columns = table_info["schema_definition"]
-                table_id = table_info["id"]
             else:
                 columns = getattr(table_info, "schema_definition", None)
 
@@ -971,13 +976,14 @@ class PipelineService:
 
             # A. Landing Table (always recreate to ensure schema is up-to-date)
             landing_table = f"LANDING_{table_name}"
+            q_l_db = self._quote_sf_identifier(landing_db)
+            q_l_sc = self._quote_sf_identifier(landing_schema)
+            q_l_tbl = self._quote_sf_identifier(landing_table)
             logger.info(
                 f"Recreating landing table {landing_db}.{landing_schema}.{landing_table}"
             )
             # Drop existing landing table first (CASCADE to also drop dependent stream)
-            cursor.execute(
-                f"DROP TABLE IF EXISTS {landing_db}.{landing_schema}.{landing_table} CASCADE"
-            )
+            cursor.execute(f"DROP TABLE IF EXISTS {q_l_db}.{q_l_sc}.{q_l_tbl} CASCADE")
             landing_ddl = self._generate_landing_ddl(
                 landing_db, landing_schema, landing_table, columns
             )
@@ -986,10 +992,14 @@ class PipelineService:
 
             # B. Stream (always recreate after landing table recreation)
             stream_name = f"STREAM_{landing_table}"
+            q_stream = self._quote_sf_identifier(stream_name)
             logger.info(
                 f"Recreating stream {landing_db}.{landing_schema}.{stream_name}"
             )
-            stream_ddl = f"CREATE OR REPLACE STREAM {landing_db}.{landing_schema}.{stream_name} ON TABLE {landing_db}.{landing_schema}.{landing_table}"
+            stream_ddl = (
+                f"CREATE OR REPLACE STREAM {q_l_db}.{q_l_sc}.{q_stream} "
+                f"ON TABLE {q_l_db}.{q_l_sc}.{q_l_tbl}"
+            )
             cursor.execute(stream_ddl)
             sync_record.is_exists_stream = True
 
@@ -1019,12 +1029,13 @@ class PipelineService:
             stream_name = f"STREAM_{landing_table}"
             target_table = table_name
             task_name = f"ROSETTA_TASK_MERGE_{table_name}"
+            q_task = self._quote_sf_identifier(task_name)
+            q_t_db = self._quote_sf_identifier(target_db)
+            q_t_sc = self._quote_sf_identifier(target_schema)
 
-            logger.info(f"Recreating task {landing_db}.{landing_schema}.{task_name}")
+            logger.info("Recreating task %s.%s.%s", landing_db, landing_schema, task_name)
             # Drop existing task first
-            cursor.execute(
-                f"DROP TASK IF EXISTS {landing_db}.{landing_schema}.{task_name}"
-            )
+            cursor.execute(f"DROP TASK IF EXISTS {q_l_db}.{q_l_sc}.{q_task}")
 
             task_ddl = self._generate_merge_task_ddl(
                 pipeline,
@@ -1039,9 +1050,7 @@ class PipelineService:
                 columns,
             )
             cursor.execute(task_ddl)
-            cursor.execute(
-                f"ALTER TASK {landing_db}.{landing_schema}.{task_name} RESUME"
-            )
+            cursor.execute(f"ALTER TASK {q_l_db}.{q_l_sc}.{q_task} RESUME")
             sync_record.is_exists_task = True
 
             self.db.commit()
@@ -1052,26 +1061,33 @@ class PipelineService:
                 if conn:
                     conn.close()
 
-    def _check_table_exists(self, cursor, db, schema, table_name) -> bool:
-        """Check if a table exists in Snowflake."""
-        try:
-            # Use SHOW TABLES since it's reliable for existence check
-            # Note: SHOW TABLES matches roughly so we filter in python or use exact match dependent on driver behavior
-            # Ideally: SHOW TABLES LIKE 'tablename' IN SCHEMA db.schema
-            query = f"SHOW TABLES LIKE '{table_name}' IN SCHEMA {db}.{schema}"
-            cursor.execute(query)
+    # ------------------------------------------------------------------ helpers
 
-            # The result cursor will have rows if there are matches
-            # We iterate to find exact match because LIKE matching can be fuzzy sometimes depending on wildcard chars
-            for result in cursor:
-                # result structure depends on connector, usually a tuple or dict
-                # index 1 usually is 'name' in SHOW TABLES output
-                if result[1] == table_name:
-                    return True
-            return False
+    @staticmethod
+    def _quote_sf_identifier(name: str) -> str:
+        """Return a safely double-quoted Snowflake identifier (strips embedded quotes)."""
+        # Strip any existing double-quotes first, then re-wrap.
+        return '"' + name.replace('"', "") + '"'
+
+    def _check_table_exists(self, cursor, db, schema, table_name) -> bool:
+        """Check if a table exists in Snowflake.
+
+        Uses INFORMATION_SCHEMA instead of SHOW TABLES LIKE to avoid both
+        LIKE wildcard injection and the fuzzy-match behaviour of SHOW TABLES.
+        """
+        try:
+            q_db = self._quote_sf_identifier(db)
+            q_schema = self._quote_sf_identifier(schema)
+            query = (
+                f"SELECT COUNT(*) FROM {q_db}.INFORMATION_SCHEMA.TABLES "
+                f"WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s"
+            )
+            cursor.execute(query, (schema.upper(), table_name.upper()))
+            row = cursor.fetchone()
+            return bool(row and row[0] > 0)
 
         except Exception as e:
-            logger.warning(f"Failed to check if table exists: {e}")
+            logger.warning("Failed to check if table exists: %s", e)
             return False
 
     def _update_progress(self, progress, percent, step, status, details=None):
@@ -1173,36 +1189,43 @@ class PipelineService:
             return "VARCHAR"
 
     def _generate_landing_ddl(self, db, schema, table_name, columns):
+        q_db = self._quote_sf_identifier(db)
+        q_sc = self._quote_sf_identifier(schema)
+        q_tbl = self._quote_sf_identifier(table_name)
         cols_ddl = []
         for col in columns:
-            col_name = col["column_name"]
+            col_name = self._quote_sf_identifier(col["column_name"])
             # Pass entire col dict to mapper, with for_landing=True to use VARCHAR for spatial types
             sf_type = self._map_postgres_to_snowflake(col, for_landing=True)
             cols_ddl.append(f"{col_name} {sf_type}")
 
-        cols_ddl.append("operation VARCHAR(1)")
-        cols_ddl.append("sync_timestamp_rosetta TIMESTAMP_TZ")
+        cols_ddl.append('"operation" VARCHAR(1)')
+        cols_ddl.append('"sync_timestamp_rosetta" TIMESTAMP_TZ')
 
-        ddl = f"CREATE TABLE IF NOT EXISTS {db}.{schema}.{table_name} ({', '.join(cols_ddl)}) ENABLE_SCHEMA_EVOLUTION = TRUE"
+        ddl = f"CREATE TABLE IF NOT EXISTS {q_db}.{q_sc}.{q_tbl} ({', '.join(cols_ddl)}) ENABLE_SCHEMA_EVOLUTION = TRUE"
         return ddl
 
     def _generate_target_ddl(self, db, schema, table_name, columns):
         # Precise type (mapped), no default value, primary key
+        q_db = self._quote_sf_identifier(db)
+        q_sc = self._quote_sf_identifier(schema)
+        q_tbl = self._quote_sf_identifier(table_name)
 
         cols_ddl = []
         pks = []
 
         for col in columns:
             col_name = col["column_name"]
+            q_col = self._quote_sf_identifier(col_name)
             sf_type = self._map_postgres_to_snowflake(col)
 
             # Basic column definition
-            definition = f"{col_name} {sf_type}"
+            definition = f"{q_col} {sf_type}"
             cols_ddl.append(definition)
 
             # Check PK
             if col.get("is_primary_key") is True:
-                pks.append(col_name)
+                pks.append(q_col)
 
         # Add PK constraint if exists
         if pks:
@@ -1212,7 +1235,7 @@ class PipelineService:
 
         cols_definition = ",\n            ".join(cols_ddl)
         ddl = f"""
-        CREATE TABLE IF NOT EXISTS {db}.{schema}.{table_name} (
+        CREATE TABLE IF NOT EXISTS {q_db}.{q_sc}.{q_tbl} (
             {cols_definition}
         ) ENABLE_SCHEMA_EVOLUTION = TRUE;
         """
@@ -1247,13 +1270,15 @@ class PipelineService:
             pk_cols.append(columns[0]["column_name"])
 
         # Prepare JOIN condition for MERGE
-        # T.id = S.id AND T.key2 = S.key2
-        join_condition = " AND ".join([f"T.{pk} = S.{pk}" for pk in pk_cols])
+        # T."id" = S."id" AND T."key2" = S."key2"
+        q_pk_cols = [self._quote_sf_identifier(pk) for pk in pk_cols]
+        join_condition = " AND ".join([f"T.{qpk} = S.{qpk}" for qpk in q_pk_cols])
 
         # Prepare Partition By columns for De-duplication
-        partition_by = ", ".join(pk_cols)
+        partition_by = ", ".join(q_pk_cols)
 
         col_names = [c["column_name"] for c in columns]
+        q_col_names = [self._quote_sf_identifier(c) for c in col_names]
 
         # Indent utility
         indent = "            "
@@ -1267,60 +1292,71 @@ class PipelineService:
         def get_source_value(col_name: str) -> str:
             """Get the source value expression, applying spatial conversion if needed."""
             pg_type = col_type_map.get(col_name, "")
+            q_col = self._quote_sf_identifier(col_name)
             if "GEOGRAPHY" in pg_type:
-                return f"TRY_TO_GEOGRAPHY(S.{col_name})"
+                return f"TRY_TO_GEOGRAPHY(S.{q_col})"
             elif "GEOMETRY" in pg_type:
-                return f"TRY_TO_GEOMETRY(S.{col_name})"
-            return f"S.{col_name}"
+                return f"TRY_TO_GEOMETRY(S.{q_col})"
+            return f"S.{q_col}"
 
-        # UPDATE SET clause
-        # exclude PKs from update usually? MERGE allows updating everything except join keys usually.
-        # But safest to update all non-PKs.
+        # UPDATE SET clause — exclude PKs from update
         update_cols = [c for c in col_names if c not in pk_cols]
         if not update_cols:
-            # Edge case: table only has PK columns? Then update is no-op usually or not possible.
-            # Or maybe just update one col to itself? Dummy update?
-            # Let's assume there's always data columns. If not, we might not need update clause, just insert.
-            # But for safety, let's keep all columns if no distinct non-PKs (shouldn't happen in real ETL).
-            set_clause = ", ".join([f"{c} = {get_source_value(c)}" for c in col_names])
+            set_clause = ", ".join(
+                [
+                    f"{self._quote_sf_identifier(c)} = {get_source_value(c)}"
+                    for c in col_names
+                ]
+            )
         else:
             set_clause = f",\n{indent}            ".join(
-                [f"{c} = {get_source_value(c)}" for c in update_cols]
+                [
+                    f"{self._quote_sf_identifier(c)} = {get_source_value(c)}"
+                    for c in update_cols
+                ]
             )
 
         val_clause = ", ".join([get_source_value(c) for c in col_names])
-        col_list = ", ".join(col_names)
+        col_list = ", ".join(q_col_names)
 
         # Use Snowflake scripting block to run MERGE then DELETE from landing table
+        q_l_db = self._quote_sf_identifier(l_db)
+        q_l_sc = self._quote_sf_identifier(l_schema)
+        q_l_tbl = self._quote_sf_identifier(l_table)
+        q_stream = self._quote_sf_identifier(stream)
+        q_t_db = self._quote_sf_identifier(t_db)
+        q_t_sc = self._quote_sf_identifier(t_schema)
+        q_t_tbl = self._quote_sf_identifier(t_table)
+        warehouse = self._quote_sf_identifier(destination.config.get("warehouse", ""))
         task_ddl = f"""
-        CREATE OR REPLACE TASK {l_db}.{l_schema}.ROSETTA_TASK_MERGE_{t_table}
-        WAREHOUSE = {destination.config.get("warehouse")}
+        CREATE OR REPLACE TASK {q_l_db}.{q_l_sc}."ROSETTA_TASK_MERGE_{t_table}"
+        WAREHOUSE = {warehouse}
         SCHEDULE = '60 MINUTE'
         WHEN SYSTEM$STREAM_HAS_DATA('{l_db}.{l_schema}.{stream}')
         AS
         BEGIN
             -- Step 1: Merge data from stream to target table
-            MERGE INTO {t_db}.{t_schema}.{t_table} AS T
+            MERGE INTO {q_t_db}.{q_t_sc}.{q_t_tbl} AS T
             USING (
                 SELECT * FROM (
                     SELECT 
                         *, 
-                        ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY sync_timestamp_rosetta DESC) as rn
-                    FROM {l_db}.{l_schema}.{stream}
+                        ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY "sync_timestamp_rosetta" DESC) as rn
+                    FROM {q_l_db}.{q_l_sc}.{q_stream}
                 ) WHERE rn = 1
             ) AS S
             ON {join_condition}
-            WHEN MATCHED AND S.operation = 'D' THEN
+            WHEN MATCHED AND S."operation" = 'D' THEN
                 DELETE
-            WHEN MATCHED AND S.operation != 'D' THEN
+            WHEN MATCHED AND S."operation" != 'D' THEN
                 UPDATE SET 
                 {set_clause}
-            WHEN NOT MATCHED AND S.operation != 'D' THEN
+            WHEN NOT MATCHED AND S."operation" != 'D' THEN
                 INSERT ({col_list})
                 VALUES ({val_clause});
             
             -- Step 2: Clean up landing table after merge
-            DELETE FROM {l_db}.{l_schema}.{l_table};
+            DELETE FROM {q_l_db}.{q_l_sc}.{q_l_tbl};
         END;
         """
         return task_ddl
@@ -1695,8 +1731,23 @@ class PipelineService:
     def save_table_sync(
         self, pipeline_id: int, pipeline_destination_id: int, table_sync_data
     ) -> "PipelineDestinationTableSync":
+        """Create or update table sync configuration."""
+        result = self._save_table_sync_no_commit(
+            pipeline_id, pipeline_destination_id, table_sync_data
+        )
+        self.db.commit()
+        self.db.refresh(result)
+        self.mark_ready_for_refresh(pipeline_id)
+        return result
+
+    def _save_table_sync_no_commit(
+        self, pipeline_id: int, pipeline_destination_id: int, table_sync_data
+    ) -> "PipelineDestinationTableSync":
         """
-        Create or update table sync configuration.
+        Create or update table sync configuration without committing.
+
+        Flushes changes to the DB but does NOT commit — used by
+        save_table_syncs_bulk so the whole batch is one transaction.
 
         Args:
             pipeline_id: Pipeline identifier
@@ -1704,7 +1755,7 @@ class PipelineService:
             table_sync_data: Table sync configuration
 
         Returns:
-            Created/updated table sync
+            Created/updated table sync (not yet committed)
         """
         from app.domain.models.pipeline import PipelineDestinationTableSync
         from app.core.exceptions import EntityNotFoundError
@@ -1757,23 +1808,13 @@ class PipelineService:
             ):
                 existing.catalog_database_name = table_sync_data.catalog_database_name
 
-            self.db.commit()
-            self.db.refresh(existing)
-
-            # Mark for refresh
-            self.mark_ready_for_refresh(pipeline_id)
-
+            self.db.flush()
             return existing
         else:
             # Create NEW sync (Branch)
-            # Check if there is already a sync for this table with same target?
-            # Or just allow multiple. We should probably uniqueness on (pipeline_destination_id, table_name, table_name_target)
             target_name = (
                 table_sync_data.table_name_target or table_sync_data.table_name
             )
-
-            # Optional: Check uniqueness of target for this source
-            # ...
 
             if table_sync_data.custom_sql:
                 self._validate_custom_sql(table_sync_data.custom_sql)
@@ -1790,19 +1831,17 @@ class PipelineService:
                 ),
             )
             self.db.add(new_sync)
-            self.db.commit()
-            self.db.refresh(new_sync)
-
-            # Mark for refresh
-            self.mark_ready_for_refresh(pipeline_id)
-
+            self.db.flush()
             return new_sync
 
     def save_table_syncs_bulk(
         self, pipeline_id: int, pipeline_destination_id: int, bulk_request
     ) -> List["PipelineDestinationTableSync"]:
         """
-        Bulk create or update table sync configurations.
+        Bulk create or update table sync configurations in a single transaction.
+
+        All items are flushed together then committed once. If any item fails
+        the entire batch is rolled back.
 
         Args:
             pipeline_id: Pipeline identifier
@@ -1814,10 +1853,15 @@ class PipelineService:
         """
         results = []
         for table_sync_data in bulk_request.tables:
-            result = self.save_table_sync(
+            result = self._save_table_sync_no_commit(
                 pipeline_id, pipeline_destination_id, table_sync_data
             )
             results.append(result)
+        # Single commit for the entire batch — atomic
+        self.db.commit()
+        for result in results:
+            self.db.refresh(result)
+        self.mark_ready_for_refresh(pipeline_id)
         return results
 
     def delete_table_sync(
@@ -1991,7 +2035,7 @@ class PipelineService:
                 "message": f"Snowflake objects created for {table_name}",
             }
         except Exception as e:
-            logger.error(f"Failed to initialize Snowflake table: {e}", exc_info=True)
+            logger.error("Failed to initialize Snowflake table: %s", e, exc_info=True)
             return {"status": "error", "message": str(e)}
 
     def _validate_custom_sql(self, sql: str) -> None:
@@ -2144,12 +2188,12 @@ class PipelineService:
                     if cached:
                         try:
                             data = json.loads(cached)
-                            logger.info(f"Returning cached preview for key {cache_key}")
+                            logger.info("Returning cached preview for key %s", cache_key)
                             return PipelinePreviewResponse(**data)
                         except Exception as e:
-                            logger.warning(f"Failed to parse cached preview: {e}")
+                            logger.warning("Failed to parse cached preview: %s", e)
             except Exception as e:
-                logger.warning(f"Redis error during preview cache check: {e}")
+                logger.warning("Redis error during preview cache check: %s", e)
 
             # 3. Get Source and Destination Configuration
             try:
@@ -2172,14 +2216,18 @@ class PipelineService:
 
                 # Decrypt passwords
                 src_pass = decrypt_value(source_details.pg_password)
-                src_conn_str = f"postgresql://{source_details.pg_username}:{src_pass}@{source_details.pg_host}:{source_details.pg_port}/{source_details.pg_database}"
+                src_user_enc = _url_quote(source_details.pg_username, safe="")
+                src_pass_enc = _url_quote(src_pass, safe="")
+                src_conn_str = f"postgresql://{src_user_enc}:{src_pass_enc}@{source_details.pg_host}:{source_details.pg_port}/{source_details.pg_database}"
 
                 dest_config = dest.config
                 dest_pass = decrypt_value(dest_config.get("password", ""))
-                dest_conn_str = f"postgresql://{dest_config.get('user')}:{dest_pass}@{dest_config.get('host')}:{dest_config.get('port')}/{dest_config.get('database')}"
+                dest_user_enc = _url_quote(dest_config.get("user", ""), safe="")
+                dest_pass_enc = _url_quote(dest_pass, safe="")
+                dest_conn_str = f"postgresql://{dest_user_enc}:{dest_pass_enc}@{dest_config.get('host')}:{dest_config.get('port')}/{dest_config.get('database')}"
 
             except Exception as e:
-                logger.error(f"Failed to retrieve connection details: {e}")
+                logger.error("Failed to retrieve connection details: %s", e)
                 return PipelinePreviewResponse(
                     columns=[],
                     data=[],
@@ -2229,15 +2277,24 @@ class PipelineService:
                 base_query = f"SELECT * FROM {source_prefix}.{request.table_name}"
                 final_query = f"{base_query}{where_clause} LIMIT 100"
 
-            logger.info(f"Executing preview query: {final_query}")
+            logger.info("Executing preview query: %s", final_query)
 
             # 5. Execute in DuckDB
             con = duckdb.connect(":memory:")
             # Set memory limit to avoid OOM
             con.execute("SET memory_limit='1GB'")
 
-            # Install & Load Postgres Extension
-            con.execute("INSTALL postgres;")
+            # Install Postgres extension only if not already present, then load it
+            try:
+                installed = con.execute(
+                    "SELECT extension_name FROM duckdb_extensions() "
+                    "WHERE extension_name = 'postgres' AND installed = true"
+                ).fetchone()
+                if not installed:
+                    con.execute("INSTALL postgres;")
+            except Exception:
+                # Fallback: attempt install unconditionally
+                con.execute("INSTALL postgres;")
             con.execute("LOAD postgres;")
 
             # Attach databases
@@ -2246,15 +2303,19 @@ class PipelineService:
                     f"ATTACH '{src_conn_str}' AS {source_prefix} (TYPE postgres, READ_ONLY);"
                 )
             except Exception as e:
-                logger.error(f"Failed to attach source DB: {e}")
-                raise ValueError(f"Could not connect to source database: {e}")
+                logger.error("Failed to attach source DB (credentials redacted)")
+                raise ValueError(
+                    "Could not connect to source database (check credentials and network)"
+                ) from e
 
             try:
                 con.execute(
                     f"ATTACH '{dest_conn_str}' AS {dest_prefix} (TYPE postgres, READ_ONLY);"
                 )
             except Exception as e:
-                logger.warning(f"Failed to attach destination DB: {e}")
+                logger.warning(
+                    "Failed to attach destination DB (credentials redacted); continuing without it"
+                )
                 # We continue even if dest fails, as query might only need source
 
             # Execute Query
@@ -2300,12 +2361,12 @@ class PipelineService:
                     # Cache for 5 minutes
                     redis_client.setex(cache_key, 300, response.json())
             except Exception as e:
-                logger.warning(f"Failed to cache preview result: {e}")
+                logger.warning("Failed to cache preview result: %s", e)
 
             return response
 
         except Exception as e:
-            logger.error(f"Preview execution failed: {e}", exc_info=True)
+            logger.error("Preview execution failed: %s", e, exc_info=True)
             # Return error in response rather than 500
             return PipelinePreviewResponse(
                 columns=[], column_types=[], data=[], error=str(e)

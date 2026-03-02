@@ -211,25 +211,29 @@ class DestinationService:
         # Cleanup unused tags after deletion
         if tag_ids:
             logger.info(
-                f"Checking {len(tag_ids)} tags for cleanup after destination deletion"
+                "Checking %s tags for cleanup after destination deletion", len(tag_ids)
             )
-            for tag_id in tag_ids:
-                # Check if tag is still used
-                count = (
-                    self.db.query(PipelineDestinationTableSyncTag)
-                    .filter(PipelineDestinationTableSyncTag.tag_id == tag_id)
-                    .count()
-                )
+            # Single bulk query: find which tag_ids are still referenced
+            tag_id_list = list(tag_ids)
+            used_tag_ids = set(
+                row[0]
+                for row in self.db.query(PipelineDestinationTableSyncTag.tag_id)
+                .filter(PipelineDestinationTableSyncTag.tag_id.in_(tag_id_list))
+                .all()
+            )
+            unused_tag_ids = [tid for tid in tag_id_list if tid not in used_tag_ids]
 
-                if count == 0:
-                    # Tag is unused, delete it
-                    tag = self.db.query(TagList).filter(TagList.id == tag_id).first()
-                    if tag:
-                        logger.info(
-                            f"Auto-deleting unused tag: {tag.tag}",
-                            extra={"tag_id": tag_id, "tag_name": tag.tag},
-                        )
-                        self.db.delete(tag)
+            if unused_tag_ids:
+                # Bulk-load and delete all unused tags in one pass
+                unused_tags = (
+                    self.db.query(TagList).filter(TagList.id.in_(unused_tag_ids)).all()
+                )
+                for tag in unused_tags:
+                    logger.info(
+                        f"Auto-deleting unused tag: {tag.tag}",
+                        extra={"tag_id": tag.id, "tag_name": tag.tag},
+                    )
+                    self.db.delete(tag)
 
             self.db.commit()
 
@@ -252,13 +256,21 @@ class DestinationService:
         # Get the existing destination
         existing_destination = self.get_destination(destination_id)
 
-        # Generate a unique name for the duplicate
+        # Generate a unique name for the duplicate using a single SQL query
+        from sqlalchemy import func, or_
+
         base_name = existing_destination.name
+        # Find all existing names that start with base_name + "_copy" in one query
+        pattern = f"{base_name}_copy%"
+        existing_copy_names = {
+            row[0]
+            for row in self.db.query(Destination.name)
+            .filter(Destination.name.like(pattern))
+            .all()
+        }
         copy_number = 1
         new_name = f"{base_name}_copy"
-
-        # Check if the name already exists and increment if needed
-        while self.get_destination_by_name(new_name) is not None:
+        while new_name in existing_copy_names:
             copy_number += 1
             new_name = f"{base_name}_copy{copy_number}"
 
@@ -413,7 +425,7 @@ class DestinationService:
                         backend=default_backend(),
                     )
                 except ValueError as ve:
-                    logger.error(f"Failed to load private key: {ve}")
+                    logger.error("Failed to load private key: %s", ve)
                     if "Bad decrypt" in str(ve):
                         raise ValueError("Invalid Private Key Passphrase.")
                     raise ValueError("Invalid Private Key format.")
@@ -499,7 +511,7 @@ class DestinationService:
 
                 return json.loads(cached_schema)
         except Exception as e:
-            logger.warning(f"Redis cache error: {e}")
+            logger.warning("Redis cache error: %s", e)
 
         schema_data = {}
 
@@ -661,14 +673,14 @@ class DestinationService:
                 )  # 5 minutes TTL
             except Exception as e:
                 logger.warning(
-                    f"Failed to cache schema for destination {destination_id}: {e}"
+                    "Failed to cache schema for destination %s: %s", destination_id, e
                 )
 
             return schema_data
 
         except Exception as e:
             logger.error(
-                f"Failed to fetch schema for destination {destination.name}: {e}"
+                "Failed to fetch schema for destination %s: %s", destination.name, e
             )
             raise ValueError(f"Failed to fetch schema: {str(e)}")
 
@@ -713,7 +725,7 @@ class DestinationService:
             return task_id
         except Exception as e:
             logger.error(
-                f"Failed to dispatch destination table list task for {destination_id}: {e}"
+                "Failed to dispatch destination table list task for %s: %s", destination_id, e
             )
             return None
 
@@ -753,7 +765,7 @@ class DestinationService:
                     "last_table_check_at": last_check,
                 }
         except Exception as e:
-            logger.warning(f"Redis cache miss for destination tables: {e}")
+            logger.warning("Redis cache miss for destination tables: %s", e)
 
         # 2. Fallback to DB
         destination = self.get_destination(destination_id)
@@ -781,5 +793,5 @@ class DestinationService:
                 self.dispatch_table_list_task(dest.id)
             except Exception as e:
                 logger.error(
-                    f"Failed to dispatch table list task for destination {dest.id}: {e}"
+                    "Failed to dispatch table list task for destination %s: %s", dest.id, e
                 )

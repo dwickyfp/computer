@@ -100,6 +100,7 @@ async def lifespan(app: FastAPI):
 
             # Close Redis connections
             from app.infrastructure.redis import RedisClient
+
             RedisClient.close()
 
             # Close database connections
@@ -113,6 +114,7 @@ async def lifespan(app: FastAPI):
 
 
 # Create FastAPI application
+_docs_enabled = settings.debug or settings.app_env == "development"
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
@@ -120,25 +122,31 @@ app = FastAPI(
         "A production-ready FastAPI application for managing ETL pipeline "
         "configurations with PostgreSQL WAL monitoring capabilities."
     ),
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
-    openapi_url="/openapi.json" if settings.debug else None,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
     lifespan=lifespan,
 )
 
+
+# CORS credentials cannot be used with wildcard origins (CORS spec).
+# If cors_origins is the catch-all ["*"], disable credentials so browsers
+# don't block responses.  For named origins, credentials are allowed.
+_cors_allow_credentials = settings.cors_origins != ["*"]
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_origin_regex=r"https?://(localhost|[\d]+\.[\d]+\.[\d]+\.[\d]+)(:\d+)?",
-    allow_credentials=True,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Register custom middleware (#5 rate limiting, #13 request tracing)
 from app.core.middleware import setup_middleware
+
 setup_middleware(app)
 
 

@@ -4,7 +4,7 @@ Base repository implementing common CRUD operations.
 Provides generic repository pattern implementation for all models.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Generic, List, Optional, Type, TypeVar
 from zoneinfo import ZoneInfo
 
@@ -237,9 +237,9 @@ class BaseRepository(Generic[ModelType]):
                 if hasattr(entity, key):
                     setattr(entity, key, value)
             
-            # Explicitly set updated_at if the model has this field
+            # Explicitly set updated_at if the model has this field (stored as UTC)
             if hasattr(entity, 'updated_at'):
-                entity.updated_at = datetime.now(ZoneInfo('Asia/Jakarta'))
+                entity.updated_at = datetime.now(timezone.utc)
 
             self.db.flush()
             self.db.refresh(entity)
