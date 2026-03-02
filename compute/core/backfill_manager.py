@@ -881,6 +881,7 @@ class BackfillManager:
                     )
                     continue
 
+                destination = None
                 try:
                     # Get destination config
                     destination_config = DestinationRepository.get_by_id(
@@ -942,7 +943,6 @@ class BackfillManager:
                                 table_name=f"LANDING_{table_name.upper()}",
                                 count=written,
                             )
-
                         except Exception as monitoring_error:
                             logger.warning(
                                 f"Failed to update data flow monitoring: {monitoring_error}"
@@ -954,6 +954,15 @@ class BackfillManager:
                         exc_info=True,
                     )
                     # Continue with other destinations even if one fails
+                finally:
+                    # Always close the destination to release connections/resources
+                    if destination is not None:
+                        try:
+                            destination.close()
+                        except Exception as close_error:
+                            logger.warning(
+                                f"Error closing destination {pd.destination_id}: {close_error}"
+                            )
 
         except Exception as e:
             logger.error(f"Error processing batch to destinations: {e}", exc_info=True)
