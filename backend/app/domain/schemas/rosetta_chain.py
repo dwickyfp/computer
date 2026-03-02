@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import Field, validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.domain.schemas.common import BaseSchema
 
@@ -56,7 +56,8 @@ class ChainClientBase(BaseSchema):
 class ChainClientCreate(ChainClientBase):
     """Schema for registering a new remote Rosetta instance."""
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: str) -> str:
         """Validate client name format."""
         if not v.replace("-", "").replace("_", "").isalnum():
@@ -66,14 +67,15 @@ class ChainClientCreate(ChainClientBase):
             )
         return v.lower()
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "name": "rosetta-production",
                 "url": "192.168.1.100",
                 "port": 8001,
             }
         }
+    )
 
 
 class ChainClientUpdate(BaseSchema):
@@ -107,7 +109,8 @@ class ChainClientUpdate(BaseSchema):
         description="Whether this client connection is active",
     )
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate client name format."""
         if v is not None:
@@ -131,7 +134,8 @@ class ChainTableResponse(BaseSchema):
     table_name: str = Field(..., description="Table name")
     table_schema: dict = Field(default_factory=dict, description="Table schema")
 
-    @validator("table_schema", pre=True, always=True)
+    @field_validator("table_schema", mode="before")
+    @classmethod
     def coerce_table_schema(cls, v: Any) -> dict:
         """Parse table_schema when psycopg2 returns it as a JSON string."""
         if v is None:
@@ -156,8 +160,7 @@ class ChainTableResponse(BaseSchema):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RosettaChainDatabaseResponse(BaseSchema):
@@ -169,8 +172,7 @@ class RosettaChainDatabaseResponse(BaseSchema):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChainClientResponse(ChainClientBase):
@@ -194,8 +196,7 @@ class ChainClientResponse(ChainClientBase):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChainClientTestResponse(BaseSchema):

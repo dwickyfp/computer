@@ -7,7 +7,7 @@ Request/response schemas for backfill operations.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.models.queue_backfill import BackfillStatus
 
@@ -30,7 +30,8 @@ class BackfillJobCreate(BaseModel):
         default=None, max_items=5, description="Filter conditions (max 5)"
     )
 
-    @validator("filters")
+    @field_validator("filters")
+    @classmethod
     def validate_filters(cls, v):
         """Validate filters list."""
         if v and len(v) > 5:
@@ -62,9 +63,7 @@ class BackfillJobCreate(BaseModel):
                         quoted_values.append(v)
                     except ValueError:
                         quoted_values.append(f"'{v}'")
-                clauses.append(
-                    f"{clean_column} IN ({', '.join(quoted_values)})"
-                )
+                clauses.append(f"{clean_column} IN ({', '.join(quoted_values)})")
             else:
                 # For numeric comparisons, don't quote
                 try:
@@ -100,23 +99,11 @@ class BackfillJobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        """Pydantic config."""
-
-        orm_mode = True
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BackfillJobListResponse(BaseModel):
-    """List of backfill jobs."""
+    """Paginated backfill job list response."""
 
-    total: int
-    items: list[BackfillJobResponse]
-
-
-class BackfillJobCancelRequest(BaseModel):
-    """Cancel backfill job request."""
-
-    reason: Optional[str] = Field(
-        None, max_length=500, description="Cancellation reason"
-    )
+    items: list[BackfillJobResponse] = Field(default_factory=list)
+    total: int = Field(default=0)

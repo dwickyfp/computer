@@ -102,4 +102,4 @@ def decrypt_value(encrypted_value: str) -> str:
         # For security, failing explicitly is better than returning garbage.
         # But if it wasn't encrypted (legacy), maybe return as is?
         # For this implementation, we assume all values passed here ARE encrypted.
-        raise ValueError(f"Decryption failed: {str(e)}")
+        raise ValueError(f"Decryption failed")

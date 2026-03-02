@@ -21,6 +21,26 @@ ModelType = TypeVar("ModelType", bound=Base)
 logger = get_logger(__name__)
 
 
+class _UnsetType:
+    """Sentinel value to distinguish 'not provided' from explicit None."""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+UNSET = _UnsetType()
+
+
 class BaseRepository(Generic[ModelType]):
     """
     Generic repository for database operations.
@@ -212,7 +232,9 @@ class BaseRepository(Generic[ModelType]):
             entity = self.get_by_id(entity_id)
 
             for key, value in kwargs.items():
-                if value is not None and hasattr(entity, key):
+                if isinstance(value, _UnsetType):
+                    continue  # Skip fields not provided
+                if hasattr(entity, key):
                     setattr(entity, key, value)
             
             # Explicitly set updated_at if the model has this field

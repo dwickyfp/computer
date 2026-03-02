@@ -5,7 +5,7 @@ Pydantic schemas for Rosetta Catalog architecture.
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CatalogDatabaseBase(BaseModel):
@@ -27,8 +27,7 @@ class CatalogDatabaseResponse(CatalogDatabaseBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CatalogTableBase(BaseModel):
@@ -41,7 +40,7 @@ class CatalogTableBase(BaseModel):
     )
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 
 class CatalogTableCreate(CatalogTableBase):
@@ -57,9 +56,7 @@ class CatalogTableResponse(CatalogTableBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
-        allow_population_by_field_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class SchemaRegistrationRequest(BaseModel):
@@ -75,4 +72,4 @@ class SchemaRegistrationRequest(BaseModel):
     source_chain_id: Optional[str] = Field(None, description="Identifier of Rosetta A")
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True

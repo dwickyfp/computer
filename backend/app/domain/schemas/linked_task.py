@@ -5,7 +5,7 @@ Pydantic schemas for Linked Task API request/response serialization.
 from datetime import datetime
 from typing import Any, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # ─── Shared ──────────────────────────────────────────────────────────────────
@@ -28,7 +28,8 @@ class LinkedTaskEdgeBase(BaseModel):
 
 class LinkedTaskStepSave(BaseModel):
     """Step as sent from the frontend during graph save."""
-    id: Optional[Any] = None   # Temporary ID (UUID string or int) used for linking edges
+
+    id: Optional[Any] = None  # Temporary ID (UUID string or int) used for linking edges
     flow_task_id: int
     pos_x: float = 0.0
     pos_y: float = 0.0
@@ -36,6 +37,7 @@ class LinkedTaskStepSave(BaseModel):
 
 class LinkedTaskEdgeSave(BaseModel):
     """Edge as sent from the frontend during graph save."""
+
     source_step_id: Any  # Refers to LinkedTaskStepSave.id (UUID string or int)
     target_step_id: Any
     condition: str = "ON_SUCCESS"
@@ -43,6 +45,7 @@ class LinkedTaskEdgeSave(BaseModel):
 
 class LinkedTaskGraphSave(BaseModel):
     """Full graph payload sent from the canvas."""
+
     steps: List[LinkedTaskStepSave] = []
     edges: List[LinkedTaskEdgeSave] = []
 
@@ -65,12 +68,12 @@ class LinkedTaskUpdate(BaseModel):
 
 class FlowTaskRef(BaseModel):
     """Lightweight flow task reference embedded in step responses."""
+
     id: int
     name: str
     status: str
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LinkedTaskStepResponse(BaseModel):
@@ -83,8 +86,7 @@ class LinkedTaskStepResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LinkedTaskEdgeResponse(BaseModel):
@@ -96,8 +98,7 @@ class LinkedTaskEdgeResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LinkedTaskResponse(BaseModel):
@@ -110,17 +111,16 @@ class LinkedTaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LinkedTaskDetailResponse(LinkedTaskResponse):
     """Full response including steps and edges."""
+
     steps: List[LinkedTaskStepResponse] = []
     edges: List[LinkedTaskEdgeResponse] = []
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LinkedTaskListResponse(BaseModel):
@@ -145,8 +145,7 @@ class LinkedTaskRunStepLogResponse(BaseModel):
     error_message: Optional[str]
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LinkedTaskRunHistoryResponse(BaseModel):
@@ -161,8 +160,7 @@ class LinkedTaskRunHistoryResponse(BaseModel):
     step_logs: List[LinkedTaskRunStepLogResponse] = []
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LinkedTaskRunHistoryListResponse(BaseModel):

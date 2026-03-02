@@ -172,9 +172,10 @@ class BackgroundScheduler:
     def _run_table_list_refresh(self) -> None:
         """
         Synchronous wrapper for table list refresh task.
-        Uses single DB session for both work and job metric recording.
+        Uses ThreadPoolExecutor for parallel source refresh (#11).
         """
         try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             from app.core.database import db_manager
             from app.domain.services.source import SourceService
 
@@ -183,13 +184,36 @@ class BackgroundScheduler:
             try:
                 service = SourceService(db)
                 sources = service.list_sources(limit=1000)
-                for source in sources:
+
+                def _refresh_one(source_id: int) -> None:
+                    """Refresh a single source in its own DB session."""
+                    s = session_factory()
                     try:
-                        service.refresh_available_tables(source.id)
+                        svc = SourceService(s)
+                        svc.refresh_available_tables(source_id)
                     except Exception as e:
                         logger.error(
-                            f"Failed to auto-refresh tables for source {source.id}: {e}"
+                            f"Failed to auto-refresh tables for source {source_id}: {e}"
                         )
+                    finally:
+                        s.close()
+
+                # Parallel refresh with bounded concurrency
+                with ThreadPoolExecutor(max_workers=5) as pool:
+                    futures = {
+                        pool.submit(_refresh_one, src.id): src.id
+                        for src in sources
+                    }
+                    for future in as_completed(futures):
+                        # Propagate any unexpected errors
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.error(
+                                f"Table refresh thread error for source "
+                                f"{futures[future]}: {e}"
+                            )
+
                 self._record_job_metric("table_list_refresh", db=db)
             finally:
                 db.close()

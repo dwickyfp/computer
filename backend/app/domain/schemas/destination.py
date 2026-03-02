@@ -6,7 +6,7 @@ Defines schemas for creating, updating, and retrieving destination configuration
 
 from typing import Any, Optional
 
-from pydantic import Field, validator
+from pydantic import ConfigDict, Field, ValidationInfo, field_validator
 
 from app.domain.schemas.common import BaseSchema, TimestampSchema
 
@@ -50,7 +50,8 @@ class DestinationCreate(DestinationBase):
         ],
     )
 
-    @validator("type")
+    @field_validator("type")
+    @classmethod
     def validate_type(cls, v: str) -> str:
         """Validate destination type."""
         allowed_types = [
@@ -65,7 +66,8 @@ class DestinationCreate(DestinationBase):
             pass
         return v.upper()
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: str) -> str:
         """Validate destination name format."""
         if not v.replace("-", "").replace("_", "").isalnum():
@@ -75,20 +77,17 @@ class DestinationCreate(DestinationBase):
             )
         return v.lower()
 
-        return v.upper()
-
-    @validator("config")
-    def validate_config(
-        cls, v: dict[str, Any], values: dict[str, Any]
-    ) -> dict[str, Any]:
+    @field_validator("config")
+    @classmethod
+    def validate_config(cls, v: dict[str, Any], info: ValidationInfo) -> dict[str, Any]:
         """Validate config based on type."""
         # Simple validation for now.
         # Ideally we'd inspect 'type' from values, but validation order matters.
         # If type is SNOWFLAKE, ensure required fields exist.
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "name": "snowflake-production",
                 "type": "SNOWFLAKE",
@@ -103,6 +102,7 @@ class DestinationCreate(DestinationBase):
                 },
             }
         }
+    )
 
 
 class DestinationUpdate(BaseSchema):
@@ -126,7 +126,8 @@ class DestinationUpdate(BaseSchema):
         default=None, description="Destination configuration (JSON)"
     )
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: str | None) -> str | None:
         """Validate destination name format."""
         if v is not None:
@@ -168,7 +169,8 @@ class DestinationResponse(DestinationBase, TimestampSchema):
         description="Chain client that owns this destination (ROSETTA type only)",
     )
 
-    @validator("config", pre=True, always=True)
+    @field_validator("config", mode="before")
+    @classmethod
     def mask_sensitive_config(cls, v: dict[str, Any]) -> dict[str, Any]:
         """Mask sensitive configuration values."""
         if not v:
@@ -200,7 +202,8 @@ class DestinationResponse(DestinationBase, TimestampSchema):
 
         return masked
 
-    @validator("last_table_check_at", pre=True, always=True)
+    @field_validator("last_table_check_at", mode="before")
+    @classmethod
     def serialize_last_table_check_at(cls, v: Any) -> Optional[str]:
         """Serialize datetime to ISO string."""
         if v is None:
@@ -208,24 +211,3 @@ class DestinationResponse(DestinationBase, TimestampSchema):
         if hasattr(v, "isoformat"):
             return v.isoformat()
         return str(v)
-
-    class Config:
-        orm_mode = True
-        fields = {}
-        schema_extra = {
-            "example": {
-                "id": 1,
-                "name": "snowflake-production",
-                "type": "SNOWFLAKE",
-                "config": {
-                    "account": "xy12345.us-east-1",
-                    "user": "ETL_USER",
-                    "database": "ANALYTICS",
-                    "schema": "RAW_DATA",
-                    "role": "SYSADMIN",
-                    "warehouse": "COMPUTE_WH",
-                },
-                "created_at": "2024-01-01T00:00:00Z",
-                "updated_at": "2024-01-01T00:00:00Z",
-            }
-        }

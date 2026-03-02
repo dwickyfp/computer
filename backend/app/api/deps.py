@@ -96,7 +96,8 @@ def get_pipeline_service_readonly(
     return PipelineService(db)
 
 
-def get_preset_service(db: Session = Depends(get_db)) -> Generator:
+def get_preset_service(db: Session = Depends(get_db)) -> "PresetService":
+    """Get preset service dependency."""
     from app.domain.services.preset import PresetService
 
     return PresetService(db)
@@ -157,3 +158,37 @@ def get_schedule_service(db: Session = Depends(get_db)) -> "ScheduleService":
     return ScheduleService(db)
 
 
+# ─── Extracted service factories (#4 PipelineService split) ────────────────────
+
+def get_table_sync_service(db: Session = Depends(get_db)) -> "TableSyncService":
+    """Get table sync service dependency (read-write)."""
+    from app.domain.services.table_sync_service import TableSyncService
+
+    return TableSyncService(db)
+
+
+def get_table_sync_service_readonly(
+    db: Session = Depends(get_db_readonly),
+) -> "TableSyncService":
+    """Get table sync service dependency (read-only)."""
+    from app.domain.services.table_sync_service import TableSyncService
+
+    return TableSyncService(db)
+
+
+def get_pipeline_preview_service(
+    db: Session = Depends(get_db),
+) -> "PipelinePreviewService":
+    """Get pipeline preview service dependency."""
+    from app.domain.services.pipeline_preview_service import PipelinePreviewService
+
+    return PipelinePreviewService(db)
+
+
+def get_pipeline_provision_service(
+    db: Session = Depends(get_db),
+) -> "PipelineProvisionService":
+    """Get pipeline provision service dependency."""
+    from app.domain.services.pipeline_provision_service import PipelineProvisionService
+
+    return PipelineProvisionService(db)

@@ -6,7 +6,7 @@ Defines schemas for creating, updating, and retrieving pipeline configurations.
 
 from datetime import datetime
 
-from pydantic import Field, validator
+from pydantic import ConfigDict, Field, ValidationInfo, field_validator
 from typing import List, Optional
 
 from app.domain.models.pipeline import PipelineMetadataStatus, PipelineStatus
@@ -21,8 +21,7 @@ class ChainClientBriefResponse(BaseSchema):
     id: int
     name: str
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PipelineBase(BaseSchema):
@@ -74,30 +73,34 @@ class PipelineCreate(PipelineBase):
         examples=["START", "PAUSE"],
     )
 
-    @validator("source_type")
+    @field_validator("source_type")
+    @classmethod
     def validate_source_type(cls, v: str) -> str:
         allowed = ["POSTGRES", "ROSETTA", "CATALOG_TABLE"]
         if v.upper() not in allowed:
             raise ValueError(f"source_type must be one of {allowed}")
         return v.upper()
 
-    @validator("source_id", always=True)
-    def validate_source_id(cls, v, values):
-        source_type = values.get("source_type", "POSTGRES")
+    @field_validator("source_id")
+    @classmethod
+    def validate_source_id(cls, v, info: ValidationInfo):
+        source_type = (info.data or {}).get("source_type", "POSTGRES")
         if source_type == "POSTGRES" and v is None:
             raise ValueError("source_id is required when source_type is POSTGRES")
         return v
 
-    @validator("catalog_table_id", always=True)
-    def validate_catalog_table_id(cls, v, values):
-        source_type = values.get("source_type", "POSTGRES")
+    @field_validator("catalog_table_id")
+    @classmethod
+    def validate_catalog_table_id(cls, v, info: ValidationInfo):
+        source_type = (info.data or {}).get("source_type", "POSTGRES")
         if source_type == "CATALOG_TABLE" and v is None:
             raise ValueError(
                 "catalog_table_id is required when source_type is CATALOG_TABLE"
             )
         return v
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: str) -> str:
         """Validate pipeline name format."""
         if not v.replace("-", "").replace("_", "").isalnum():
@@ -107,14 +110,15 @@ class PipelineCreate(PipelineBase):
             )
         return v.lower()
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "name": "production-to-snowflake",
                 "source_id": 1,
                 "status": "START",
             }
         }
+    )
 
 
 class PipelineUpdate(BaseSchema):
@@ -132,7 +136,8 @@ class PipelineUpdate(BaseSchema):
     )
     status: PipelineStatus | None = Field(default=None, description="Pipeline status")
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: str | None) -> str | None:
         """Validate pipeline name format."""
         if v is not None:
@@ -157,7 +162,7 @@ class PipelineStatusUpdate(BaseSchema):
     )
 
     class Config:
-        schema_extra = {"example": {"status": "START"}}
+        json_schema_extra = {"example": {"status": "START"}}
 
 
 class PipelineMetadataResponse(BaseSchema):
@@ -180,9 +185,9 @@ class PipelineMetadataResponse(BaseSchema):
     created_at: datetime = Field(..., description="Metadata creation timestamp")
     updated_at: datetime = Field(..., description="Metadata last update timestamp")
 
-    class Config:
-        orm_mode = True
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "pipeline_id": 1,
@@ -193,7 +198,8 @@ class PipelineMetadataResponse(BaseSchema):
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z",
             }
-        }
+        },
+    )
 
 
 class PipelineProgressResponse(BaseSchema):
@@ -210,8 +216,7 @@ class PipelineProgressResponse(BaseSchema):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PipelineDestinationTableSyncResponse(BaseSchema):
@@ -267,8 +272,7 @@ class PipelineDestinationTableSyncResponse(BaseSchema):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TableSyncCreateRequest(BaseSchema):
@@ -308,7 +312,7 @@ class TableSyncBulkRequest(BaseSchema):
     """
 
     tables: List[TableSyncCreateRequest] = Field(
-        ..., min_items=1, description="List of table sync configurations"
+        ..., min_length=1, description="List of table sync configurations"
     )
 
 
@@ -409,8 +413,7 @@ class PipelineDestinationResponse(BaseSchema):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PipelineResponse(PipelineBase, TimestampSchema):
@@ -459,9 +462,9 @@ class PipelineResponse(PipelineBase, TimestampSchema):
         default=None, description="Pipeline initialization progress"
     )
 
-    class Config:
-        orm_mode = True
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "name": "production-to-snowflake",
@@ -520,4 +523,5 @@ class PipelineResponse(PipelineBase, TimestampSchema):
                     "updated_at": "2024-01-01T00:00:00Z",
                 },
             }
-        }
+        },
+    )

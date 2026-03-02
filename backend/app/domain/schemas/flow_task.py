@@ -1,4 +1,4 @@
-"""
+﻿"""
 Flow Task Pydantic schemas for request/response validation.
 
 Defines schemas for creating, updating, and retrieving flow task data.
@@ -7,7 +7,7 @@ Defines schemas for creating, updating, and retrieving flow task data.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import Field, validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.domain.models.flow_task import (
     FlowTaskNodeStatus,
@@ -18,7 +18,8 @@ from app.domain.models.flow_task import (
 from app.domain.schemas.common import BaseSchema, TimestampSchema
 
 
-# ─── Node / Edge graph primitives ─────────────────────────────────────────────
+# --- Node / Edge graph primitives ---------------------------------------------
+
 
 class NodePosition(BaseSchema):
     """ReactFlow node coordinates."""
@@ -61,73 +62,58 @@ class FlowEdge(BaseSchema):
     source_handle: Optional[str] = Field(default=None, alias="sourceHandle")
     target_handle: Optional[str] = Field(default=None, alias="targetHandle")
 
-    class Config:
-        populate_by_name = True
-        orm_mode = True
-        use_enum_values = True
-        allow_population_by_field_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
-# ─── Flow Task CRUD schemas ────────────────────────────────────────────────────
+# --- Flow Task CRUD schemas ---------------------------------------------------
+
 
 class FlowTaskCreate(BaseSchema):
-    """Schema for creating a new flow task."""
+    """Payload for creating a new flow task."""
 
-    name: str = Field(
-        ...,
-        min_length=1,
-        max_length=255,
-        description="Unique flow task name",
-        examples=["daily-customer-transform"],
-    )
-    description: Optional[str] = Field(
-        default=None,
-        description="Optional description",
-    )
+    name: str = Field(..., min_length=1, max_length=255, description="Unique flow task name")
+    description: Optional[str] = Field(default=None, description="Optional description")
     trigger_type: FlowTaskTriggerType = Field(
         default=FlowTaskTriggerType.MANUAL,
-        description="Default trigger type",
+        description="Default trigger type: MANUAL or SCHEDULED",
     )
 
-    @validator("name")
-    def validate_name(cls, v: str) -> str:
-        """Validate name format."""
-        stripped = v.strip()
-        if not stripped:
-            raise ValueError("Name cannot be empty")
-        return stripped
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name must not be blank")
+        return v.strip()
 
 
 class FlowTaskUpdate(BaseSchema):
-    """Schema for updating an existing flow task."""
+    """Payload for updating flow task metadata."""
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    trigger_type: Optional[FlowTaskTriggerType] = None
+    description: Optional[str] = Field(default=None)
+    trigger_type: Optional[FlowTaskTriggerType] = Field(default=None)
 
-    @validator("name")
-    def validate_name(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None:
-            return v.strip()
-        return v
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("name must not be blank")
+        return v.strip() if v else v
 
 
 class FlowTaskResponse(TimestampSchema):
-    """Full flow task response."""
+    """Full flow task representation returned by the API."""
 
     id: int
     name: str
     description: Optional[str]
-    status: str
-    trigger_type: str
+    status: FlowTaskStatus
+    trigger_type: FlowTaskTriggerType
     last_run_at: Optional[datetime]
     last_run_status: Optional[str]
     last_run_record_count: Optional[int]
 
-    class Config:
-        orm_mode = True
-        use_enum_values = True
-        allow_population_by_field_name = True
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class FlowTaskListResponse(BaseSchema):
@@ -139,157 +125,51 @@ class FlowTaskListResponse(BaseSchema):
     page_size: int
 
 
-# ─── Graph schemas ─────────────────────────────────────────────────────────────
+# --- Graph save / load schemas ------------------------------------------------
+
 
 class FlowTaskGraphSave(BaseSchema):
-    """Payload to save the current graph state."""
+    """Payload for saving (upserting) a flow graph."""
 
-    nodes: List[FlowNode] = Field(default_factory=list)
-    edges: List[FlowEdge] = Field(default_factory=list)
+    nodes: List[FlowNode] = Field(default_factory=list, description="ReactFlow nodes")
+    edges: List[FlowEdge] = Field(default_factory=list, description="ReactFlow edges")
+
+
+class FlowTaskGraphSaveWithSummary(FlowTaskGraphSave):
+    """Graph save that also creates a version snapshot."""
+
+    change_summary: Optional[str] = Field(
+        default=None, description="Optional summary of what changed"
+    )
 
 
 class FlowTaskGraphResponse(TimestampSchema):
-    """Saved graph returned from the API."""
+    """Persisted graph returned by the API."""
 
     id: int
     flow_task_id: int
-    nodes_json: List[Dict[str, Any]]
-    edges_json: List[Dict[str, Any]]
+    nodes_json: List[Any]
+    edges_json: List[Any]
     version: int
 
-    class Config:
-        orm_mode = True
-        use_enum_values = True
-        allow_population_by_field_name = True
+    model_config = ConfigDict(from_attributes=True)
 
 
-# ─── Run History schemas ───────────────────────────────────────────────────────
+# --- Graph versioning schemas -------------------------------------------------
 
-class FlowTaskRunNodeLogResponse(TimestampSchema):
-    """Per-node execution log entry."""
-
-    id: int
-    run_history_id: int
-    flow_task_id: int
-    node_id: str
-    node_type: str
-    node_label: Optional[str]
-    row_count_in: Optional[int]
-    row_count_out: Optional[int]
-    duration_ms: Optional[int]
-    status: str
-    error_message: Optional[str]
-
-    class Config:
-        orm_mode = True
-        use_enum_values = True
-        allow_population_by_field_name = True
-
-
-class FlowTaskRunHistoryResponse(TimestampSchema):
-    """Full run history record with nested node logs."""
-
-    id: int
-    flow_task_id: int
-    trigger_type: str
-    status: str
-    celery_task_id: Optional[str]
-    started_at: datetime
-    finished_at: Optional[datetime]
-    error_message: Optional[str]
-    total_input_records: Optional[int]
-    total_output_records: Optional[int]
-    run_metadata: Optional[Dict[str, Any]]
-    node_logs: List[FlowTaskRunNodeLogResponse] = Field(default_factory=list)
-
-    class Config:
-        orm_mode = True
-        use_enum_values = True
-        allow_population_by_field_name = True
-
-
-class FlowTaskRunHistoryListResponse(BaseSchema):
-    """Paginated run history."""
-
-    items: List[FlowTaskRunHistoryResponse]
-    total: int
-    page: int
-    page_size: int
-
-
-# ─── Trigger / Preview schemas ─────────────────────────────────────────────────
-
-class FlowTaskTriggerResponse(BaseSchema):
-    """Response after triggering a run."""
-
-    run_id: int
-    celery_task_id: str
-    status: str = "RUNNING"
-    message: str = "Flow task execution started"
-
-
-class NodePreviewRequest(BaseSchema):
-    """Request to preview data at a specific node (before saving)."""
-
-    node_id: str = Field(..., description="Target node ID to preview")
-    nodes: List[FlowNode] = Field(
-        ..., description="Current graph nodes (unsaved snapshot)"
-    )
-    edges: List[FlowEdge] = Field(
-        ..., description="Current graph edges (unsaved snapshot)"
-    )
-    limit: int = Field(default=500, ge=1, le=2000, description="Row limit for preview")
-
-
-class NodePreviewTaskResponse(BaseSchema):
-    """Response after submitting a node preview task."""
-
-    task_id: str
-    status: str = "PENDING"
-    message: str = "Preview task submitted"
-
-
-class TaskStatusResponse(BaseSchema):
-    """Generic Celery task status response."""
-
-    task_id: str
-    state: str
-    status: str
-    result: Optional[Dict[str, Any]] = None
-    meta: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-
-# ─── Node schema (DuckDB-derived) ─────────────────────────────────────────────
-
-class ColumnInfo(BaseSchema):
-    """A single column descriptor returned by the node-schema endpoint."""
-
-    column_name: str
-    data_type: str
-
-
-class NodeColumnsResponse(BaseSchema):
-    """Schema response from POST /{flow_task_id}/node-schema."""
-
-    columns: List[ColumnInfo]
-
-
-# ─── D4: Graph version schemas ────────────────────────────────────────────────
 
 class FlowTaskGraphVersionResponse(BaseSchema):
-    """Response for a single graph version snapshot."""
+    """A single versioned graph snapshot."""
 
     id: int
     flow_task_id: int
     version: int
-    nodes_json: List[Dict[str, Any]]
-    edges_json: List[Dict[str, Any]]
+    nodes_json: List[Any]
+    edges_json: List[Any]
     change_summary: Optional[str]
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FlowTaskGraphVersionListResponse(BaseSchema):
@@ -301,15 +181,80 @@ class FlowTaskGraphVersionListResponse(BaseSchema):
     page_size: int
 
 
-class FlowTaskGraphSaveWithSummary(FlowTaskGraphSave):
-    """Graph save that also creates a version snapshot."""
+# --- Run history schemas ------------------------------------------------------
 
-    change_summary: Optional[str] = Field(
-        default=None, description="Optional summary of what changed"
+
+class FlowTaskRunNodeLogResponse(BaseSchema):
+    """Per-node execution stats for a single flow run."""
+
+    id: int
+    run_history_id: int
+    flow_task_id: int
+    node_id: str
+    node_type: str
+    node_label: Optional[str]
+    row_count_in: Optional[int]
+    row_count_out: Optional[int]
+    duration_ms: Optional[int]
+    status: FlowTaskNodeStatus
+    error_message: Optional[str]
+
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
+
+class FlowTaskRunHistoryResponse(BaseSchema):
+    """Full run history record including per-node logs."""
+
+    id: int
+    flow_task_id: int
+    trigger_type: FlowTaskTriggerType
+    status: FlowTaskRunStatus
+    celery_task_id: Optional[str]
+    started_at: datetime
+    finished_at: Optional[datetime]
+    error_message: Optional[str]
+    total_input_records: Optional[int]
+    total_output_records: Optional[int]
+    run_metadata: Optional[Dict[str, Any]]
+    node_logs: List[FlowTaskRunNodeLogResponse] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
+
+class FlowTaskRunHistoryListResponse(BaseSchema):
+    """Paginated run history list."""
+
+    items: List[FlowTaskRunHistoryResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+# --- Trigger / status response schemas ----------------------------------------
+
+
+class FlowTaskTriggerResponse(BaseSchema):
+    """Response returned when a flow task run is triggered."""
+
+    run_id: int
+    celery_task_id: str
+    status: str
+    message: str
+
+
+class TaskStatusResponse(BaseSchema):
+    """Celery task status for polling a run or preview task."""
+
+    state: str = Field(
+        ..., description="PENDING | STARTED | PROGRESS | SUCCESS | FAILURE | UNKNOWN"
     )
+    result: Optional[Any] = Field(default=None, description="Task result payload on SUCCESS")
+    error: Optional[str] = Field(default=None, description="Error message on FAILURE")
+    progress: Optional[Dict[str, Any]] = Field(default=None, description="Progress metadata")
 
 
-# ─── D8: Watermark schemas ────────────────────────────────────────────────────
+# --- D8: Watermark schemas ----------------------------------------------------
+
 
 class FlowTaskWatermarkResponse(BaseSchema):
     """Flow task watermark entry."""
@@ -323,8 +268,7 @@ class FlowTaskWatermarkResponse(BaseSchema):
     last_run_at: Optional[datetime]
     record_count: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FlowTaskWatermarkConfig(BaseSchema):
@@ -333,3 +277,41 @@ class FlowTaskWatermarkConfig(BaseSchema):
     node_id: str = Field(..., description="Input node ID")
     watermark_column: str = Field(..., description="Column to track")
     watermark_type: str = Field(default="TIMESTAMP", description="TIMESTAMP or INTEGER")
+
+
+# --- Node preview / schema schemas --------------------------------------------
+
+
+class NodePreviewRequest(BaseSchema):
+    """
+    Payload for node preview and node-schema endpoints.
+
+    Accepts the current (possibly unsaved) graph snapshot so preview
+    works before the graph is persisted.
+    """
+
+    node_id: str = Field(..., description="Target node ID to preview/resolve schema for")
+    nodes: List[FlowNode] = Field(..., description="Full node list from the canvas")
+    edges: List[FlowEdge] = Field(..., description="Full edge list from the canvas")
+    limit: int = Field(default=500, ge=1, le=5000, description="Max preview rows")
+
+
+class NodePreviewTaskResponse(BaseSchema):
+    """Response after submitting a preview task to Celery."""
+
+    task_id: str
+    status: str
+    message: str
+
+
+class ColumnInfo(BaseSchema):
+    """Single column name + type descriptor."""
+
+    name: str = Field(..., description="Column name")
+    type: str = Field(..., description="Column data type (DuckDB type string)")
+
+
+class NodeColumnsResponse(BaseSchema):
+    """Resolved output schema for a node."""
+
+    columns: List[ColumnInfo] = Field(default_factory=list)

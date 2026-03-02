@@ -88,7 +88,7 @@ class WorkerClient:
             },
         )
 
-        logger.info(f"WorkerClient initialized with broker: {broker_url}")
+        logger.info(f"WorkerClient initialized with broker")
 
     def _send_task_with_retry(
         self,

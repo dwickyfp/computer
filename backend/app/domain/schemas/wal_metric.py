@@ -6,7 +6,7 @@ Defines schemas for querying and retrieving WAL metrics.
 
 from datetime import datetime
 
-from pydantic import Field, validator
+from pydantic import ConfigDict, Field, ValidationInfo, field_validator
 
 from app.domain.schemas.common import BaseSchema
 
@@ -43,9 +43,9 @@ class WALMetricResponse(BaseSchema):
         examples=["2024-01-01T00:00:00Z"],
     )
 
-    class Config:
-        orm_mode = True
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "source_id": 1,
@@ -54,7 +54,8 @@ class WALMetricResponse(BaseSchema):
                 "size_gb": 1.0,
                 "recorded_at": "2024-01-01T00:00:00Z",
             }
-        }
+        },
+    )
 
 
 class WALMetricsQuery(BaseSchema):
@@ -88,17 +89,20 @@ class WALMetricsQuery(BaseSchema):
         examples=[100, 500],
     )
 
-    @validator("end_date")
-    def validate_date_range(cls, v: datetime | None, values) -> datetime | None:
+    @field_validator("end_date")
+    @classmethod
+    def validate_date_range(
+        cls, v: datetime | None, info: ValidationInfo
+    ) -> datetime | None:
         """Validate that end_date is after start_date."""
-        start_date = values.get("start_date")
+        start_date = (info.data or {}).get("start_date")
         if v is not None and start_date is not None:
             if v <= start_date:
                 raise ValueError("end_date must be after start_date")
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "source_id": 1,
                 "start_date": "2024-01-01T00:00:00Z",
@@ -106,3 +110,4 @@ class WALMetricsQuery(BaseSchema):
                 "limit": 100,
             }
         }
+    )
