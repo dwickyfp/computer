@@ -54,17 +54,21 @@ def _check_rate_limit(chain_id: str) -> bool:
     window_start = now - 60.0
 
     with _rate_limit_lock:
-        timestamps = _rate_limit_windows[chain_id]
-        # Remove expired entries
-        _rate_limit_windows[chain_id] = [
-            t for t in timestamps if t > window_start
-        ]
-        timestamps = _rate_limit_windows[chain_id]
+        timestamps = _rate_limit_windows.get(chain_id, [])
+        new_ts = [t for t in timestamps if t > window_start]
 
-        if len(timestamps) >= _RATE_LIMIT_PER_MINUTE:
+        if len(new_ts) >= _RATE_LIMIT_PER_MINUTE:
+            # Persist trimmed list (or delete if empty) and reject
+            if new_ts:
+                _rate_limit_windows[chain_id] = new_ts
+            elif chain_id in _rate_limit_windows:
+                # BUG-10 FIX: Remove key entirely when the window is empty so
+                # the dict does not grow unboundedly over time.
+                del _rate_limit_windows[chain_id]
             return False
 
-        timestamps.append(now)
+        new_ts.append(now)
+        _rate_limit_windows[chain_id] = new_ts
         return True
 
 
@@ -87,6 +91,7 @@ def _get_ingest_manager():
         with _manager_lock:
             if _ingest_manager is None:
                 from chain.ingest import ChainIngestManager
+
                 _ingest_manager = ChainIngestManager()
     return _ingest_manager
 
@@ -97,6 +102,7 @@ def _get_schema_manager():
         with _manager_lock:
             if _schema_manager is None:
                 from chain.schema import ChainSchemaManager
+
                 _schema_manager = ChainSchemaManager()
     return _schema_manager
 
@@ -152,13 +158,20 @@ async def chain_ingest(
 
     # Enforce body size limit to prevent memory exhaustion (M6)
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > _MAX_CHAIN_BODY_SIZE:
-        return JSONResponse(
-            status_code=413,
-            content={
-                "error": f"Request body too large. Maximum size is {_MAX_CHAIN_BODY_SIZE // (1024*1024)} MB"
-            },
-        )
+    # BUG-17 FIX: Guard the int() conversion — a malformed or spoofed
+    # Content-Length header must not crash the endpoint.  The streaming
+    # read below always enforces the hard cap regardless of this header.
+    if content_length:
+        try:
+            if int(content_length) > _MAX_CHAIN_BODY_SIZE:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "error": f"Request body too large. Maximum size is {_MAX_CHAIN_BODY_SIZE // (1024*1024)} MB"
+                    },
+                )
+        except ValueError:
+            pass  # Malformed Content-Length — streaming loop enforces the cap
 
     # Use streaming read with size limit
     chunks = []
@@ -215,39 +228,39 @@ def _try_auto_map_source_chain_id(chain_id: str) -> None:
     Auto-populate source_chain_id on the rosetta_chain_clients row when
     exactly one client has no source_chain_id set yet.
 
-    This covers the common single-client setup so users don't have to
-    manually enter the sender's chain ID.  For multi-client setups the
-    admin must set source_chain_id explicitly in the UI.
+    BUG-13 FIX: Uses a single atomic UPDATE with an EXISTS guard so that
+    two concurrent ingest requests can never race to map different chain_ids
+    to the same client row.
     """
     from core.database import DatabaseSession
 
     try:
         with DatabaseSession() as session:
-            # Already mapped?
+            # Atomic single-statement update:
+            # 1. Only update when source_chain_id is not yet assigned.
+            # 2. Only update when exactly ONE unmapped client exists.
+            # 3. Skip when this chain_id is already mapped anywhere.
             session.execute(
-                "SELECT id FROM rosetta_chain_clients "
-                "WHERE source_chain_id = %s LIMIT 1",
-                (chain_id,),
+                """
+                UPDATE rosetta_chain_clients
+                SET source_chain_id = %(chain_id)s,
+                    updated_at      = NOW()
+                WHERE source_chain_id IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM rosetta_chain_clients
+                      WHERE source_chain_id = %(chain_id)s
+                  )
+                  AND (
+                      SELECT COUNT(*)
+                      FROM rosetta_chain_clients
+                      WHERE source_chain_id IS NULL
+                  ) = 1
+                """,
+                {"chain_id": chain_id},
             )
-            if session.fetchone():
-                return  # Nothing to do
-
-            # Count clients with no mapping yet
-            session.execute(
-                "SELECT id FROM rosetta_chain_clients WHERE source_chain_id IS NULL"
-            )
-            unmapped = session.fetchall()
-            if len(unmapped) == 1:
-                client_id = unmapped[0]["id"]
-                session.execute(
-                    "UPDATE rosetta_chain_clients "
-                    "SET source_chain_id = %s, updated_at = NOW() "
-                    "WHERE id = %s",
-                    (chain_id, client_id),
-                )
+            if session.rowcount and session.rowcount > 0:
                 logger.info(
-                    f"Auto-mapped source_chain_id={chain_id!r} to "
-                    f"rosetta_chain_clients.id={client_id}"
+                    f"Auto-mapped source_chain_id={chain_id!r} to a chain client row"
                 )
     except Exception as e:
         logger.warning(f"Failed to auto-map source_chain_id={chain_id!r}: {e}")

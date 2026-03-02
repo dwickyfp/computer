@@ -24,7 +24,26 @@ except ImportError:
     duckdb = None
     logging.warning("DuckDB not installed. Backfill feature will not work.")
 
+import re as _re
+
 logger = logging.getLogger(__name__)
+
+
+def _validate_identifier(name: str) -> str:
+    """
+    BUG-4 FIX: Validate that a SQL identifier contains only safe characters
+    before embedding it in a DuckDB query string.
+
+    Allows: letters, digits, underscores, dots (for schema.table notation).
+    Raises ValueError for anything that could be an injection vector.
+    """
+    if not name or not _re.match(r"^[A-Za-z_][A-Za-z0-9_.]*$", name):
+        raise ValueError(
+            f"Unsafe or invalid SQL identifier: {name!r}. "
+            "Identifiers must start with a letter or underscore and contain "
+            "only letters, digits, underscores, or dots (for schema.table)."
+        )
+    return name
 
 
 class BackfillManager:
@@ -73,11 +92,15 @@ class BackfillManager:
         """Stop the backfill manager."""
         self.stop_event.set()
 
-        # Wait for active jobs to complete (with timeout)
+        # BUG-1 FIX: Collect snapshot of threads while holding the lock, then
+        # join them OUTSIDE the lock.  Previously the lock was held during
+        # thread.join(), which deadlocked because each worker thread's
+        # finally-block must also acquire active_jobs_lock to remove itself.
         with self.active_jobs_lock:
-            for job_id, thread in list(self.active_jobs.items()):
-                if thread.is_alive():
-                    thread.join(timeout=30)
+            threads = list(self.active_jobs.values())
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(timeout=30)
 
     def _recover_stale_jobs(self) -> None:
         """
@@ -179,7 +202,7 @@ class BackfillManager:
             if conn:
                 try:
                     conn.rollback()
-                except:
+                except Exception:  # BUG-16 FIX: no bare except:
                     pass
         finally:
             # Return connection to pool
@@ -193,35 +216,44 @@ class BackfillManager:
 
     def _monitor_queue(self) -> None:
         """Monitor queue for pending backfill jobs."""
+        # BUG-20 FIX: Track error sleep separately so repeated DB failures
+        # back off exponentially instead of hammering the pool at a fixed rate.
+        _error_sleep = self.check_interval
+        _MAX_ERROR_SLEEP = 300  # 5-minute ceiling
 
         while not self.stop_event.is_set():
             try:
                 pending_jobs = self._get_pending_jobs()
+                _error_sleep = self.check_interval  # reset backoff on success
 
                 for job in pending_jobs:
                     # Check if we should stop
                     if self.stop_event.is_set():
                         break
 
-                    # Skip if already processing
+                    # BUG-6 FIX: Combine "already running?" check AND thread
+                    # registration into one atomic lock acquire so two loop
+                    # iterations (or two monitor threads) can never start
+                    # duplicate threads for the same job.
                     with self.active_jobs_lock:
                         if job["id"] in self.active_jobs:
                             continue
-
-                    # Start job in background thread
-                    job_thread = threading.Thread(
-                        target=self._execute_backfill_job,
-                        args=(job,),
-                        daemon=True,
-                    )
-
-                    with self.active_jobs_lock:
+                        job_thread = threading.Thread(
+                            target=self._execute_backfill_job,
+                            args=(job,),
+                            daemon=True,
+                        )
                         self.active_jobs[job["id"]] = job_thread
 
                     job_thread.start()
 
             except Exception as e:
                 logger.error(f"Error in backfill queue monitor: {e}")
+                # BUG-20 FIX: Exponential backoff on repeated errors to avoid
+                # hammering the connection pool during a DB outage.
+                time.sleep(_error_sleep)
+                _error_sleep = min(_error_sleep * 2, _MAX_ERROR_SLEEP)
+                continue
 
             # Sleep before next check
             time.sleep(self.check_interval)
@@ -240,20 +272,42 @@ class BackfillManager:
             conn = get_db_connection()
 
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # BUG-9 FIX: Use FOR UPDATE OF qb SKIP LOCKED so that multiple
+                # compute instances (or two polling cycles) never pick the same
+                # row simultaneously.  Immediately UPDATE status to EXECUTING
+                # in the same transaction so the rows are not visible to peers
+                # once we commit.
                 cursor.execute(
                     """
-                    SELECT qb.*, s.pg_host, s.pg_port, s.pg_database, 
+                    SELECT qb.*, s.pg_host, s.pg_port, s.pg_database,
                            s.pg_username, s.pg_password
                     FROM queue_backfill_data qb
                     JOIN sources s ON qb.source_id = s.id
                     WHERE qb.status = %s
                     ORDER BY qb.created_at ASC
                     LIMIT 10
+                    FOR UPDATE OF qb SKIP LOCKED
                     """,
                     (BackfillStatus.PENDING.value,),
                 )
                 jobs = cursor.fetchall()
                 result = [dict(job) for job in jobs]
+
+                # Claim all selected rows atomically before releasing the lock
+                if result:
+                    job_ids = [j["id"] for j in result]
+                    cursor.execute(
+                        """
+                        UPDATE queue_backfill_data
+                        SET status = 'EXECUTING',
+                            resume_attempts = COALESCE(resume_attempts, 0) + 1,
+                            updated_at = NOW()
+                        WHERE id = ANY(%s)
+                        """,
+                        (job_ids,),
+                    )
+
+                conn.commit()
                 return result
 
         except psycopg2.OperationalError as e:
@@ -282,9 +336,11 @@ class BackfillManager:
         job_id = job["id"]
 
         try:
-            # Update status to EXECUTING and increment resume_attempts
+            # BUG-9 FIX: _get_pending_jobs() already set status=EXECUTING and
+            # incremented resume_attempts atomically in the DB.  Only confirm
+            # status here without re-incrementing to avoid double-counting.
             self._update_job_status(
-                job_id, BackfillStatus.EXECUTING.value, increment_resume_attempts=True
+                job_id, BackfillStatus.EXECUTING.value, increment_resume_attempts=False
             )
 
             # Check if DuckDB is available
@@ -367,12 +423,18 @@ class BackfillManager:
             conn.execute("INSTALL postgres")
             conn.execute("LOAD postgres")
 
-            # Attach PostgreSQL database
-            conn.execute(
-                f"""
-                ATTACH '{pg_conn_str}' AS source_db (TYPE POSTGRES)
-                """
-            )
+            # BUG-7 FIX: Wrap the ATTACH call and suppress the raw connection
+            # string from any exception message so plaintext credentials are
+            # never forwarded to the log.
+            try:
+                conn.execute(f"ATTACH '{pg_conn_str}' AS source_db (TYPE POSTGRES)")
+            except Exception as attach_err:
+                raise RuntimeError(
+                    f"Failed to attach source database "
+                    f"[{job.get('pg_host')}:{job.get('pg_port')}"
+                    f"/{job.get('pg_database')}]: "
+                    f"check host reachability and credentials"
+                ) from None  # suppress original which may contain the password
 
             # Detect primary key column if not already cached
             if not pk_column:
@@ -387,8 +449,12 @@ class BackfillManager:
                 if where_clause:
                     base_where = where_clause
 
+            # BUG-4 FIX: Validate table_name as a safe SQL identifier before
+            # embedding it in query strings to prevent SQL injection.
+            safe_table = _validate_identifier(table_name)
+
             # Build SELECT query for counting (without keyset filter)
-            base_query = f"SELECT * FROM source_db.{table_name}"
+            base_query = f"SELECT * FROM source_db.{safe_table}"
             if base_where:
                 base_query += f" WHERE {base_where}"
 
@@ -421,31 +487,38 @@ class BackfillManager:
                     break
 
                 if use_keyset:
-                    # Build keyset pagination query
+                    # BUG-4 FIX: Validate pk_column as a safe identifier and use
+                    # DuckDB positional parameter ($1) for the PK value instead
+                    # of naive string interpolation to prevent injection.
+                    safe_pk_col = _validate_identifier(pk_column)
                     conditions = []
+                    query_params: list = []
                     if base_where:
                         conditions.append(base_where)
                     if last_pk_value is not None:
-                        # Quote string PKs, leave numeric PKs unquoted
+                        conditions.append(f"{safe_pk_col} > $1")
+                        # Preserve original type for DuckDB binding
                         try:
-                            float(last_pk_value)
-                            pk_literal = last_pk_value
+                            query_params.append(int(last_pk_value))
                         except (ValueError, TypeError):
-                            pk_literal = f"'{last_pk_value}'"
-                        conditions.append(f"{pk_column} > {pk_literal}")
+                            try:
+                                query_params.append(float(last_pk_value))
+                            except (ValueError, TypeError):
+                                query_params.append(last_pk_value)
 
-                    where_part = ""
-                    if conditions:
-                        where_part = f" WHERE {' AND '.join(conditions)}"
+                    where_part = (
+                        f" WHERE {' AND '.join(conditions)}" if conditions else ""
+                    )
 
                     batch_query = (
-                        f"SELECT * FROM source_db.{table_name}"
+                        f"SELECT * FROM source_db.{safe_table}"
                         f"{where_part}"
-                        f" ORDER BY {pk_column} ASC"
+                        f" ORDER BY {safe_pk_col} ASC"
                         f" LIMIT {self.batch_size}"
                     )
                 else:
                     # Fallback: LIMIT/OFFSET (for tables without PK)
+                    query_params = []
                     remaining = total_rows - offset
                     if remaining <= 0:
                         break
@@ -457,7 +530,7 @@ class BackfillManager:
                 logger.debug(
                     f"Job {job_id}: Processing batch, total_processed={total_processed}"
                 )
-                result = conn.execute(batch_query).fetchall()
+                result = conn.execute(batch_query, query_params).fetchall()
 
                 if not result:
                     break
@@ -512,19 +585,22 @@ class BackfillManager:
                 schema = "public"
                 tbl = table_name
 
-            # Query PostgreSQL information_schema via DuckDB attachment
+            # Query PostgreSQL information_schema via DuckDB attachment.
+            # BUG-3 FIX: Use DuckDB positional parameters ($1/$2) instead of
+            # f-string interpolation to prevent SQL injection via table names.
             result = conn.execute(
-                f"""
+                """
                 SELECT kcu.column_name
                 FROM source_db.information_schema.table_constraints tc
                 JOIN source_db.information_schema.key_column_usage kcu
                     ON tc.constraint_name = kcu.constraint_name
                     AND tc.table_schema = kcu.table_schema
                 WHERE tc.constraint_type = 'PRIMARY KEY'
-                    AND tc.table_schema = '{schema}'
-                    AND tc.table_name = '{tbl}'
+                    AND tc.table_schema = $1
+                    AND tc.table_name = $2
                 ORDER BY kcu.ordinal_position
-                """
+                """,
+                [schema, tbl],
             ).fetchall()
 
             if len(result) == 1:
@@ -573,7 +649,7 @@ class BackfillManager:
             if conn:
                 try:
                     conn.rollback()
-                except:
+                except Exception:  # BUG-16 FIX: no bare except:
                     pass
         finally:
             if conn:
@@ -614,7 +690,7 @@ class BackfillManager:
             if conn:
                 try:
                     conn.rollback()
-                except:
+                except Exception:  # BUG-16 FIX: no bare except:
                     pass
         finally:
             if conn:
@@ -748,23 +824,28 @@ class BackfillManager:
 
     def _build_postgres_connection(self, job: dict) -> str:
         """
-        Build PostgreSQL connection string for DuckDB.
+        Build PostgreSQL connection URI for DuckDB.
+
+        BUG-14 FIX: Use RFC-3986 URI format with URL-encoded credentials instead
+        of the libpq keyword-value format.  The keyword format splits on spaces
+        and '=' so passwords containing those characters produce malformed DSNs.
 
         Args:
             job: Job configuration with database details
 
         Returns:
-            Connection string with decrypted password
+            URI connection string with URL-encoded credentials
         """
+        from urllib.parse import quote_plus
+
         # Decrypt password if encrypted
         password = decrypt_value(job["pg_password"] or "")
+        user = quote_plus(str(job["pg_username"] or ""))
+        pw = quote_plus(password)
 
         return (
-            f"dbname={job['pg_database']} "
-            f"user={job['pg_username']} "
-            f"password={password} "
-            f"host={job['pg_host']} "
-            f"port={job['pg_port']}"
+            f"postgresql://{user}:{pw}"
+            f"@{job['pg_host']}:{job['pg_port']}/{job['pg_database']}"
         )
 
     def _process_batch_to_destinations(
@@ -807,6 +888,12 @@ class BackfillManager:
 
             # Convert records to CDC format with proper serialization
             cdc_records = []
+            # BUG-12 FIX: Use current wall-clock timestamp instead of None so
+            # the DLQ version tracker can compare backfill records against
+            # live CDC records and avoid re-applying stale replays.
+            import time as _time
+
+            _batch_ts = int(_time.time() * 1000)
             for record in records:
                 # Serialize problematic types (Decimal, datetime, etc.)
                 serialized_record = self._serialize_record(record)
@@ -817,12 +904,15 @@ class BackfillManager:
                     key=self._extract_keys(serialized_record),
                     value=serialized_record,
                     schema=None,
-                    timestamp=None,
+                    timestamp=_batch_ts,
                 )
                 cdc_records.append(cdc_record)
 
             # Use cached destinations if available (Bottleneck 7 optimization)
             if destinations_cache:
+                # BUG-18 FIX: Track write failures so the job is marked FAILED
+                # rather than silently marked COMPLETED with missing data.
+                _write_failure = False
                 for pd_id, entry in destinations_cache.items():
                     try:
                         dest = entry["destination"]
@@ -855,6 +945,13 @@ class BackfillManager:
                             f"Failed to write batch to destination {pd_id}: {dest_error}",
                             exc_info=True,
                         )
+                        _write_failure = True
+
+                if _write_failure:
+                    raise RuntimeError(
+                        f"One or more destination writes failed for backfill job "
+                        f"{job.get('id', '?')} — batch will not be marked complete."
+                    )
                 return
 
             # Fallback: create destinations per batch (legacy path)
@@ -953,7 +1050,10 @@ class BackfillManager:
                         f"Failed to write batch to destination {pd.destination_id}: {dest_error}",
                         exc_info=True,
                     )
-                    # Continue with other destinations even if one fails
+                    # BUG-18 FIX: Re-raise so _execute_backfill_job marks the
+                    # job FAILED instead of silently marking it COMPLETED while
+                    # data is missing from this destination.
+                    raise
                 finally:
                     # Always close the destination to release connections/resources
                     if destination is not None:
@@ -1143,7 +1243,7 @@ class BackfillManager:
             if conn:
                 try:
                     conn.rollback()
-                except:
+                except Exception:  # BUG-16 FIX: no bare except:
                     pass
         finally:
             if conn:
@@ -1182,7 +1282,7 @@ class BackfillManager:
             if conn:
                 try:
                     conn.rollback()
-                except:
+                except Exception:  # BUG-16 FIX: no bare except:
                     pass
         finally:
             if conn:
@@ -1355,7 +1455,7 @@ class BackfillManager:
             if conn:
                 try:
                     conn.rollback()
-                except:
+                except Exception:  # BUG-16 FIX: no bare except:
                     pass
         finally:
             if conn:

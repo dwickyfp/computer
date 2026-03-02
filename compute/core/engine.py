@@ -99,7 +99,8 @@ def _ensure_jvm_started() -> None:
 
         logger.debug(
             "Pre-starting JVM with explicit org.jpype.jar on classpath "
-            "(heap max=%s)", jvm_max_heap
+            "(heap max=%s)",
+            jvm_max_heap,
         )
         jpype.startJVM(jvm_path, *jvm_args, classpath=class_paths)
         logger.debug("JVM pre-started successfully (heap max=%s)", jvm_max_heap)
@@ -501,8 +502,14 @@ class PipelineEngine:
         finally:
             self._is_running = False
 
-    def stop(self) -> None:
-        """Stop the pipeline engine."""
+    def stop(self, set_status: bool = True) -> None:
+        """Stop the pipeline engine.
+
+        Args:
+            set_status: When True (default) write PAUSED status to the DB.
+                        Pass False when the caller has already written an ERROR
+                        status so this method does not overwrite it. (BUG-8)
+        """
         self._is_running = False
 
         # C4/R5: Signal event handler to stop writing BEFORE closing destinations.
@@ -539,8 +546,8 @@ class PipelineEngine:
                 self._logger.warning(f"Error closing DLQ manager: {e}")
             self._dlq_manager = None
 
-        # Update metadata
-        if self._pipeline:
+        # Update metadata — only if caller has not already set an error status
+        if set_status and self._pipeline:
             PipelineMetadataRepository.upsert(self._pipeline_id, "PAUSED")
 
         self._logger.info(f"Pipeline {self._pipeline_id} stopped")

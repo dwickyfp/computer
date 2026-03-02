@@ -473,7 +473,7 @@ class SnowflakeDestination(BaseDestination):
             ):
                 try:
                     return json.loads(value)
-                except:
+                except Exception:  # BUG-16 FIX: no bare except:
                     pass
 
             # Handle timestamp strings with timezone (fallback for missing schema)

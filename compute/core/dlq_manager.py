@@ -68,9 +68,17 @@ class DLQMessage:
         self.cdc_record = cdc_record
         self.table_sync_config = table_sync_config
         self.retry_count = retry_count
-        self.first_failed_at = (
-            first_failed_at or datetime.now(timezone(timedelta(hours=7))).isoformat()
-        )
+        # BUG-11 FIX: Use now_in_target_tz() instead of a hardcoded UTC+7
+        # offset so the timestamp respects the ROSETTA_TIMEZONE env var.
+        # A wrong timezone does not affect at-least-once delivery correctness
+        # but it breaks version-aware DLQ ordering when comparing timestamps
+        # across records in different regions.
+        if first_failed_at:
+            self.first_failed_at = first_failed_at
+        else:
+            from core.timezone import now_in_target_tz
+
+            self.first_failed_at = now_in_target_tz().isoformat()
 
     def to_dict(self) -> dict[str, str]:
         """Serialize message to dict for Redis Stream XADD."""

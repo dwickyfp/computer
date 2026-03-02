@@ -137,7 +137,19 @@ class ChainPipelineEngine:
             # Self-stream mode: no specific client, read ALL ingested chain streams.
             # This lets the local compute consume data it ingested itself via Arrow IPC
             # without needing an explicit chain_client_id.
+            # BUG-19 NOTE: This broad pattern matches ALL streams under the prefix,
+            # including streams from other senders.  If multiple chain clients are
+            # configured, set chain_client_id on the pipeline to restrict consumption
+            # to a specific sender and avoid processing unintended streams.
             pattern = f"{prefix}:*"
+            self._logger.warning(
+                "Chain pipeline %s is using a broad stream pattern (%s) because "
+                "no chain_client_id is set.  ALL streams under this prefix will be "
+                "consumed.  Set chain_client_id on the pipeline to restrict to a "
+                "specific chain sender.",
+                self._pipeline_id,
+                pattern,
+            )
 
         keys = []
         cursor = 0
@@ -356,6 +368,7 @@ class ChainPipelineEngine:
         # This provides accurate types instead of Python-inferred ones
         try:
             from chain.schema import ChainSchemaManager
+
             schema_mgr = ChainSchemaManager()
             chain_client_id = getattr(self._pipeline, "chain_client_id", None)
             pushed_schema = schema_mgr.get_table_schema(table_name, chain_client_id)
@@ -545,9 +558,15 @@ class ChainPipelineEngine:
                     )
 
                     # Track in data flow monitoring
-                    written_count = written if isinstance(written, int) else len(table_records)
+                    written_count = (
+                        written if isinstance(written, int) else len(table_records)
+                    )
                     pd_obj = next(
-                        (pd for pd in self._pipeline.destinations if pd.destination_id == dest_id),
+                        (
+                            pd
+                            for pd in self._pipeline.destinations
+                            if pd.destination_id == dest_id
+                        ),
                         None,
                     )
                     if pd_obj and written_count > 0:
@@ -818,8 +837,14 @@ class ChainPipelineEngine:
         finally:
             self._is_running = False
 
-    def stop(self) -> None:
-        """Stop the chain pipeline engine."""
+    def stop(self, set_status: bool = True) -> None:
+        """Stop the chain pipeline engine.
+
+        Args:
+            set_status: When True (default) write PAUSED status to the DB.
+                        Pass False when the caller has already written an ERROR
+                        status so this method does not overwrite it. (BUG-8)
+        """
         self._is_running = False
 
         # Stop DLQ recovery worker
@@ -854,8 +879,8 @@ class ChainPipelineEngine:
                 pass
             self._redis = None
 
-        # Update metadata
-        if self._pipeline:
+        # Update metadata — only if caller has not already set an error status
+        if set_status and self._pipeline:
             PipelineMetadataRepository.upsert(self._pipeline_id, "PAUSED")
 
         self._logger.info(f"Chain pipeline {self._pipeline_id} stopped")

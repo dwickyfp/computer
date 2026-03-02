@@ -31,7 +31,9 @@ class PipelineProcess:
     pipeline_name: str
     process: Optional[Process] = None
     stop_event: EventClass = field(default_factory=Event)
-    last_updated_at: datetime = field(default_factory=datetime.now)
+    # BUG-5 FIX: Use timezone-aware timestamp to avoid TypeError when comparing
+    # with pipeline.updated_at which is timezone-aware (from PostgreSQL TIMESTAMPTZ).
+    last_updated_at: datetime = field(default_factory=now_in_target_tz)
 
     @property
     def is_alive(self) -> bool:
@@ -79,6 +81,7 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
     init_connection_pool(min_conn=2, max_conn=pipeline_pool_max_conn)
 
     engine = None
+    _engine_errored = False
     try:
         # Determine engine type based on pipeline source_type
         # Chain (ROSETTA) pipelines use ChainPipelineEngine which reads from Redis Streams
@@ -106,17 +109,39 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
             engine = PipelineEngine(pipeline_id)
 
         engine.initialize()
-        engine.run()
+
+        # BUG-2 FIX: Run the engine in a daemon thread so we can poll stop_event
+        # for graceful shutdown instead of relying on a hard process.terminate().
+        import threading as _threading
+
+        engine_thread = _threading.Thread(target=engine.run, daemon=True)
+        engine_thread.start()
+        while not stop_event.is_set():
+            engine_thread.join(timeout=1.0)
+            if not engine_thread.is_alive():
+                break
+        if engine_thread.is_alive():
+            subprocess_logger.info(
+                f"Stop signal received for pipeline {pipeline_id}, stopping engine..."
+            )
+            engine.stop(set_status=False)  # BUG-8: don't overwrite ERROR status here
+            engine_thread.join(timeout=30)
 
     except Exception as e:
-        logger.error(f"Pipeline {pipeline_id} crashed: {e}")
+        # BUG-15 FIX: Use subprocess_logger (child-process logger), not parent-scope logger
+        _engine_errored = True
+        subprocess_logger.error(f"Pipeline {pipeline_id} crashed: {e}")
         PipelineMetadataRepository.upsert(pipeline_id, "ERROR", str(e))
     finally:
         if engine:
             try:
-                engine.stop()
-            except:
-                pass
+                # BUG-8 FIX: Pass set_status=False when the pipeline errored so
+                # engine.stop() does not overwrite the ERROR status with PAUSED.
+                engine.stop(set_status=not _engine_errored)
+            except Exception as _stop_err:  # BUG-16 FIX: no bare except:
+                subprocess_logger.warning(
+                    f"Error during engine stop for pipeline {pipeline_id}: {_stop_err}"
+                )
         close_connection_pool()
 
 
@@ -329,11 +354,21 @@ class PipelineManager:
                     PipelineRepository.update_status(pipeline_id, "START")
                     continue
 
-                # Check timestamps for config changes
-                # Ensure we handle timezone interactions carefully or assume naive/aware consistency
-                # Best to compare equality directly if both are same type
+                # Check timestamps for config changes.
+                # BUG-5 FIX: Both sides must be timezone-aware before comparing;
+                # pipeline.updated_at comes from PostgreSQL TIMESTAMPTZ (aware),
+                # while proc.last_updated_at may be naive if set before this fix.
                 if pipeline.updated_at and proc.last_updated_at:
-                    if pipeline.updated_at > proc.last_updated_at:
+                    from core.timezone import get_target_timezone
+
+                    _tz = get_target_timezone()
+                    db_ts = pipeline.updated_at
+                    proc_ts = proc.last_updated_at
+                    if db_ts.tzinfo is None:
+                        db_ts = db_ts.replace(tzinfo=_tz)
+                    if proc_ts.tzinfo is None:
+                        proc_ts = proc_ts.replace(tzinfo=_tz)
+                    if db_ts > proc_ts:
                         self.restart_pipeline(pipeline_id, pipeline.updated_at)
 
             # Check for pipelines to START
