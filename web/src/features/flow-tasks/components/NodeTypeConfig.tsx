@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { destinationsRepo } from '@/repo/destinations'
+import { sourcesRepo } from '@/repo/sources'
 import { type FlowNodeData } from '@/repo/flow-tasks'
 import { useFlowTaskStore } from '../store/flow-task-store'
 import { useNodeSchema } from '../hooks/useNodeSchema'
@@ -260,11 +261,7 @@ function MultiColumnSelect({
 function InputConfig({ data, update }: ConfigFormProps) {
     const { data: sourcesData, isLoading: sourcesLoading } = useQuery({
         queryKey: ['sources'],
-        queryFn: async () => {
-            const res = await fetch('/api/v1/sources')
-            if (!res.ok) throw new Error('Failed to fetch sources')
-            return res.json()
-        },
+        queryFn: () => sourcesRepo.getAll(),
         staleTime: 30_000,
     })
 
@@ -272,18 +269,13 @@ function InputConfig({ data, update }: ConfigFormProps) {
 
     const { data: tablesData, isLoading: tablesLoading } = useQuery({
         queryKey: ['source-tables', sourceId],
-        queryFn: async () => {
-            if (!sourceId) return { tables: [] }
-            const res = await fetch(`/api/v1/sources/${sourceId}/tables`)
-            if (!res.ok) throw new Error('Failed to fetch tables')
-            return res.json()
-        },
+        queryFn: () => sourcesRepo.getAvailableTables(sourceId!),
         enabled: !!sourceId,
         staleTime: 30_000,
     })
 
     const sources = sourcesData?.sources ?? []
-    const tables: string[] = tablesData?.tables ?? []
+    const tables: string[] = tablesData ?? []
 
     return (
         <div className="grid grid-cols-2 gap-6">
