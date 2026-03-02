@@ -151,6 +151,11 @@ def execute_preview(
         sanitized_dest_name = re.sub(r"[^a-zA-Z0-9_]", "_", dest_config["name"].lower())
         dest_prefix = f"pg_{sanitized_dest_name}"
 
+        # H-1 fix: sanitize table_name before embedding in DuckDB SQL.
+        # The cache key uses the original value for correctness — only the
+        # SQL-embedded form is sanitized to prevent injection.
+        sanitized_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
+
         # Parse filter_sql into WHERE clause
         where_clause = ""
         if filter_sql:
@@ -162,10 +167,10 @@ def execute_preview(
 
         if sql:
             # Custom SQL mode: CTE + rewrite
-            filtered_source_cte = f"SELECT * FROM {source_prefix}.{table_name}{where_clause} LIMIT {row_limit}"
+            filtered_source_cte = f"SELECT * FROM {source_prefix}.{sanitized_table_name}{where_clause} LIMIT {row_limit}"
             rewritten_sql = sql
             table_pattern = re.compile(
-                rf'(?<![\.\w"]){re.escape(table_name)}(?![\.\w"])',
+                rf'(?<![\w.]){re.escape(sanitized_table_name)}(?![\w.])',
                 re.IGNORECASE,
             )
             rewritten_sql = table_pattern.sub("filtered_source", rewritten_sql)
@@ -177,7 +182,7 @@ def execute_preview(
             )
         else:
             # Direct table query
-            base_query = f"SELECT * FROM {source_prefix}.{table_name}"
+            base_query = f"SELECT * FROM {source_prefix}.{sanitized_table_name}"
             final_query = f"{base_query}{where_clause} LIMIT {row_limit}"
 
         logger.info("Executing preview query", query=final_query)
@@ -200,7 +205,10 @@ def execute_preview(
                     f"ATTACH '{source_config['conn_str']}' AS {source_prefix} (TYPE postgres, READ_ONLY);"
                 )
             except Exception as e:
-                raise WorkerConnectionError(f"Could not connect to source database: {e}")
+                from app.tasks.flow_task.connection_factory import sanitize_connection_error
+                raise WorkerConnectionError(
+                    f"Could not connect to source database: {sanitize_connection_error(str(e))}"
+                )
 
             # Attach destination (non-critical)
             try:
@@ -208,7 +216,8 @@ def execute_preview(
                     f"ATTACH '{dest_config['conn_str']}' AS {dest_prefix} (TYPE postgres, READ_ONLY);"
                 )
             except Exception as e:
-                logger.warning("Failed to attach destination DB", error=str(e))
+                from app.tasks.flow_task.connection_factory import sanitize_connection_error
+                logger.warning("Failed to attach destination DB", error=sanitize_connection_error(str(e)))
 
             # Execute query
             result = con.execute(final_query).fetch_arrow_table()
@@ -261,12 +270,13 @@ def _fetch_connection_configs(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Fetch source and destination connection details from config DB.
-    Results are cached for 60s to avoid repeated DB queries within the same
-    worker process (connection details rarely change mid-run).
+    Results are cached for 60 s (DB round-trip avoidance).
 
-    Returns:
-        Tuple of (source_config, dest_config) dicts with keys:
-        name, conn_str
+    M-2 fix: The cache stores RAW config dicts with the password field still
+    encrypted.  The plaintext password is decrypted just-in-time inside
+    _build_conn_configs() and is NEVER persisted in the process-level cache,
+    limiting credential exposure to the duration of a single task call rather
+    than the full 60-s cache lifetime.
     """
     cache_key = (source_id, destination_id)
     now = _time_mod.monotonic()
@@ -274,10 +284,11 @@ def _fetch_connection_configs(
     with _conn_cache_lock:
         entry = _conn_cache.get(cache_key)
         if entry and (now - entry[0]) < _CONN_CACHE_TTL:
-            return entry[1]
+            # Cache hit: rebuild conn_str with a fresh decrypt (not from cache)
+            return _build_conn_configs(entry[1][0], entry[1][1])
 
-    # Cache miss — fetch from DB
-    result = _fetch_connection_configs_from_db(source_id, destination_id)
+    # Cache miss — fetch raw (encrypted) configs from DB
+    source_raw, dest_raw = _fetch_raw_configs_from_db(source_id, destination_id)
 
     with _conn_cache_lock:
         # Evict oldest entries if cache is full
@@ -285,14 +296,48 @@ def _fetch_connection_configs(
             sorted_keys = sorted(_conn_cache, key=lambda k: _conn_cache[k][0])
             for k in sorted_keys[: len(sorted_keys) // 2]:
                 del _conn_cache[k]
-        _conn_cache[cache_key] = (now, result)
-    return result
+        _conn_cache[cache_key] = (now, (source_raw, dest_raw))
+
+    return _build_conn_configs(source_raw, dest_raw)
 
 
-def _fetch_connection_configs_from_db(
+def _build_conn_configs(
+    source_raw: dict[str, Any], dest_raw: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Decrypt credentials and build the final conn_str dicts.
+    Called on every cache hit and miss; the result is NEVER cached
+    so decrypted passwords only live in local stack variables.
+    """
+    src_pass = decrypt_value(source_raw["encrypted_password"]) if source_raw.get("encrypted_password") else ""
+    source_config = {
+        "name": source_raw["name"],
+        "conn_str": (
+            f"postgresql://{source_raw['user']}:{src_pass}"
+            f"@{source_raw['host']}:{source_raw['port']}/{source_raw['database']}"
+        ),
+    }
+
+    dest_cfg = dest_raw["dest_cfg"]
+    dest_pass = (
+        decrypt_value(dest_cfg.get("password", ""))
+        if dest_cfg.get("password")
+        else ""
+    )
+    dest_config = {
+        "name": dest_raw["name"],
+        "conn_str": (
+            f"postgresql://{dest_cfg.get('user', '')}:{dest_pass}"
+            f"@{dest_cfg.get('host', 'localhost')}:{dest_cfg.get('port', 5432)}/{dest_cfg.get('database', 'postgres')}"
+        ),
+    }
+    return source_config, dest_config
+
+
+def _fetch_raw_configs_from_db(
     source_id: int, destination_id: int
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Raw DB fetch for connection configs."""
+    """Raw DB fetch. Returns dicts with the password field STILL ENCRYPTED for safe caching."""
     from sqlalchemy import text
 
     with get_db_session() as session:
@@ -308,13 +353,13 @@ def _fetch_connection_configs_from_db(
         if not row:
             raise WorkerConnectionError(f"Source {source_id} not found")
 
-        src_pass = decrypt_value(row.pg_password) if row.pg_password else ""
-        source_config = {
+        source_raw = {
             "name": row.name,
-            "conn_str": (
-                f"postgresql://{row.pg_username}:{src_pass}"
-                f"@{row.pg_host}:{row.pg_port}/{row.pg_database}"
-            ),
+            "host": row.pg_host,
+            "port": row.pg_port,
+            "database": row.pg_database,
+            "user": row.pg_username,
+            "encrypted_password": row.pg_password or "",  # kept encrypted
         }
 
         # Fetch destination
@@ -330,20 +375,14 @@ def _fetch_connection_configs_from_db(
         if isinstance(dest_cfg, str):
             dest_cfg = json.loads(dest_cfg)
 
-        dest_pass = (
-            decrypt_value(dest_cfg.get("password", ""))
-            if dest_cfg.get("password")
-            else ""
-        )
-        dest_config = {
+        # Store dest_cfg as-is (password field remains encrypted).
+        # _build_conn_configs will decrypt it at access time.
+        dest_raw = {
             "name": dest_row.name,
-            "conn_str": (
-                f"postgresql://{dest_cfg.get('user', '')}:{dest_pass}"
-                f"@{dest_cfg.get('host', 'localhost')}:{dest_cfg.get('port', 5432)}/{dest_cfg.get('database', 'postgres')}"
-            ),
+            "dest_cfg": dest_cfg,
         }
 
-    return source_config, dest_config
+    return source_raw, dest_raw
 
 
 def _filter_sql_to_where_clause(filter_sql: str) -> str:
@@ -377,7 +416,13 @@ def _filter_sql_to_where_clause(filter_sql: str) -> str:
         if op == "BETWEEN" and value2:
             return f"{column} BETWEEN '{value}' AND '{value2}'"
         if op in ("LIKE", "ILIKE"):
-            return f"{column} {op} '%{value}%'"
+            # L-1 fix: pass the value through as-is so the caller controls
+            # wildcard placement (prefix%, %suffix, %contains%).
+            # Apply auto-wrapping only when the value has no wildcards yet,
+            # preserving backward-compat for simple keyword filters.
+            if "%" not in value and "_" not in value:
+                return f"{column} {op} '%{value}%'"
+            return f"{column} {op} '{value}'"
         if op == "IN":
             vals = [v.strip() for v in value.split(",") if v.strip()]
             if not vals:

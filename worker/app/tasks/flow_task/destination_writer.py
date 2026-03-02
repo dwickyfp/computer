@@ -246,14 +246,17 @@ class PostgresDestinationWriter(BaseDestinationWriter):
         destination_id: Optional[int] = None,
     ) -> int:
         fqt = f"{output_alias}.{schema_name}.{target_table}"
-        # Count rows once upfront — reuse for the return value
-        row_count = self.get_row_count(conn, cte_prefix, source_cte)
 
+        # M-5 fix: validate target_table BEFORE any DuckDB execution so a
+        # mis-configured output node fails fast without an expensive COUNT(*) query.
         if not target_table:
             raise ValueError(
                 "Output node has no target table name configured. "
                 "Please set the 'Target Table' field and save the graph before running."
             )
+
+        # Count rows once upfront — reuse for the return value
+        row_count = self.get_row_count(conn, cte_prefix, source_cte)
 
         if row_count == 0:
             logger.info("Source CTE is empty — skipping write", target_table=target_table)
@@ -455,9 +458,12 @@ class PostgresDestinationWriter(BaseDestinationWriter):
                 f'CREATE TABLE "{schema_name}"."{stage_table}" '
                 f'(LIKE "{schema_name}"."{target_table}")'
             )
+            # H-2 fix: wrap DDL in dollar-quotes so a schema_name or table_name
+            # that contains a single quote cannot break the outer string.  The DML
+            # calls below already use $rosetta_stg$ quoting for the same reason.
             conn.execute(
                 f"CALL postgres_execute('{output_alias}', "
-                f"'{create_sql}')"
+                f"$stg${create_sql}$stg$)"
             )
 
             logger.debug(
@@ -662,13 +668,21 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
                 )
             else:
                 # APPEND or REPLACE (after truncate)
-                _success, _num_chunks, num_rows, _ = write_pandas(
+                success, _num_chunks, num_rows, _ = write_pandas(
                     sf_conn,
                     df,
                     target_table,
                     schema=schema_name,
                     auto_create_table=False,
                 )
+                # L-5 fix: write_pandas returns False when the table doesn't exist
+                # with auto_create_table=False.  Treat that as an error rather than
+                # silently reporting 0 rows written with no indication of failure.
+                if not success:
+                    raise RuntimeError(
+                        f"write_pandas returned failure for table '{target_table}'. "
+                        f"Ensure the table exists in schema '{schema_name}'."
+                    )
                 rows_written = num_rows
 
             logger.info(

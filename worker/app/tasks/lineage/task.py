@@ -19,77 +19,21 @@ logger = structlog.get_logger(__name__)
 
 
 def _notify_lineage_error(table_sync_id: int, source_table: str, error_msg: str) -> None:
-    """Upsert an ERROR notification into notification_log for a lineage failure.
-
-    Mirrors the pattern used in flow_task/executor.py's _notify_flow_task_error.
-    Swallows all exceptions so a notification failure never breaks the caller.
     """
-    try:
-        from zoneinfo import ZoneInfo
-        from sqlalchemy import text
+    Upsert an ERROR notification for a lineage generation failure.
 
-        key = f"lineage_error_sync_{table_sync_id}"
-        title = f"Lineage Generation Failed — {source_table}"
-        message = (
-            f"Table sync ID {table_sync_id} (table: {source_table}) lineage generation failed "
-            f"in the worker. Error: {error_msg}"
-        )[:2000]
-        now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    L-2 fix: delegates to the shared notify_error() helper in
+    app.core.notifications to eliminate the duplicated SQL block.
+    """
+    from app.core.notifications import notify_error
 
-        with get_db_session() as db:
-            limit_row = db.execute(
-                text(
-                    "SELECT config_value FROM rosetta_setting_configuration "
-                    "WHERE config_key = 'NOTIFICATION_ITERATION_DEFAULT' LIMIT 1"
-                )
-            ).fetchone()
-            max_iter = int(limit_row.config_value) if limit_row else 3
-
-            existing = db.execute(
-                text(
-                    "SELECT id, iteration_check FROM notification_log "
-                    "WHERE key_notification = :key "
-                    "ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"key": key},
-            ).fetchone()
-
-            if existing and existing.iteration_check < max_iter:
-                db.execute(
-                    text("""
-                        UPDATE notification_log
-                        SET iteration_check = iteration_check + 1,
-                            title           = :title,
-                            message         = :message,
-                            type            = 'ERROR',
-                            is_read         = FALSE,
-                            is_deleted      = FALSE,
-                            is_sent         = FALSE,
-                            updated_at      = :now
-                        WHERE id = :id
-                    """),
-                    {"title": title, "message": message, "now": now, "id": existing.id},
-                )
-            else:
-                db.execute(
-                    text("""
-                        INSERT INTO notification_log
-                            (key_notification, title, message, type,
-                             is_read, is_deleted, iteration_check,
-                             is_sent, is_force_sent, created_at, updated_at)
-                        VALUES
-                            (:key, :title, :message, 'ERROR',
-                             FALSE, FALSE, 1,
-                             FALSE, FALSE, :now, :now)
-                    """),
-                    {"key": key, "title": title, "message": message, "now": now},
-                )
-    except Exception as exc:
-        logger.warning(
-            "Failed to write lineage error notification",
-            table_sync_id=table_sync_id,
-            error=str(exc),
-        )
+    key = f"lineage_error_sync_{table_sync_id}"
+    title = f"Lineage Generation Failed \u2014 {source_table}"
+    message = (
+        f"Table sync ID {table_sync_id} (table: {source_table}) lineage generation failed "
+        f"in the worker. Error: {error_msg}"
+    )
+    notify_error(key=key, title=title, message=message)
 
 
 @celery_app.task(

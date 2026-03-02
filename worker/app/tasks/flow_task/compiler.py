@@ -30,7 +30,9 @@ VALID_NODE_TYPES = {
 
 SUPPORTED_JOIN_TYPES = {"INNER", "LEFT", "RIGHT", "FULL"}
 SUPPORTED_AGG_FUNCS = {"SUM", "COUNT", "AVG", "MIN", "MAX", "COUNT_DISTINCT"}
-SUPPORTED_WRITE_MODES = {"APPEND", "UPSERT"}
+# M-6 fix: REPLACE (truncate + re-insert) is fully implemented in destination_writer.py
+# and must be listed here so the constant stays in sync with valid runtime values.
+SUPPORTED_WRITE_MODES = {"APPEND", "UPSERT", "REPLACE"}
 
 
 # ─── Graph utilities ───────────────────────────────────────────────────────────
@@ -89,7 +91,10 @@ def _safe_identifier(s: str) -> str:
 def _cte_name(node_id: str, node_type: str) -> str:
     """Generate a deterministic CTE name from node id + type."""
     safe = _safe_identifier(node_id)
-    return f"cte_{node_type}_{safe}"[-63:]   # PostgreSQL 63-char limit
+    # H-4 fix: truncate from the RIGHT (keep prefix) so the discriminating
+    # "cte_<type>_" prefix is always preserved.  Using [-63:] would strip the
+    # prefix and risk duplicate names for nodes whose IDs share a long suffix.
+    return f"cte_{node_type}_{safe}"[:63]   # PostgreSQL 63-char limit
 
 
 # ─── Per-node SQL builders ─────────────────────────────────────────────────────

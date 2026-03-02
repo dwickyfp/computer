@@ -48,7 +48,12 @@ celery_app.conf.update(
     # Note: worker_max_tasks_per_child has no effect with --pool=threads
     # Task behavior
     task_acks_late=True,  # Ack after task completes (crash safety)
-    task_reject_on_worker_lost=True,  # Re-queue on worker crash (overridden per-task for flow/linked)
+    # M-7: Re-queue on worker crash for stateless tasks (preview, lineage,
+    # destination_table_list).  Flow task and linked task intentionally override
+    # this to False because they have already committed state to the DB and
+    # re-queueing would cause duplicate writes.  Any new task that persists
+    # partial state must explicitly set reject_on_worker_lost=False.
+    task_reject_on_worker_lost=True,
     task_track_started=True,  # Track STARTED state
     # Broker settings - HIGH PERFORMANCE
     broker_pool_limit=10,  # Connection pool to Redis (1 per worker thread + headroom)
@@ -94,7 +99,22 @@ def _preinstall_duckdb_extensions(**kwargs):
         con = duckdb.connect(":memory:")
         # Limit memory during extension install to avoid transient spike
         con.execute("SET memory_limit='256MB';")
-        for ext in ("postgres", "httpfs", "spatial"):
+        # L-4 fix: core extensions (postgres, httpfs) are required for all tasks.
+        # Treat their installation failure as fatal so the worker fails at startup
+        # rather than silently producing cryptic errors on every task execution.
+        _CORE_EXTENSIONS = ("postgres", "httpfs")
+        _OPTIONAL_EXTENSIONS = ("spatial",)
+        for ext in _CORE_EXTENSIONS:
+            try:
+                con.execute(f"INSTALL {ext};")
+                _logger.info("duckdb_extension_installed", ext=ext)
+            except Exception as e:
+                con.close()
+                raise RuntimeError(
+                    f"Failed to install required DuckDB extension '{ext}': {e}. "
+                    f"The worker cannot start without this extension."
+                ) from e
+        for ext in _OPTIONAL_EXTENSIONS:
             try:
                 con.execute(f"INSTALL {ext};")
                 _logger.info("duckdb_extension_installed", ext=ext)

@@ -97,6 +97,38 @@ class ChainPipelineEngine:
                 {"destination_type": destination_type},
             )
 
+    def _resolve_chain_client_id(self) -> Optional[int]:
+        """
+        Auto-resolve the chain client ID when the pipeline has no explicit
+        ``chain_client_id`` set.
+
+        Returns the single registered client's ``id`` when exactly one row
+        exists in ``rosetta_chain_clients``.  Returns ``None`` when there are
+        zero or more than one client (ambiguous — caller should fall back to the
+        broad stream pattern).
+        """
+        try:
+            from core.database import DatabaseSession
+
+            with DatabaseSession(autocommit=True) as session:
+                session.execute(
+                    "SELECT id FROM rosetta_chain_clients ORDER BY id LIMIT 2"
+                )
+                rows = session.fetchall()
+
+            if len(rows) == 1:
+                return rows[0]["id"]
+            # 0 clients: no data has arrived yet — broad scan is harmless.
+            # 2+ clients: ambiguous — operator must set chain_client_id.
+            return None
+        except Exception as exc:
+            self._logger.debug(
+                "Could not auto-resolve chain_client_id for pipeline %s: %s",
+                self._pipeline_id,
+                exc,
+            )
+            return None
+
     def _get_stream_keys(self) -> list[str]:
         """
         Get all Redis Stream keys for this pipeline's chain client or catalog table.
@@ -130,26 +162,37 @@ class ChainPipelineEngine:
         chain_client_id = self._pipeline.chain_client_id
 
         if chain_client_id:
-            # Specific client: only read streams for that chain client
+            # Specific client explicitly set — use a scoped pattern.
             # Key format: {prefix}:{chain_client_id}:{table_name}
             pattern = f"{prefix}:{chain_client_id}:*"
         else:
-            # Self-stream mode: no specific client, read ALL ingested chain streams.
-            # This lets the local compute consume data it ingested itself via Arrow IPC
-            # without needing an explicit chain_client_id.
-            # BUG-19 NOTE: This broad pattern matches ALL streams under the prefix,
-            # including streams from other senders.  If multiple chain clients are
-            # configured, set chain_client_id on the pipeline to restrict consumption
-            # to a specific sender and avoid processing unintended streams.
-            pattern = f"{prefix}:*"
-            self._logger.warning(
-                "Chain pipeline %s is using a broad stream pattern (%s) because "
-                "no chain_client_id is set.  ALL streams under this prefix will be "
-                "consumed.  Set chain_client_id on the pipeline to restrict to a "
-                "specific chain sender.",
-                self._pipeline_id,
-                pattern,
-            )
+            # No explicit chain_client_id set on the pipeline.
+            # Try to auto-resolve from rosetta_chain_clients so we can use a
+            # scoped pattern instead of a dangerously broad one.
+            resolved_id = self._resolve_chain_client_id()
+            if resolved_id is not None:
+                # Exactly one chain client registered — use its ID as the scope.
+                pattern = f"{prefix}:{resolved_id}:*"
+                self._logger.debug(
+                    "Chain pipeline %s auto-resolved chain_client_id=%s for "
+                    "stream pattern (%s).",
+                    self._pipeline_id,
+                    resolved_id,
+                    pattern,
+                )
+            else:
+                # Multiple clients or genuinely indeterminate — fall back to broad
+                # scan and warn so the operator knows to set chain_client_id.
+                pattern = f"{prefix}:*"
+                self._logger.warning(
+                    "Chain pipeline %s is using a broad stream pattern (%s) because "
+                    "no chain_client_id is set and multiple (or zero) chain clients "
+                    "exist.  ALL streams under this prefix will be consumed.  "
+                    "Set chain_client_id on the pipeline to restrict consumption to a "
+                    "specific chain sender.",
+                    self._pipeline_id,
+                    pattern,
+                )
 
         keys = []
         cursor = 0
