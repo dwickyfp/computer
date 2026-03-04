@@ -1,0 +1,282 @@
+# =============================================================================
+# Rosetta ETL Platform — GitLab CI/CD Pipeline
+# =============================================================================
+#
+# Pipeline stages:
+#   test    → backend unit tests + frontend lint/type-check (parallel)
+#   build   → docker build --target rosetta + push to GitLab Container Registry
+#   deploy  → SSH-based docker-compose deploy (staging auto / production manual)
+#
+# Branch strategy:
+#   - All branches / MRs  : test stage only
+#   - main branch         : test → build → deploy:staging
+#   - Git tag (v*)        : test → build → deploy:production (manual gate)
+#
+# Required CI/CD variables (Settings → CI/CD → Variables):
+#   CREDENTIAL_ENCRYPTION_KEY      AES-256-GCM shared secret (Backend + Worker)
+#   SECRET_KEY                     FastAPI secret key
+#   VITE_CLERK_PUBLISHABLE_KEY     Clerk auth publishable key (build-time)
+#   VITE_API_URL                   Frontend API base URL (build-time)
+#   STAGING_SERVER_HOST            SSH host for staging server
+#   STAGING_SERVER_USER            SSH user for staging server (needs docker access)
+#   STAGING_SSH_PRIVATE_KEY        SSH private key for staging (file variable)
+#   STAGING_DEPLOY_DIR             Absolute path of deploy dir on staging server
+#   PRODUCTION_SERVER_HOST         SSH host for production server
+#   PRODUCTION_SERVER_USER         SSH user for production server
+#   PRODUCTION_SSH_PRIVATE_KEY     SSH private key for production (file variable)
+#   PRODUCTION_DEPLOY_DIR          Absolute path of deploy dir on production server
+#
+# Auto-provided by GitLab (no setup needed):
+#   CI_REGISTRY, CI_REGISTRY_USER, CI_REGISTRY_PASSWORD, CI_REGISTRY_IMAGE
+#   CI_COMMIT_SHORT_SHA, CI_COMMIT_TAG, CI_COMMIT_BRANCH, CI_DEFAULT_BRANCH
+# =============================================================================
+
+stages:
+  - test
+  - build
+  - deploy
+
+# -----------------------------------------------------------------------------
+# Global defaults
+# -----------------------------------------------------------------------------
+default:
+  interruptible: true
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_BUILDKIT: "1"
+  DOCKER_TLS_CERTDIR: "/certs"
+  # uv / pip cache dirs (used by test jobs)
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+  # pnpm store cache dir (used by frontend test job)
+  PNPM_STORE_DIR: "$CI_PROJECT_DIR/.cache/pnpm"
+  # Convenience aliases
+  IMAGE_BASE: "$CI_REGISTRY_IMAGE"
+  IMAGE_SHA: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  IMAGE_LATEST: "$CI_REGISTRY_IMAGE:latest"
+
+# =============================================================================
+# STAGE: test
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Backend — pytest with coverage
+# ---------------------------------------------------------------------------
+test:backend:
+  stage: test
+  image: python:3.12-slim
+  cache:
+    key:
+      files:
+        - backend/pyproject.toml
+    paths:
+      - .cache/uv
+  before_script:
+    - pip install uv --quiet
+    - cd backend
+    - uv sync --group dev --quiet
+  script:
+    - uv run pytest tests/
+      --cov=app
+      --cov-report=xml:coverage.xml
+      --cov-report=term-missing
+      -v
+  coverage: '/(?i)TOTAL.*\s+(\d+%)$/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: backend/coverage.xml
+    paths:
+      - backend/coverage.xml
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Frontend — ESLint + TypeScript type-check
+# ---------------------------------------------------------------------------
+test:frontend:
+  stage: test
+  image: node:22-alpine
+  cache:
+    key:
+      files:
+        - web/pnpm-lock.yaml
+    paths:
+      - .cache/pnpm
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@latest --activate
+    - cd web
+    - pnpm config set store-dir $PNPM_STORE_DIR
+    - pnpm install --frozen-lockfile
+  script:
+    - pnpm lint
+    - pnpm exec tsc --noEmit
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+# =============================================================================
+# STAGE: build
+# Build the unified rosetta image and push to GitLab Container Registry.
+# Combines build + push in a single job to share the Docker daemon context.
+# Uses --cache-from latest image for faster layer-cached rebuilds.
+# =============================================================================
+build:image:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    # Pull the latest image for layer caching (allowed to fail on first run)
+    - docker pull "$IMAGE_LATEST" || true
+
+    # Build the unified image
+    - |
+      BUILD_ARGS="--build-arg BUILDKIT_INLINE_CACHE=1"
+
+      if [ -n "$VITE_API_URL" ]; then
+        BUILD_ARGS="$BUILD_ARGS --build-arg VITE_API_URL=$VITE_API_URL"
+      fi
+
+      if [ -n "$VITE_CLERK_PUBLISHABLE_KEY" ]; then
+        BUILD_ARGS="$BUILD_ARGS --build-arg VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY"
+      fi
+
+      docker build \
+        --target rosetta \
+        --cache-from "$IMAGE_LATEST" \
+        $BUILD_ARGS \
+        --tag "$IMAGE_SHA" \
+        --tag "$IMAGE_LATEST" \
+        -f Dockerfile .
+
+    # Push both tags
+    - docker push "$IMAGE_SHA"
+    - docker push "$IMAGE_LATEST"
+
+    # On a semver git tag (e.g. v2.2.1) also push a version-labelled tag
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION_TAG="$IMAGE_BASE:$CI_COMMIT_TAG"
+        docker tag "$IMAGE_SHA" "$VERSION_TAG"
+        docker push "$VERSION_TAG"
+        echo "Pushed version tag: $VERSION_TAG"
+      fi
+
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# =============================================================================
+# STAGE: deploy
+# SSH onto target server, run Alembic migrations, then update containers via
+# docker-compose. Staging deploys automatically on main; production requires
+# a manual confirmation gate.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Shared deploy script template (YAML anchor)
+# ---------------------------------------------------------------------------
+.deploy_script: &deploy_script
+  - echo "Deploying image $IMAGE_SHA to $DEPLOY_HOST"
+
+  # Configure SSH
+  - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  - cp "$DEPLOY_SSH_KEY" ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+  - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+  # Log in to the registry from the remote server, pull new image, migrate, deploy
+  - |
+    ssh "$DEPLOY_USER@$DEPLOY_HOST" bash -s << EOF
+      set -e
+
+      # Authenticate to GitLab Container Registry
+      echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" \
+        -u "$CI_REGISTRY_USER" --password-stdin
+
+      # Pull the new image
+      docker pull "$IMAGE_SHA"
+
+      # Tag it as latest so compose picks it up
+      docker tag "$IMAGE_SHA" "$IMAGE_LATEST"
+
+      # Change to deploy directory
+      cd "$DEPLOY_DIR"
+
+      # -----------------------------------------------------------------------
+      # Run Alembic migrations before the backend container starts/restarts.
+      # We use the new image in a one-off container that targets the backend
+      # venv; CONFIG_DATABASE_URL must be set in the server's .env file.
+      # -----------------------------------------------------------------------
+      docker run --rm \
+        --env-file .env \
+        --network host \
+        --entrypoint "" \
+        "$IMAGE_SHA" \
+        /app/.venv-backend/bin/python -m alembic -c /app/backend/alembic.ini upgrade head
+
+      # -----------------------------------------------------------------------
+      # Rolling update: recreate only changed containers, keep infra up.
+      # docker-compose-app.yml references rosetta-etl:latest which we just
+      # re-tagged above.
+      # -----------------------------------------------------------------------
+      docker compose -f docker-compose-app.yml pull
+      docker compose -f docker-compose-app.yml up -d --remove-orphans
+
+      # Clean up dangling images to reclaim disk space
+      docker image prune -f
+    EOF
+
+# ---------------------------------------------------------------------------
+# Staging deployment — automatic on main branch
+# ---------------------------------------------------------------------------
+deploy:staging:
+  stage: deploy
+  image: alpine:3.20
+  environment:
+    name: staging
+    url: $STAGING_ENVIRONMENT_URL
+  variables:
+    DEPLOY_HOST: "$STAGING_SERVER_HOST"
+    DEPLOY_USER: "$STAGING_SERVER_USER"
+    DEPLOY_SSH_KEY: "$STAGING_SSH_PRIVATE_KEY"
+    DEPLOY_DIR: "$STAGING_DEPLOY_DIR"
+  before_script:
+    - apk add --no-cache openssh-client docker-cli docker-compose
+  script:
+    - *deploy_script
+  needs:
+    - job: build:image
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Production deployment — manual gate on git tags
+# ---------------------------------------------------------------------------
+deploy:production:
+  stage: deploy
+  image: alpine:3.20
+  environment:
+    name: production
+    url: $PRODUCTION_ENVIRONMENT_URL
+  variables:
+    DEPLOY_HOST: "$PRODUCTION_SERVER_HOST"
+    DEPLOY_USER: "$PRODUCTION_SERVER_USER"
+    DEPLOY_SSH_KEY: "$PRODUCTION_SSH_PRIVATE_KEY"
+    DEPLOY_DIR: "$PRODUCTION_DEPLOY_DIR"
+  before_script:
+    - apk add --no-cache openssh-client docker-cli docker-compose
+  script:
+    - *deploy_script
+  needs:
+    - job: build:image
+  when: manual
+  rules:
+    - if: $CI_COMMIT_TAG
