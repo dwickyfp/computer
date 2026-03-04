@@ -67,14 +67,9 @@ class DatabaseManager:
                     },
                 )
 
-                # Convert async URL to sync URL for psycopg2
+                # Use the already-converted sync URL from settings
+                # (settings.database_connection_string already handles postgresql:// → psycopg2 conversion)
                 db_url = settings.database_connection_string
-                if db_url.startswith("postgresql+asyncpg://"):
-                    db_url = db_url.replace(
-                        "postgresql+asyncpg://", "postgresql+psycopg2://"
-                    )
-                elif db_url.startswith("postgresql://"):
-                    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
 
                 # Create engine with connection pooling
                 self._engine = create_engine(

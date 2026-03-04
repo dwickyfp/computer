@@ -8,13 +8,13 @@ with PostgreSQL WAL monitoring capabilities.
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import httpx
-from datetime import datetime
 
 
 from app import __version__
@@ -23,6 +23,7 @@ from app.core.config import get_settings
 from app.core.database import check_database_health, db_manager
 from app.core.exceptions import RosettaException
 from app.core.logging import get_logger, setup_logging
+from app.core.error_sanitizer import sanitize_for_db
 from app.infrastructure.tasks.scheduler import BackgroundScheduler
 
 # Setup logging
@@ -68,7 +69,9 @@ async def lifespan(app: FastAPI):
                 else:
                     logger.info("Database health check passed")
             except Exception as e:
-                logger.error("Error during startup health check", extra={"error": str(e)})
+                logger.error(
+                    "Error during startup health check", extra={"error": str(e)}
+                )
 
         asyncio.create_task(_startup_health_check())
 
@@ -78,27 +81,40 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to start application", extra={"error": str(e)})
         raise
 
-    yield
-
-    # Shutdown
-    logger.info("Shutting down Rosetta ETL Platform")
-
     try:
-        # Stop background scheduler
-        background_scheduler.stop()
-        logger.info("Background scheduler stopped")
+        yield
+    except asyncio.CancelledError:
+        # Normal during Ctrl-C / SIGTERM — do not re-raise so shutdown runs cleanly
+        pass
+    finally:
+        # Shutdown
+        logger.info("Shutting down Rosetta ETL Platform")
 
-        # Close database connections
-        db_manager.close()
-        logger.info("Database connections closed")
+        try:
+            # Stop shared metrics collector if running
+            await _stop_metrics_collector()
 
-        logger.info("Application shutdown completed successfully")
+            # Stop background scheduler
+            background_scheduler.stop()
+            logger.info("Background scheduler stopped")
 
-    except Exception as e:
-        logger.error("Error during application shutdown", extra={"error": str(e)})
+            # Close Redis connections
+            from app.infrastructure.redis import RedisClient
+
+            RedisClient.close()
+
+            # Close database connections
+            db_manager.close()
+            logger.info("Database connections closed")
+
+            logger.info("Application shutdown completed successfully")
+
+        except Exception as e:
+            logger.error("Error during application shutdown", extra={"error": str(e)})
 
 
 # Create FastAPI application
+_docs_enabled = settings.debug or settings.app_env == "development"
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
@@ -106,22 +122,32 @@ app = FastAPI(
         "A production-ready FastAPI application for managing ETL pipeline "
         "configurations with PostgreSQL WAL monitoring capabilities."
     ),
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
-    openapi_url="/openapi.json" if settings.debug else None,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
     lifespan=lifespan,
 )
 
+
+# CORS credentials cannot be used with wildcard origins (CORS spec).
+# If cors_origins is the catch-all ["*"], disable credentials so browsers
+# don't block responses.  For named origins, credentials are allowed.
+_cors_allow_credentials = settings.cors_origins != ["*"]
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_origin_regex=r"https?://localhost:\d+",
-    allow_credentials=True,
+    allow_origin_regex=r"https?://(localhost|[\d]+\.[\d]+\.[\d]+\.[\d]+)(:\d+)?",
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register custom middleware (#5 rate limiting, #13 request tracing)
+from app.core.middleware import setup_middleware
+
+setup_middleware(app)
 
 
 # Exception handlers
@@ -225,12 +251,19 @@ async def check_compute_health() -> bool:
         async with httpx.AsyncClient(timeout=5.0) as client:
             logger.info(f"Checking compute health at: {url}")
             response = await client.get(url)
-            is_healthy = response.status_code == 200 and response.json().get("status") == "healthy"
+            is_healthy = (
+                response.status_code == 200
+                and response.json().get("status") == "healthy"
+            )
             if not is_healthy:
-                logger.warning(f"Compute health check returned {response.status_code}: {response.text}")
+                logger.warning(
+                    f"Compute health check returned {response.status_code}: {response.text}"
+                )
             return is_healthy
     except Exception as e:
-        logger.error(f"Compute health check failed for {url}: {e.__class__.__name__}: {e}")
+        logger.error(
+            f"Compute health check failed for {url}: {e.__class__.__name__}: {e}"
+        )
         return False
 
 
@@ -249,7 +282,7 @@ async def health_check():
     """
     db_healthy = await asyncio.to_thread(check_database_health)
     compute_healthy = await check_compute_health()
-    
+
     # Overall is healthy if DB is healthy. Compute can be down without affecting API.
     # But usually we want to know if everything is up.
     overall_status = "healthy" if db_healthy else "unhealthy"
@@ -257,7 +290,7 @@ async def health_check():
     return {
         "status": overall_status,
         "version": __version__,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "checks": {
             "database": db_healthy,
             "compute": compute_healthy,
@@ -267,11 +300,17 @@ async def health_check():
 
 # ─── D5: WebSocket Real-Time Pipeline Metrics Stream ──────────────────────────
 
+
 class MetricsConnectionManager:
-    """Manages WebSocket connections for real-time metrics streaming."""
+    """Manages WebSocket connections for real-time metrics streaming.
+
+    Uses a shared background collector (#10) so metrics are collected ONCE
+    and broadcast to all connected clients, instead of N independent queries.
+    """
 
     def __init__(self):
         self.active_connections: list[WebSocket] = []
+        self._latest_metrics: dict | None = None
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -279,6 +318,8 @@ class MetricsConnectionManager:
         logger.info(
             f"WebSocket client connected. Active: {len(self.active_connections)}"
         )
+        # Start shared collector if this is the first client
+        await _ensure_metrics_collector()
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
@@ -289,6 +330,7 @@ class MetricsConnectionManager:
 
     async def broadcast(self, data: dict):
         """Send data to all connected clients."""
+        self._latest_metrics = data
         disconnected = []
         for connection in self.active_connections:
             try:
@@ -300,6 +342,10 @@ class MetricsConnectionManager:
 
 
 metrics_manager = MetricsConnectionManager()
+
+# ─── Shared metrics collector task (#10) ──────────────────────────────────────
+_metrics_collector_task: asyncio.Task | None = None
+_metrics_push_interval: int = 5  # default 5 seconds, can be adjusted per-client
 
 
 def _collect_pipeline_metrics() -> dict:
@@ -332,7 +378,9 @@ def _collect_pipeline_metrics() -> dict:
                 system_metrics = {
                     "cpu_percent": sys_row.cpu_percent,
                     "memory_percent": sys_row.memory_percent,
-                    "collected_at": sys_row.created_at.isoformat() if sys_row.created_at else None,
+                    "collected_at": (
+                        sys_row.created_at.isoformat() if sys_row.created_at else None
+                    ),
                 }
 
             # WAL size
@@ -355,7 +403,7 @@ def _collect_pipeline_metrics() -> dict:
 
             return {
                 "type": "pipeline_metrics",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "pipeline_status": status_counts,
                 "system": system_metrics,
                 "wal_size_mb": wal_size,
@@ -365,11 +413,48 @@ def _collect_pipeline_metrics() -> dict:
             db.close()
     except Exception as e:
         logger.warning(f"Failed to collect pipeline metrics: {e}")
+        # #3: Sanitize error — never expose raw exception to clients
         return {
             "type": "pipeline_metrics",
-            "timestamp": datetime.utcnow().isoformat(),
-            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error": sanitize_for_db(e, context="Metrics"),
         }
+
+
+async def _metrics_collector_loop():
+    """Shared background task: collects metrics once and broadcasts to all clients."""
+    while True:
+        try:
+            if metrics_manager.active_connections:
+                metrics = await asyncio.to_thread(_collect_pipeline_metrics)
+                await metrics_manager.broadcast(metrics)
+            await asyncio.sleep(_metrics_push_interval)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Metrics collector error: {e}")
+            await asyncio.sleep(_metrics_push_interval)
+
+
+async def _ensure_metrics_collector():
+    """Start the shared metrics collector if not already running."""
+    global _metrics_collector_task
+    if _metrics_collector_task is None or _metrics_collector_task.done():
+        _metrics_collector_task = asyncio.create_task(_metrics_collector_loop())
+        logger.info("Shared metrics collector started")
+
+
+async def _stop_metrics_collector():
+    """Stop the shared metrics collector."""
+    global _metrics_collector_task
+    if _metrics_collector_task is not None and not _metrics_collector_task.done():
+        _metrics_collector_task.cancel()
+        try:
+            await _metrics_collector_task
+        except asyncio.CancelledError:
+            pass
+        _metrics_collector_task = None
+        logger.info("Shared metrics collector stopped")
 
 
 @app.websocket("/ws/metrics")
@@ -377,37 +462,37 @@ async def websocket_metrics(websocket: WebSocket):
     """
     WebSocket endpoint for real-time pipeline metrics (D5).
 
-    Streams pipeline status, system metrics, and alerts every 5 seconds.
-    Clients can send JSON messages to control the stream:
+    Metrics are collected by a shared background task and broadcast to all
+    connected clients (see #10). Clients can send JSON messages:
       {"action": "set_interval", "interval": 10}  — change push interval (seconds)
     """
+    global _metrics_push_interval
     await metrics_manager.connect(websocket)
-    push_interval = 5  # default 5 seconds
 
     try:
-        while True:
-            # Collect and send metrics
-            metrics = await asyncio.to_thread(_collect_pipeline_metrics)
-            await websocket.send_json(metrics)
+        # Send latest cached metrics immediately on connect
+        if metrics_manager._latest_metrics:
+            await websocket.send_json(metrics_manager._latest_metrics)
 
-            # Wait for interval, but also listen for client messages
+        # Listen for client commands (the collector broadcasts independently)
+        while True:
             try:
-                msg = await asyncio.wait_for(
-                    websocket.receive_text(), timeout=push_interval
-                )
+                msg = await websocket.receive_text()
                 try:
                     parsed = json.loads(msg)
                     if parsed.get("action") == "set_interval":
                         new_interval = int(parsed.get("interval", 5))
-                        push_interval = max(1, min(60, new_interval))
-                        await websocket.send_json({
-                            "type": "config_ack",
-                            "interval": push_interval,
-                        })
+                        _metrics_push_interval = max(1, min(60, new_interval))
+                        await websocket.send_json(
+                            {
+                                "type": "config_ack",
+                                "interval": _metrics_push_interval,
+                            }
+                        )
                 except (json.JSONDecodeError, ValueError):
                     pass
             except asyncio.TimeoutError:
-                pass  # Just continue to next push cycle
+                pass  # Keep listening
 
     except WebSocketDisconnect:
         metrics_manager.disconnect(websocket)

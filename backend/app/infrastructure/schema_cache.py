@@ -27,30 +27,17 @@ import logging
 from functools import lru_cache
 from typing import Any
 
-import redis as redis_lib
+from app.infrastructure.redis import get_redis as _get_shared_redis
 
 logger = logging.getLogger(__name__)
 
 CACHE_TTL = 86_400  # 24 hours
 CACHE_KEY_PREFIX = "schema"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Redis client (lazily initialised, singleton)
-# ──────────────────────────────────────────────────────────────────────────────
 
-_redis_client: redis_lib.Redis | None = None
-
-
-def _get_redis(redis_url: str) -> redis_lib.Redis:
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = redis_lib.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
-    return _redis_client
+def _get_redis(redis_url: str = ""):
+    """Get the shared Redis client (redis_url kept for backward compat but ignored)."""
+    return _get_shared_redis()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -193,20 +180,29 @@ def get_or_fetch_schema(
 def invalidate_schema_cache(
     *,
     flow_task_id: int,
-    redis_url: str,
+    redis_url: str = "",
 ) -> int:
     """
     Delete all cached schemas for a specific flow task (e.g. when the graph
     is saved/replaced).  Returns the number of keys deleted.
+
+    Uses SCAN instead of KEYS to avoid blocking Redis on large keyspaces.
     """
     pattern = f"{CACHE_KEY_PREFIX}:{flow_task_id}:*"
     try:
         r = _get_redis(redis_url)
-        keys = r.keys(pattern)
-        if keys:
-            deleted = r.delete(*keys)
+        deleted = 0
+        batch: list[str] = []
+        for key in r.scan_iter(match=pattern, count=100):
+            batch.append(key)
+            if len(batch) >= 100:
+                deleted += r.delete(*batch)
+                batch.clear()
+        if batch:
+            deleted += r.delete(*batch)
+        if deleted:
             logger.info("Schema cache invalidated %d keys for flow_task_id=%d", deleted, flow_task_id)
-            return deleted
+        return deleted
     except Exception as exc:
         logger.warning("Redis schema cache invalidation failed (%s)", exc)
     return 0

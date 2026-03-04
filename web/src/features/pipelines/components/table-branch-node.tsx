@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { Filter, Code2, AlertCircle, Database, Trash2, Hash, Key } from 'lucide-react'
+import { Filter, Code2, AlertCircle, Database, Trash2, Hash, Key, Settings2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
     Popover,
@@ -17,8 +17,12 @@ interface TableBranchNodeProps {
     onEditTargetName: () => void
     onEditTags: () => void
     onEditPrimaryKeys: () => void
+    onRegisterSchema?: () => void
     onDelete: () => void
     isDeleting: boolean
+    hideFilter?: boolean
+    hideCustomSql?: boolean
+    hidePrimaryKeys?: boolean
 }
 
 export function TableBranchNode({
@@ -28,8 +32,12 @@ export function TableBranchNode({
     onEditTargetName,
     onEditTags,
     onEditPrimaryKeys,
+    onRegisterSchema,
     onDelete,
-    isDeleting
+    isDeleting,
+    hideFilter,
+    hideCustomSql,
+    hidePrimaryKeys
 }: TableBranchNodeProps) {
     // Query tags for this sync config
     const { data: tableSyncTagsData } = useQuery({
@@ -40,6 +48,7 @@ export function TableBranchNode({
 
     const currentTags = tableSyncTagsData?.tags || []
     const hasCustomKeys = syncConfig.primary_key_column_target && syncConfig.primary_key_column_target.trim().length > 0
+    const hasCatalogDb = !!syncConfig.catalog_database_name
 
     return (
         <div className={cn(
@@ -71,53 +80,77 @@ export function TableBranchNode({
 
                     <div className="w-px h-3 bg-border mx-0.5" />
 
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); onEditFilter() }}
-                        className={cn(
-                            "h-6 px-1.5 text-[10px] gap-1",
-                            syncConfig.filter_sql
-                                ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700 dark:text-blue-400 dark:bg-blue-950/50 dark:hover:bg-blue-950/70 dark:hover:text-blue-300"
-                                : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                        )}
-                        title="Filter Data"
-                    >
-                        <Filter className="h-3 w-3" />
-                        {syncConfig.filter_sql && "Active"}
-                    </Button>
+                    {onRegisterSchema && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); onRegisterSchema() }}
+                            className={cn(
+                                "h-6 px-1.5 text-[10px] gap-1",
+                                hasCatalogDb
+                                    ? "text-teal-600 bg-teal-50 hover:bg-teal-100 hover:text-teal-700 dark:text-teal-400 dark:bg-teal-950/50 dark:hover:bg-teal-950/70 dark:hover:text-teal-300"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                            )}
+                            title="Register Managed Destination Target"
+                        >
+                            <Settings2 className="h-3 w-3" />
+                            {hasCatalogDb ? syncConfig.catalog_database_name : "Target Settings"}
+                        </Button>
+                    )}
 
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); onEditCustomSql() }}
-                        className={cn(
-                            "h-6 px-1.5 text-[10px] gap-1",
-                            syncConfig.custom_sql
-                                ? "text-purple-600 bg-purple-50 hover:bg-purple-100 hover:text-purple-700 dark:text-purple-400 dark:bg-purple-950/50 dark:hover:bg-purple-950/70 dark:hover:text-purple-300"
-                                : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                        )}
-                        title="Custom SQL Transformation"
-                    >
-                        <Code2 className="h-3 w-3" />
-                        {syncConfig.custom_sql && "Active"}
-                    </Button>
+                    {!hideFilter && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); onEditFilter() }}
+                            className={cn(
+                                "h-6 px-1.5 text-[10px] gap-1",
+                                syncConfig.filter_sql
+                                    ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700 dark:text-blue-400 dark:bg-blue-950/50 dark:hover:bg-blue-950/70 dark:hover:text-blue-300"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                            )}
+                            title="Filter Data"
+                        >
+                            <Filter className="h-3 w-3" />
+                            {syncConfig.filter_sql && "Active"}
+                        </Button>
+                    )}
 
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); onEditPrimaryKeys() }}
-                        className={cn(
-                            "h-6 px-1.5 text-[10px] gap-1",
-                            hasCustomKeys
-                                ? "text-amber-600 bg-amber-50 hover:bg-amber-100 hover:text-amber-700 dark:text-amber-400 dark:bg-amber-950/50 dark:hover:bg-amber-950/70 dark:hover:text-amber-300"
-                                : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                        )}
-                        title="Primary Key Configuration"
-                    >
-                        <Key className="h-3 w-3" />
-                        {hasCustomKeys && "Custom"}
-                    </Button>
+                    {!hideCustomSql && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); onEditCustomSql() }}
+                            className={cn(
+                                "h-6 px-1.5 text-[10px] gap-1",
+                                syncConfig.custom_sql
+                                    ? "text-purple-600 bg-purple-50 hover:bg-purple-100 hover:text-purple-700 dark:text-purple-400 dark:bg-purple-950/50 dark:hover:bg-purple-950/70 dark:hover:text-purple-300"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                            )}
+                            title="Custom SQL Transformation"
+                        >
+                            <Code2 className="h-3 w-3" />
+                            {syncConfig.custom_sql && "Active"}
+                        </Button>
+                    )}
+
+                    {!hidePrimaryKeys && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); onEditPrimaryKeys() }}
+                            className={cn(
+                                "h-6 px-1.5 text-[10px] gap-1",
+                                hasCustomKeys
+                                    ? "text-amber-600 bg-amber-50 hover:bg-amber-100 hover:text-amber-700 dark:text-amber-400 dark:bg-amber-950/50 dark:hover:bg-amber-950/70 dark:hover:text-amber-300"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                            )}
+                            title="Primary Key Configuration"
+                        >
+                            <Key className="h-3 w-3" />
+                            {hasCustomKeys && "Custom"}
+                        </Button>
+                    )}
 
                     <Button
                         variant="ghost"

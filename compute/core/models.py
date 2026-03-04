@@ -23,6 +23,7 @@ class DestinationType(str, Enum):
 
     SNOWFLAKE = "SNOWFLAKE"
     POSTGRES = "POSTGRES"
+    ROSETTA = "ROSETTA"
 
 
 class MetadataStatus(str, Enum):
@@ -95,6 +96,7 @@ class Destination:
     name: str
     type: str
     config: dict[str, Any] = field(default_factory=dict)
+    chain_client_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -106,6 +108,7 @@ class Destination:
             name=data["name"],
             type=data["type"],
             config=data.get("config", {}),
+            chain_client_id=data.get("chain_client_id"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -120,6 +123,11 @@ class Destination:
         """Check if destination is PostgreSQL."""
         return self.type.upper() == DestinationType.POSTGRES.value
 
+    @property
+    def is_rosetta(self) -> bool:
+        """Check if destination is Rosetta chain."""
+        return self.type.upper() == DestinationType.ROSETTA.value
+
 
 @dataclass
 class Pipeline:
@@ -127,8 +135,10 @@ class Pipeline:
 
     id: int
     name: str
-    source_id: int
+    source_id: Optional[int] = None
     status: str = PipelineStatus.PAUSE.value
+    source_type: str = "POSTGRES"
+    chain_client_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -142,8 +152,10 @@ class Pipeline:
         return cls(
             id=data["id"],
             name=data["name"],
-            source_id=data["source_id"],
+            source_id=data.get("source_id"),
             status=data.get("status", PipelineStatus.PAUSE.value),
+            source_type=data.get("source_type", "POSTGRES"),
+            chain_client_id=data.get("chain_client_id"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -359,11 +371,15 @@ class QueueBackfillData:
             updated_at=data.get("updated_at"),
         )
 
+    def to_dict(self) -> dict:
+        """Convert QueueBackfillData to dict for serialization."""
         return {
+            "id": self.id,
             "pipeline_id": self.pipeline_id,
-            "pipeline_destination_id": self.pipeline_destination_id,
             "source_id": self.source_id,
-            "pipeline_destination_table_sync_id": self.pipeline_destination_table_sync_id,
             "table_name": self.table_name,
-            "record_count": self.record_count,
+            "filter_sql": self.filter_sql,
+            "status": self.status,
+            "count_record": self.count_record,
         }
+

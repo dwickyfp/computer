@@ -72,6 +72,7 @@ class BackgroundScheduler:
         """Get or create a persistent httpx client with connection keep-alive."""
         if self._httpx_client is None:
             import httpx
+
             self._httpx_client = httpx.Client(
                 timeout=10.0,
                 limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
@@ -108,6 +109,7 @@ class BackgroundScheduler:
             else:
                 # Open a dedicated session (standalone invocation)
                 from app.core.database import db_manager
+
                 session = db_manager.session_factory()
                 try:
                     repo = JobMetricRepository(session)
@@ -172,9 +174,10 @@ class BackgroundScheduler:
     def _run_table_list_refresh(self) -> None:
         """
         Synchronous wrapper for table list refresh task.
-        Uses single DB session for both work and job metric recording.
+        Uses ThreadPoolExecutor for parallel source refresh (#11).
         """
         try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             from app.core.database import db_manager
             from app.domain.services.source import SourceService
 
@@ -183,13 +186,35 @@ class BackgroundScheduler:
             try:
                 service = SourceService(db)
                 sources = service.list_sources(limit=1000)
-                for source in sources:
+
+                def _refresh_one(source_id: int) -> None:
+                    """Refresh a single source in its own DB session."""
+                    s = session_factory()
                     try:
-                        service.refresh_available_tables(source.id)
+                        svc = SourceService(s)
+                        svc.refresh_available_tables(source_id)
                     except Exception as e:
                         logger.error(
-                            f"Failed to auto-refresh tables for source {source.id}: {e}"
+                            f"Failed to auto-refresh tables for source {source_id}: {e}"
                         )
+                    finally:
+                        s.close()
+
+                # Parallel refresh with bounded concurrency
+                with ThreadPoolExecutor(max_workers=5) as pool:
+                    futures = {
+                        pool.submit(_refresh_one, src.id): src.id for src in sources
+                    }
+                    for future in as_completed(futures):
+                        # Propagate any unexpected errors
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.error(
+                                f"Table refresh thread error for source "
+                                f"{futures[future]}: {e}"
+                            )
+
                 self._record_job_metric("table_list_refresh", db=db)
             finally:
                 db.close()
@@ -313,28 +338,27 @@ class BackgroundScheduler:
 
                 # Batch metric in same session
                 self._record_job_metric("worker_health_check", db=db)
+            except Exception as http_err:
+                # HTTP / connection error — record unhealthy status in the same
+                # open session rather than opening a second one.
+                try:
+                    repo = WorkerHealthRepository(db)
+                    repo.upsert_status(
+                        healthy=False,
+                        error_message=str(http_err),
+                    )
+                    db.commit()
+                except Exception:
+                    pass
+                # Use debug level to avoid spamming logs when worker is down
+                logger.debug(
+                    "Worker health check failed (worker may be offline)",
+                    extra={"error": str(http_err)},
+                )
             finally:
                 db.close()
         except Exception as e:
-            # If HTTP call fails, save unhealthy status (quietly - don't spam logs)
-            try:
-                from app.core.database import db_manager
-                from app.domain.repositories.worker_health_repo import (
-                    WorkerHealthRepository,
-                )
-
-                db2 = db_manager.session_factory()
-                try:
-                    repo = WorkerHealthRepository(db2)
-                    repo.upsert_status(
-                        healthy=False,
-                        error_message=str(e),
-                    )
-                finally:
-                    db2.close()
-            except Exception:
-                pass
-            # Use debug level to avoid spamming logs when worker is down
+            # Outer guard: DB session factory itself failed
             logger.debug(
                 "Worker health check failed (worker may be offline)",
                 extra={"error": str(e)},
@@ -378,6 +402,44 @@ class BackgroundScheduler:
         except Exception as e:
             logger.error(
                 "Error running pipeline refresh check task", extra={"error": str(e)}
+            )
+
+    def _run_client_database_sync(self) -> None:
+        """
+        Synchronous wrapper for client database sync task.
+        Uses single DB session for both work and job metric recording.
+        """
+        try:
+            from app.core.database import db_manager
+            from app.domain.services.rosetta_chain import RosettaChainService
+            from app.domain.repositories.rosetta_chain import (
+                RosettaChainClientRepository,
+            )
+
+            session_factory = db_manager.session_factory
+            db = session_factory()
+            try:
+                repo = RosettaChainClientRepository(db)
+                service = RosettaChainService(db)
+
+                # We need to sync databases for all active clients
+                clients = repo.get_all(skip=0, limit=1000)
+                for client in clients:
+                    if client.is_active:
+                        try:
+                            # Note: sync_client_databases needs to be implemented in RosettaChainService
+                            service.sync_client_databases(client.id)
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to sync databases for client {client.name}: {e}"
+                            )
+
+                self._record_job_metric("client_database_sync", db=db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(
+                "Error running client database sync task", extra={"error": str(e)}
             )
 
     def start(self) -> None:
@@ -537,6 +599,17 @@ class BackgroundScheduler:
         # Start scheduler
         self.scheduler.start()
         logger.info("Background task scheduler started successfully")
+
+        # Schedule Client Database Sync (every 1 minute)
+        self.scheduler.add_job(
+            self._run_client_database_sync,
+            trigger=IntervalTrigger(minutes=1),
+            id="client_database_sync",
+            name="Client Database Sync",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
 
         # Load user-defined schedules from DB and register as CronTrigger jobs
         # This must run AFTER self.scheduler.start() so the scheduler is live

@@ -11,6 +11,7 @@ the compiler or executor.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import threading
 from abc import ABC, abstractmethod
@@ -41,6 +42,41 @@ def cleanup_temp_files() -> None:
         except Exception:
             pass
     _thread_local.temp_files = []
+
+
+def sanitize_connection_error(message: str) -> str:
+    """
+    M-1 fix: Strip passwords from DuckDB/psycopg2 connection error messages.
+
+    DuckDB and psycopg2 frequently echo the full connection string \u2014 including
+    the plaintext password \u2014 in exception messages.  logger.error(..., exc_info=True)
+    throughout the codebase would then persist credentials in log files.
+
+    Patterns scrubbed:
+      DSN-style  : ``password=s3cr3t``          \u2192 ``password=***``
+      URL-style  : ``user:s3cr3t@host``         \u2192 ``user:***@host``
+      Quoted DSN : ``password='s3cr3t'``        \u2192 ``password='***'``
+    """
+    # DSN key=value: password=<value> (unquoted or quoted)
+    message = re.sub(
+        r"(password\s*=\s*')[^']*'",
+        r"\1***'",
+        message,
+        flags=re.IGNORECASE,
+    )
+    message = re.sub(
+        r"(password\s*=\s*)([^\s'\"]+)",
+        r"\1***",
+        message,
+        flags=re.IGNORECASE,
+    )
+    # URL-style user:password@host
+    message = re.sub(
+        r"(://[^:@/\s]+:)[^@\s]+(@)",
+        r"\1***\2",
+        message,
+    )
+    return message
 
 
 # ─── Adapter base + registry ───────────────────────────────────────────────────

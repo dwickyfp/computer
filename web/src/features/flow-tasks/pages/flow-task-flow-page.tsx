@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { AxiosError } from 'axios'
 import {
     ReactFlow,
     Background,
@@ -173,26 +174,49 @@ function FlowCanvas({ flowTaskId }: { flowTaskId: number }) {
 
     const { isLoading: graphLoading, data: graphData, isError: graphIsError } = useQuery({
         queryKey: ['flow-tasks', flowTaskId, 'graph'],
-        queryFn: () => flowTasksRepo.getGraph(flowTaskId),
+        queryFn: async () => {
+            try {
+                return await flowTasksRepo.getGraph(flowTaskId)
+            } catch (err) {
+                // 404 means the flow has no saved graph yet — treat as empty canvas
+                if (err instanceof AxiosError && err.response?.status === 404) {
+                    return null
+                }
+                throw err
+            }
+        },
         retry: false,
+        // Graph is only updated by an explicit save — no need to auto-refetch
+        staleTime: Infinity,
+        refetchOnWindowFocus: false,
     })
 
     useEffect(() => {
+        if (graphLoading) return
         if (graphData) {
             const graph = graphData.data
-            // Backend returns nodes_json / edges_json (not nodes / edges)
-            if (Array.isArray(graph.nodes_json)) setNodes(graph.nodes_json as FlowNode[])
-            if (Array.isArray(graph.edges_json)) setEdges(graph.edges_json as FlowEdge[])
+            // id=0 means the backend has no saved graph yet — empty canvas
+            const isEmpty = !graph || graph.id === 0
+            if (Array.isArray(graph?.nodes_json)) setNodes(graph.nodes_json as FlowNode[])
+            else setNodes([])
+            if (Array.isArray(graph?.edges_json)) setEdges(graph.edges_json as FlowEdge[])
+            else setEdges([])
             markClean()
-            // Use updated_at from graph response if available, else now
-            const savedAt = graph.updated_at ? new Date(graph.updated_at) : new Date()
-            setLastSavedAt(savedAt)
+            // Only show "last saved" label for real persisted graphs
+            if (!isEmpty && graph.updated_at) {
+                setLastSavedAt(new Date(graph.updated_at))
+            }
+        } else {
+            // null = 404 for invalid flow id — start with an empty canvas
+            setNodes([])
+            setEdges([])
+            markClean()
         }
-    }, [graphData, setNodes, setEdges, markClean])
+    }, [graphData, graphLoading, setNodes, setEdges, markClean])
 
     useEffect(() => {
         if (graphIsError) {
-            // Graph not yet saved — start empty
+            // Non-404 error — still start empty so the canvas is usable
             setNodes([])
             setEdges([])
             markClean()
@@ -407,6 +431,7 @@ function FlowCanvas({ flowTaskId }: { flowTaskId: number }) {
                     nodes: graphSnapshot.nodes,
                     edges: graphSnapshot.edges,
                     limit: 500,
+                    include_profiling: true,
                 })
                 const { task_id } = resp.data
                 // Guard: if the user triggered another preview while we were

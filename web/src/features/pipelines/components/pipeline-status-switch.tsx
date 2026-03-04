@@ -1,9 +1,9 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
-import { Play, Pause, AlertCircle } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { pipelinesRepo, type Pipeline } from '@/repo/pipelines'
 import { useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { pipelinesRepo, type Pipeline } from '@/repo/pipelines'
+import { Play, Pause, AlertCircle } from 'lucide-react'
+import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 import {
   Tooltip,
   TooltipContent,
@@ -18,12 +18,15 @@ interface PipelineStatusSwitchProps {
 export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
   const queryClient = useQueryClient()
   const isRunning = pipeline.status === 'START' || pipeline.status === 'REFRESH'
-  
+
   // Check if source has required configurations
+  // ROSETTA source pipelines don't use PostgreSQL publication/replication slots
+  const isRosettaSource = pipeline.source_type === 'ROSETTA'
   const isPublicationEnabled = pipeline.source?.is_publication_enabled ?? false
   const isReplicationEnabled = pipeline.source?.is_replication_enabled ?? false
-  const canActivate = isPublicationEnabled && isReplicationEnabled
-  
+  const canActivate =
+    isRosettaSource || (isPublicationEnabled && isReplicationEnabled)
+
   // Optimistic state for immediate UI feedback
   const [optimisticState, setOptimisticState] = useState<boolean | null>(null)
   const displayState = optimisticState !== null ? optimisticState : isRunning
@@ -36,21 +39,21 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
         return pipelinesRepo.pause(pipeline.id)
       }
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, checked) => {
       // Invalidate queries to get fresh data
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pipelines'] }),
-        queryClient.invalidateQueries({ queryKey: ['pipeline', pipeline.id] })
+        queryClient.invalidateQueries({ queryKey: ['pipeline', pipeline.id] }),
       ])
-      
+
       // Wait a bit for the fresh data to arrive and be processed
       setTimeout(() => {
         // Clear optimistic state after data is fully synced
         setOptimisticState(null)
       }, 500)
-      
+
       toast.success(
-        `Pipeline ${displayState ? 'started' : 'paused'} successfully`
+        `Pipeline ${checked ? 'started' : 'paused'} successfully`
       )
     },
     onError: (error) => {
@@ -62,29 +65,29 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
 
   const handleToggle = async () => {
     const newState = !displayState
-    
-    // Prevent activation if source requirements not met
+
+    // Prevent activation if source requirements not met (only applies to POSTGRES sources)
     if (newState && !canActivate) {
       const missingRequirements = []
       if (!isPublicationEnabled) missingRequirements.push('publication')
       if (!isReplicationEnabled) missingRequirements.push('replication slot')
-      
+
       toast.error(
         `Cannot activate pipeline: ${missingRequirements.join(' and ')} not configured on source database`,
         { duration: 4000 }
       )
       return
     }
-    
+
     // Cancel any outgoing refetches
     await queryClient.cancelQueries({ queryKey: ['pipeline', pipeline.id] })
-    
+
     // Set optimistic state for immediate animation
     setOptimisticState(newState)
-    
+
     // Wait for animation to complete (200ms)
-    await new Promise(resolve => setTimeout(resolve, 200))
-    
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
     // Then send API request
     mutate(newState)
   }
@@ -112,8 +115,8 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
           displayState
             ? 'bg-gradient-to-r from-emerald-500 to-green-500 shadow-md shadow-emerald-500/30 hover:shadow-emerald-500/40 focus-visible:ring-emerald-500 dark:from-emerald-600 dark:to-green-600'
             : !canActivate
-            ? 'bg-gradient-to-r from-red-300 to-red-400 shadow-sm shadow-red-400/20 focus-visible:ring-red-400 dark:from-red-600 dark:to-red-700 cursor-not-allowed opacity-60'
-            : 'bg-gradient-to-r from-slate-300 to-slate-400 shadow-sm shadow-slate-400/20 hover:shadow-slate-400/30 focus-visible:ring-slate-400 dark:from-slate-600 dark:to-slate-700'
+              ? 'cursor-not-allowed bg-gradient-to-r from-red-300 to-red-400 opacity-60 shadow-sm shadow-red-400/20 focus-visible:ring-red-400 dark:from-red-600 dark:to-red-700'
+              : 'bg-gradient-to-r from-slate-300 to-slate-400 shadow-sm shadow-slate-400/20 hover:shadow-slate-400/30 focus-visible:ring-slate-400 dark:from-slate-600 dark:to-slate-700'
         )}
         aria-label={displayState ? 'Pause pipeline' : 'Start pipeline'}
       >
@@ -193,17 +196,17 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
     const missingRequirements = []
     if (!isPublicationEnabled) missingRequirements.push('Publication')
     if (!isReplicationEnabled) missingRequirements.push('Replication slot')
-    
+
     return (
       <TooltipProvider>
         <Tooltip>
-          <TooltipTrigger asChild>
-            {switchButton}
-          </TooltipTrigger>
+          <TooltipTrigger asChild>{switchButton}</TooltipTrigger>
           <TooltipContent>
             <p className='font-semibold'>Cannot activate pipeline</p>
             <p className='text-xs'>Missing: {missingRequirements.join(', ')}</p>
-            <p className='text-xs text-muted-foreground'>Configure source database first</p>
+            <p className='text-xs text-muted-foreground'>
+              Configure source database first
+            </p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>

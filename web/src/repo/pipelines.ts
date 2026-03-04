@@ -4,7 +4,10 @@ import { api } from './client'
 export interface Pipeline {
   id: number
   name: string
-  source_id: number
+  source_id: number | null
+  source_type?: string
+  chain_client_id?: number | null
+  catalog_database_id?: number | null
   destination_id: number
   status: 'START' | 'PAUSE' | 'REFRESH'
   ready_refresh?: boolean
@@ -26,6 +29,10 @@ export interface Pipeline {
     is_publication_enabled?: boolean
     is_replication_enabled?: boolean
   }
+  chain_client?: {
+    id: number
+    name: string
+  } | null
   destinations?: {
     id: number
     destination: {
@@ -42,7 +49,11 @@ export interface Pipeline {
 
 export interface CreatePipelineRequest {
   name: string
-  source_id: number
+  source_id?: number
+  source_type?: string
+  chain_client_id?: number
+  catalog_table_id?: number
+  catalog_database_id?: number
   status?: string
 }
 
@@ -69,6 +80,13 @@ export const pipelinesRepo = {
   },
   delete: async (id: number): Promise<void> => {
     await api.delete(`/pipelines/${id}`)
+  },
+  rename: async (id: number, name: string): Promise<Pipeline> => {
+    const response: AxiosResponse<Pipeline> = await api.put(
+      `/pipelines/${id}`,
+      { name }
+    )
+    return response.data
   },
   start: async (id: number): Promise<Pipeline> => {
     const response: AxiosResponse<Pipeline> = await api.post(
@@ -121,6 +139,25 @@ export const pipelinesRepo = {
     )
     return response.data
   },
+  getTableSyncDetail: async (
+    pipelineId: number,
+    destId: number,
+    syncId: number
+  ): Promise<any> => {
+    const response: AxiosResponse<any> = await api.get(
+      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}`
+    )
+    return response.data
+  },
+  generateLineage: async (
+    pipelineId: number,
+    destId: number,
+    syncId: number
+  ): Promise<void> => {
+    await api.post(
+      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}/lineage/generate`
+    )
+  },
 }
 
 export interface PipelineStats {
@@ -160,6 +197,7 @@ export interface TableSyncConfig {
   custom_sql: string | null
   filter_sql: string | null
   primary_key_column_target: string | null
+  catalog_database_name: string | null
 
   is_exists_table_landing: boolean
   is_exists_stream: boolean
@@ -221,6 +259,18 @@ export const tableSyncRepo = {
     return response.data
   },
 
+  saveTableSyncBulk: async (
+    pipelineId: number,
+    pipelineDestinationId: number,
+    tableNames: string[]
+  ): Promise<TableSyncConfig[]> => {
+    const response: AxiosResponse<TableSyncConfig[]> = await api.post(
+      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables/bulk`,
+      { tables: tableNames.map((name) => ({ table_name: name })) }
+    )
+    return response.data
+  },
+
   deleteTableSync: async (
     pipelineId: number,
     pipelineDestinationId: number,
@@ -239,6 +289,19 @@ export const tableSyncRepo = {
     await api.delete(
       `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/table-syncs/${syncConfigId}`
     )
+  },
+
+  updateCatalogDatabaseName: async (
+    pipelineId: number,
+    pipelineDestinationId: number,
+    syncConfigId: number,
+    catalogDatabaseName: string | null
+  ): Promise<TableSyncConfig> => {
+    const response: AxiosResponse<TableSyncConfig> = await api.patch(
+      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/table-syncs/${syncConfigId}/catalog`,
+      { catalog_database_name: catalogDatabaseName }
+    )
+    return response.data
   },
 
   initSnowflakeTable: async (

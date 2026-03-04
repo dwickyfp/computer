@@ -44,10 +44,12 @@ export function DestinationsPage() {
         }
     }, [])
 
-    const destinations = (data?.destinations ?? []).map((d) => ({
-        ...d,
-        total_tables: d.total_tables ?? 0,
-    }))
+    const destinations = (data?.destinations ?? [])
+        .filter((d) => d.type !== 'ROSETTA')
+        .map((d) => ({
+            ...d,
+            total_tables: d.total_tables ?? 0,
+        }))
 
     return (
         <DestinationsProvider>

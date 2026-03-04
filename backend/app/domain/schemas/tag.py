@@ -7,7 +7,7 @@ Defines schemas for creating, updating, and retrieving tags.
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import Field, validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.domain.schemas.common import BaseSchema, TimestampSchema
 
@@ -29,27 +29,29 @@ class TagCreate(TagBase):
     Schema for creating a new tag.
     """
 
-    @validator("tag")
+    @field_validator("tag")
+    @classmethod
     def validate_tag(cls, v: str) -> str:
         """Validate and normalize tag name."""
         # Strip whitespace but preserve case
         v = v.strip()
-        
+
         # Validate format (letters, numbers, hyphens, underscores, spaces)
         if not all(c.isalnum() or c in ["-", "_", " "] for c in v):
             raise ValueError(
                 "Tag must contain only alphanumeric characters, "
                 "hyphens, underscores, and spaces"
             )
-        
+
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "tag": "high-priority",
             }
         }
+    )
 
 
 class TagResponse(TimestampSchema):
@@ -66,16 +68,17 @@ class TagResponse(TimestampSchema):
         examples=["high-priority", "customer-data", "analytics"],
     )
 
-    class Config:
-        orm_mode = True
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "tag": "high-priority",
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z",
             }
-        }
+        },
+    )
 
 
 class TagListResponse(BaseSchema):
@@ -83,13 +86,11 @@ class TagListResponse(BaseSchema):
     Schema for list of tags.
     """
 
-    tags: List[TagResponse] = Field(
-        default_factory=list, description="List of tags"
-    )
+    tags: List[TagResponse] = Field(default_factory=list, description="List of tags")
     total: int = Field(..., description="Total number of tags")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "tags": [
                     {
@@ -117,21 +118,22 @@ class TableSyncTagAssociationCreate(BaseSchema):
         examples=["high-priority"],
     )
 
-    @validator("tag")
+    @field_validator("tag")
+    @classmethod
     def validate_tag(cls, v: str) -> str:
         """Validate and normalize tag name."""
         v = v.strip()
-        
+
         if not all(c.isalnum() or c in ["-", "_", " "] for c in v):
             raise ValueError(
                 "Tag must contain only alphanumeric characters, "
                 "hyphens, underscores, and spaces"
             )
-        
+
         return v
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "tag": "high-priority",
             }
@@ -150,9 +152,9 @@ class TableSyncTagAssociationResponse(TimestampSchema):
     tag_id: int = Field(..., description="Tag ID")
     tag_item: TagResponse = Field(..., description="Tag details")
 
-    class Config:
-        orm_mode = True
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "pipelines_destination_table_sync_id": 1,
@@ -166,7 +168,8 @@ class TableSyncTagAssociationResponse(TimestampSchema):
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z",
             }
-        }
+        },
+    )
 
 
 class TableSyncTagsResponse(BaseSchema):
@@ -181,7 +184,7 @@ class TableSyncTagsResponse(BaseSchema):
     total: int = Field(..., description="Total number of tags")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "table_sync_id": 1,
                 "tags": [
@@ -207,7 +210,7 @@ class TagSuggestionResponse(BaseSchema):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "suggestions": [
                     {
@@ -226,13 +229,11 @@ class TagWithUsageCount(TagResponse):
     Schema for tag with usage count.
     """
 
-    usage_count: int = Field(
-        ..., description="Number of times this tag is used", ge=0
-    )
+    usage_count: int = Field(..., description="Number of times this tag is used", ge=0)
 
-    class Config:
-        orm_mode = True
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "tag": "high-priority",
@@ -240,7 +241,8 @@ class TagWithUsageCount(TagResponse):
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z",
             }
-        }
+        },
+    )
 
 
 class AlphabetGroupedTags(BaseSchema):
@@ -255,7 +257,7 @@ class AlphabetGroupedTags(BaseSchema):
     count: int = Field(..., description="Number of tags in this group", ge=0)
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "letter": "A",
                 "count": 3,
@@ -283,7 +285,7 @@ class SmartTagsResponse(BaseSchema):
     total_tags: int = Field(..., description="Total number of unique tags", ge=0)
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "groups": [
                     {
@@ -307,7 +309,7 @@ class SmartTagsResponse(BaseSchema):
 
 class DestinationUsage(BaseSchema):
     """Schema for destination usage details."""
-    
+
     destination_id: int
     destination_name: str
     tables: List[str]
@@ -315,7 +317,7 @@ class DestinationUsage(BaseSchema):
 
 class PipelineUsage(BaseSchema):
     """Schema for pipeline usage details."""
-    
+
     pipeline_id: int
     pipeline_name: str
     destinations: List[DestinationUsage]
@@ -323,14 +325,14 @@ class PipelineUsage(BaseSchema):
 
 class TagUsageResponse(BaseSchema):
     """Schema for detailed tag usage response."""
-    
+
     tag: str
     usage: List[PipelineUsage]
 
 
 class TagRelationNode(BaseSchema):
     """Schema for a tag node in the relations graph."""
-    
+
     id: int
     tag: str
     usage_count: int
@@ -338,7 +340,7 @@ class TagRelationNode(BaseSchema):
 
 class TagRelationEdge(BaseSchema):
     """Schema for an edge between two tags."""
-    
+
     source: int
     target: int
     shared_tables: int
@@ -346,6 +348,6 @@ class TagRelationEdge(BaseSchema):
 
 class TagRelationsResponse(BaseSchema):
     """Schema for tag relations graph response."""
-    
+
     nodes: List[TagRelationNode]
     edges: List[TagRelationEdge]

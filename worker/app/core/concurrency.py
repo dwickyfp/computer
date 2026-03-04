@@ -121,15 +121,19 @@ def get_concurrency_metrics() -> dict:
 # ─── Memory watchdog ─────────────────────────────────────────────────────────
 
 _MEMORY_WARNING_MB: int | None = None
+_memory_warning_lock = threading.Lock()  # L-3: protect lazy-init against concurrent writes
 
 
 def _get_memory_warning_mb() -> int:
-    """Get memory warning threshold in MB (lazy-initialized)."""
+    """Get memory warning threshold in MB (lazy-initialized, thread-safe)."""
     global _MEMORY_WARNING_MB
     if _MEMORY_WARNING_MB is None:
-        from app.config.settings import get_settings
-        settings = get_settings()
-        _MEMORY_WARNING_MB = settings.memory_warning_mb
+        with _memory_warning_lock:
+            # Double-checked locking — consistent with _get_semaphore()
+            if _MEMORY_WARNING_MB is None:
+                from app.config.settings import get_settings
+                settings = get_settings()
+                _MEMORY_WARNING_MB = settings.memory_warning_mb
     return _MEMORY_WARNING_MB
 
 

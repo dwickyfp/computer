@@ -27,6 +27,7 @@ import { Route as AuthenticatedFlowTasksRouteRouteImport } from './routes/_authe
 import { Route as AuthenticatedDestinationsRouteRouteImport } from './routes/_authenticated/destinations/route'
 import { Route as AuthenticatedSourcesIndexRouteImport } from './routes/_authenticated/sources/index'
 import { Route as AuthenticatedSchedulesIndexRouteImport } from './routes/_authenticated/schedules/index'
+import { Route as AuthenticatedRosettaChainIndexRouteImport } from './routes/_authenticated/rosetta-chain/index'
 import { Route as AuthenticatedPipelinesIndexRouteImport } from './routes/_authenticated/pipelines/index'
 import { Route as AuthenticatedLinkedTasksIndexRouteImport } from './routes/_authenticated/linked-tasks/index'
 import { Route as AuthenticatedFlowTasksIndexRouteImport } from './routes/_authenticated/flow-tasks/index'
@@ -141,6 +142,12 @@ const AuthenticatedSchedulesIndexRoute =
   AuthenticatedSchedulesIndexRouteImport.update({
     id: '/schedules/',
     path: '/schedules/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedRosettaChainIndexRoute =
+  AuthenticatedRosettaChainIndexRouteImport.update({
+    id: '/rosetta-chain/',
+    path: '/rosetta-chain/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedPipelinesIndexRoute =
@@ -300,6 +307,7 @@ export interface FileRoutesByFullPath {
   '/flow-tasks/': typeof AuthenticatedFlowTasksIndexRoute
   '/linked-tasks/': typeof AuthenticatedLinkedTasksIndexRoute
   '/pipelines/': typeof AuthenticatedPipelinesIndexRoute
+  '/rosetta-chain/': typeof AuthenticatedRosettaChainIndexRoute
   '/schedules/': typeof AuthenticatedSchedulesIndexRoute
   '/sources/': typeof AuthenticatedSourcesIndexRoute
   '/flow-tasks/$flowTaskId/flow': typeof AuthenticatedFlowTasksFlowTaskIdFlowRoute
@@ -333,6 +341,7 @@ export interface FileRoutesByTo {
   '/flow-tasks': typeof AuthenticatedFlowTasksIndexRoute
   '/linked-tasks': typeof AuthenticatedLinkedTasksIndexRoute
   '/pipelines': typeof AuthenticatedPipelinesIndexRoute
+  '/rosetta-chain': typeof AuthenticatedRosettaChainIndexRoute
   '/schedules': typeof AuthenticatedSchedulesIndexRoute
   '/sources': typeof AuthenticatedSourcesIndexRoute
   '/flow-tasks/$flowTaskId/flow': typeof AuthenticatedFlowTasksFlowTaskIdFlowRoute
@@ -375,6 +384,7 @@ export interface FileRoutesById {
   '/_authenticated/flow-tasks/': typeof AuthenticatedFlowTasksIndexRoute
   '/_authenticated/linked-tasks/': typeof AuthenticatedLinkedTasksIndexRoute
   '/_authenticated/pipelines/': typeof AuthenticatedPipelinesIndexRoute
+  '/_authenticated/rosetta-chain/': typeof AuthenticatedRosettaChainIndexRoute
   '/_authenticated/schedules/': typeof AuthenticatedSchedulesIndexRoute
   '/_authenticated/sources/': typeof AuthenticatedSourcesIndexRoute
   '/_authenticated/flow-tasks/$flowTaskId/flow': typeof AuthenticatedFlowTasksFlowTaskIdFlowRoute
@@ -415,6 +425,7 @@ export interface FileRouteTypes {
     | '/flow-tasks/'
     | '/linked-tasks/'
     | '/pipelines/'
+    | '/rosetta-chain/'
     | '/schedules/'
     | '/sources/'
     | '/flow-tasks/$flowTaskId/flow'
@@ -448,6 +459,7 @@ export interface FileRouteTypes {
     | '/flow-tasks'
     | '/linked-tasks'
     | '/pipelines'
+    | '/rosetta-chain'
     | '/schedules'
     | '/sources'
     | '/flow-tasks/$flowTaskId/flow'
@@ -489,6 +501,7 @@ export interface FileRouteTypes {
     | '/_authenticated/flow-tasks/'
     | '/_authenticated/linked-tasks/'
     | '/_authenticated/pipelines/'
+    | '/_authenticated/rosetta-chain/'
     | '/_authenticated/schedules/'
     | '/_authenticated/sources/'
     | '/_authenticated/flow-tasks/$flowTaskId/flow'
@@ -634,6 +647,13 @@ declare module '@tanstack/react-router' {
       path: '/schedules'
       fullPath: '/schedules/'
       preLoaderRoute: typeof AuthenticatedSchedulesIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/rosetta-chain/': {
+      id: '/_authenticated/rosetta-chain/'
+      path: '/rosetta-chain'
+      fullPath: '/rosetta-chain/'
+      preLoaderRoute: typeof AuthenticatedRosettaChainIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/pipelines/': {
@@ -920,6 +940,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedSchedulesScheduleIdRoute: typeof AuthenticatedSchedulesScheduleIdRoute
+  AuthenticatedRosettaChainIndexRoute: typeof AuthenticatedRosettaChainIndexRoute
   AuthenticatedSchedulesIndexRoute: typeof AuthenticatedSchedulesIndexRoute
   AuthenticatedSourcesIndexRoute: typeof AuthenticatedSourcesIndexRoute
   AuthenticatedSourcesSourceIdDetailsRoute: typeof AuthenticatedSourcesSourceIdDetailsRoute
@@ -939,6 +960,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedSchedulesScheduleIdRoute: AuthenticatedSchedulesScheduleIdRoute,
+  AuthenticatedRosettaChainIndexRoute: AuthenticatedRosettaChainIndexRoute,
   AuthenticatedSchedulesIndexRoute: AuthenticatedSchedulesIndexRoute,
   AuthenticatedSourcesIndexRoute: AuthenticatedSourcesIndexRoute,
   AuthenticatedSourcesSourceIdDetailsRoute:

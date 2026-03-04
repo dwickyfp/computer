@@ -7,15 +7,17 @@ import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Plus } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { PipelineCreateDrawer } from './pipeline-create-drawer.tsx'
 
 export default function PipelineList() {
-    const { data: pipelines } = useQuery({
+    const { data: pipelines, isLoading } = useQuery({
         queryKey: ['pipelines'],
         queryFn: pipelinesRepo.getAll,
-        refetchInterval: 5000, // Refetch every 5 seconds
+        refetchInterval: 5000,
+        refetchIntervalInBackground: false,
     })
 
     useEffect(() => {
@@ -26,10 +28,6 @@ export default function PipelineList() {
     }, [])
 
     const [open, setOpen] = useState(false)
-
-    // Remove blocking loading state to allow layout rendering
-    // if (isLoading) return <div>Loading...</div>
-    // if (error) return <div>Error loading pipelines</div>
 
     return (
         <>
@@ -55,7 +53,15 @@ export default function PipelineList() {
                     </div>
                 </div>
                 <div className='-mx-4 flex-1 overflow-auto px-4 py-1 lg:flex-row lg:space-x-12 lg:space-y-0'>
-                    <PipelinesTable data={pipelines?.pipelines || []} columns={pipelineColumns} />
+                    {isLoading ? (
+                        <div className='space-y-2'>
+                            {Array.from({ length: 5 }).map((_, i) => (
+                                <Skeleton key={i} className='h-12 w-full rounded-md' />
+                            ))}
+                        </div>
+                    ) : (
+                        <PipelinesTable data={pipelines?.pipelines || []} columns={pipelineColumns} />
+                    )}
                 </div>
             </Main>
 

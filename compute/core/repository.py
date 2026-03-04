@@ -9,7 +9,7 @@ from typing import Optional
 from datetime import datetime
 
 from core.database import DatabaseSession
-from core.db_utils import retry_on_connection_error
+from core.db_utils import retry_on_connection_error, is_connection_error
 from core.models import (
     Source,
     Destination,
@@ -172,7 +172,8 @@ class PipelineDestinationRepository:
         with DatabaseSession() as session:
             session.execute(
                 """
-                SELECT pd.*, d.name as dest_name, d.type as dest_type, d.config as dest_config
+                SELECT pd.*, d.name as dest_name, d.type as dest_type, d.config as dest_config,
+                       d.chain_client_id as dest_chain_client_id
                 FROM pipelines_destination pd
                 JOIN destinations d ON pd.destination_id = d.id
                 WHERE pd.pipeline_id = %s
@@ -189,6 +190,7 @@ class PipelineDestinationRepository:
                     name=row["dest_name"],
                     type=row["dest_type"],
                     config=row["dest_config"],
+                    chain_client_id=row.get("dest_chain_client_id"),
                 )
 
                 if include_table_syncs:
@@ -372,6 +374,22 @@ class PipelineMetadataRepository:
                 row = session.fetchone()
                 return row["id"] if row else 0
             except Exception as e:
+                # Re-raise transient connection errors so @retry_on_connection_error
+                # can do its job.  Swallow only non-retryable SQL errors.
+                if is_connection_error(e):
+                    raise
+                # FK violation means the pipeline row was deleted; this is not
+                # an application error — downgrade to WARNING to avoid false alarms.
+                err_str = str(e).lower()
+                if (
+                    "foreign key" in err_str
+                    or "violates foreign key constraint" in err_str
+                ):
+                    logger.warning(
+                        f"Pipeline {pipeline_id} no longer exists in the pipelines "
+                        f"table — skipping metadata upsert (FK violation)."
+                    )
+                    return 0
                 logger.error(
                     f"Error upserting pipeline metadata for pipeline {pipeline_id}: {e}"
                 )

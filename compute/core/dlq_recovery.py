@@ -132,9 +132,14 @@ class DLQRecoveryWorker:
             10  # Run purge every 10 iterations (10 * check_interval seconds)
         )
 
+        # Adaptive polling: start with short sleep, back off when idle
+        _MIN_SLEEP = 1  # seconds — busy minimum
+        _current_sleep = _MIN_SLEEP
+
         while self._running:
             try:
                 iteration_count += 1
+                processed_any = False
 
                 # Get all queue identifiers from DLQ
                 queues = self._dlq_manager.list_queues()
@@ -174,9 +179,14 @@ class DLQRecoveryWorker:
                             )
 
                         # Then process new messages
+                        had_messages = self._dlq_manager.has_messages(
+                            source_id, table_name, destination_id
+                        )
                         self._process_queue(source_id, table_name, destination_id)
+                        if had_messages:
+                            processed_any = True
 
-                        # Periodic cleanup: purge old messages
+                        # Periodic cleanup: purge old messages (R7 time-based pruning)
                         if iteration_count % cleanup_interval == 0:
                             self._dlq_manager.purge_old_messages(
                                 source_id,
@@ -202,8 +212,14 @@ class DLQRecoveryWorker:
                         "switching to normal recovery mode"
                     )
 
-                # Sleep before next check
-                time.sleep(self._check_interval)
+                # Adaptive sleep: immediate re-loop when busy, backoff when idle
+                if processed_any:
+                    _current_sleep = _MIN_SLEEP
+                else:
+                    _current_sleep = min(
+                        _current_sleep * 2, self._check_interval
+                    )
+                time.sleep(_current_sleep)
 
             except Exception as e:
                 self._logger.error(f"Error in DLQ recovery loop: {e}", exc_info=True)

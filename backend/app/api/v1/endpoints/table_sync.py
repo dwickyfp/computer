@@ -7,6 +7,7 @@ Provides REST API for managing table synchronization configurations.
 from typing import List
 
 from fastapi import APIRouter, Depends, Path, status, BackgroundTasks, HTTPException
+from pydantic import BaseModel
 
 from app.api.deps import get_pipeline_service, get_pipeline_service_readonly
 from app.domain.schemas.pipeline import (
@@ -157,6 +158,48 @@ def delete_table_sync_by_id(
     service.delete_table_sync_by_id(
         pipeline_id, pipeline_destination_id, sync_config_id
     )
+
+
+class CatalogDatabaseUpdate(BaseModel):
+    catalog_database_name: str | None = None
+
+
+@router.patch(
+    "/{pipeline_id}/destinations/{pipeline_destination_id}/table-syncs/{sync_config_id}/catalog",
+    response_model=PipelineDestinationTableSyncResponse,
+    summary="Update catalog database name",
+    description="Set or clear the remote Rosetta Chain destination database name for a sync config",
+)
+def update_catalog_database_name(
+    pipeline_id: int = Path(..., description="Pipeline ID"),
+    pipeline_destination_id: int = Path(..., description="Pipeline Destination ID"),
+    sync_config_id: int = Path(..., description="Sync configuration ID"),
+    body: CatalogDatabaseUpdate = ...,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> PipelineDestinationTableSyncResponse:
+    """
+    Update the catalog_database_name for a table sync configuration.
+
+    Used by the Rosetta Chain schema registration dialog to persist which remote
+    database the table was registered to, enabling active-state UI and pre-population.
+    """
+    from app.domain.models.pipeline import PipelineDestinationTableSync
+    from app.core.exceptions import EntityNotFoundError
+
+    sync = (
+        service.db.query(PipelineDestinationTableSync)
+        .filter_by(id=sync_config_id, pipeline_destination_id=pipeline_destination_id)
+        .first()
+    )
+    if not sync:
+        raise HTTPException(
+            status_code=404, detail="Table sync configuration not found"
+        )
+
+    sync.catalog_database_name = body.catalog_database_name
+    service.db.commit()
+    service.db.refresh(sync)
+    return sync
 
 
 @router.post(

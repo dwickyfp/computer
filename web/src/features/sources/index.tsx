@@ -15,6 +15,7 @@ export function Sources() {
         queryKey: ['sources'], // Consistent query key
         queryFn: sourcesRepo.getAll,
         refetchInterval: 5000,
+        refetchIntervalInBackground: false,
     })
 
     useEffect(() => {

@@ -27,7 +27,13 @@ from app.config.settings import get_settings
 logger = structlog.get_logger(__name__)
 
 TZ = ZoneInfo("Asia/Jakarta")
-MAX_POLL_TIMEOUT = 3600    # 1 hour max wait per step
+# M-4 fix: was 3600 s (1 hour) which is far longer than task_hard_time_limit
+# (default 180 s, max 900 s per settings).  If a child flow-task is OOM-killed
+# without Celery recording a FAILURE result, the orchestration thread blocks
+# for the full timeout, consuming a concurrency slot and stalling the pipeline.
+# 600 s (10 min) is generous for any realistic flow-task while still bounding
+# the worst-case stall to a manageable window.
+MAX_POLL_TIMEOUT = 600    # 10 min max wait per step
 
 # ─── Deadlock prevention ──────────────────────────────────────────────────────
 # Linked task orchestration threads call celery_result.get() which blocks the
@@ -252,12 +258,18 @@ def execute_linked_task(linked_task_id: int, run_history_id: int) -> dict:
         step_map = {s["id"]: s for s in steps}
         successors: dict[int, list[tuple[int, str]]] = {s["id"]: [] for s in steps}
         predecessors: dict[int, list[int]] = {s["id"]: [] for s in steps}
+        # H-3 fix: store per-edge conditions keyed by target so we can evaluate
+        # ALL incoming edges before deciding to skip a multi-predecessor node.
+        predecessor_edges: dict[int, list[tuple[int, str]]] = {s["id"]: [] for s in steps}
 
         for edge in edges:
             successors[edge["source_step_id"]].append(
                 (edge["target_step_id"], edge["condition"])
             )
             predecessors[edge["target_step_id"]].append(edge["source_step_id"])
+            predecessor_edges[edge["target_step_id"]].append(
+                (edge["source_step_id"], edge["condition"])
+            )
 
         # Create step logs (PENDING) upfront
         step_log_map: dict[int, int] = {}  # step_id → step_log_id
@@ -305,17 +317,31 @@ def execute_linked_task(linked_task_id: int, run_history_id: int) -> dict:
         # Determine next layer
         next_queue: list[int] = []
         for step_id in queue:
-            for target_id, condition in successors.get(step_id, []):
+            for target_id, _condition in successors.get(step_id, []):
                 in_degree[target_id] -= 1
-                source_status = step_result.get(step_id, STATUS_FAILED)
 
-                if condition == CONDITION_ON_SUCCESS and source_status != STATUS_SUCCESS:
-                    step_result[target_id] = STATUS_SKIPPED
-                    with get_db_session() as db:
-                        _update_step_log(db, step_log_map[target_id], status=STATUS_SKIPPED)
-
+                # H-3 fix: defer skip/run decision until ALL predecessors have been
+                # evaluated (in_degree reaches 0).  Previously we skipped a target
+                # as soon as any ON_SUCCESS edge failed, ignoring ALWAYS edges from
+                # other predecessors that hadn't been processed yet.
                 if in_degree[target_id] == 0 and target_id not in step_result:
-                    next_queue.append(target_id)
+                    # A node should run if at least one incoming edge is "enabling":
+                    #   ALWAYS edges are always enabling.
+                    #   ON_SUCCESS edges are enabling only when the source succeeded.
+                    has_enabling_edge = any(
+                        cond == CONDITION_ALWAYS
+                        or (
+                            cond == CONDITION_ON_SUCCESS
+                            and step_result.get(src_id) == STATUS_SUCCESS
+                        )
+                        for src_id, cond in predecessor_edges.get(target_id, [])
+                    )
+                    if has_enabling_edge:
+                        next_queue.append(target_id)
+                    else:
+                        step_result[target_id] = STATUS_SKIPPED
+                        with get_db_session() as db:
+                            _update_step_log(db, step_log_map[target_id], status=STATUS_SKIPPED)
 
         queue = next_queue
 

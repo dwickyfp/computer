@@ -9,7 +9,11 @@ from typing import List
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 
-from app.api.deps import get_source_service, get_source_service_readonly, get_preset_service
+from app.api.deps import (
+    get_source_service,
+    get_source_service_readonly,
+    get_preset_service,
+)
 from app.domain.schemas.source import (
     PublicationCreateRequest,
     SourceCreate,
@@ -111,7 +115,8 @@ def get_source_details(
     force_refresh: bool = Query(
         False, description="Force refresh from source database (bypasses cache, slower)"
     ),
-    service: SourceService = Depends(get_source_service),
+    rw_service: SourceService = Depends(get_source_service),
+    ro_service: SourceService = Depends(get_source_service_readonly),
 ) -> SourceDetailResponse:
     """
     Get source details.
@@ -119,11 +124,13 @@ def get_source_details(
     Args:
         source_id: Source identifier
         force_refresh: If True, bypass cache and refresh from source database
-        service: Source service instance
+        rw_service: Read-write source service (used when force_refresh=True)
+        ro_service: Read-only source service (used when force_refresh=False)
 
     Returns:
         Source details
     """
+    service = rw_service if force_refresh else ro_service
     return service.get_source_details(source_id, force_refresh=force_refresh)
 
 

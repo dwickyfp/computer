@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -39,8 +39,7 @@ class RunHistoryResponse(BaseModel):
     status: str
     message: Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------
@@ -56,25 +55,29 @@ class ScheduleCreate(BaseModel):
     cron_expression: str
     status: str = "ACTIVE"
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def name_no_whitespace(cls, v: str) -> str:
         if " " in v:
             raise ValueError("Name must not contain spaces")
         return v.strip()
 
-    @validator("task_type")
+    @field_validator("task_type")
+    @classmethod
     def task_type_valid(cls, v: str) -> str:
         if v not in VALID_TASK_TYPES:
             raise ValueError(f"task_type must be one of {VALID_TASK_TYPES}")
         return v
 
-    @validator("status")
+    @field_validator("status")
+    @classmethod
     def status_valid(cls, v: str) -> str:
         if v not in VALID_STATUSES:
             raise ValueError(f"status must be one of {VALID_STATUSES}")
         return v
 
-    @validator("cron_expression")
+    @field_validator("cron_expression")
+    @classmethod
     def cron_valid(cls, v: str) -> str:
         v = v.strip()
         parts = v.split()
@@ -93,25 +96,29 @@ class ScheduleUpdate(BaseModel):
     cron_expression: Optional[str] = None
     status: Optional[str] = None
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def name_no_whitespace(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and " " in v:
             raise ValueError("Name must not contain spaces")
         return v.strip() if v else v
 
-    @validator("task_type")
+    @field_validator("task_type")
+    @classmethod
     def task_type_valid(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in VALID_TASK_TYPES:
             raise ValueError(f"task_type must be one of {VALID_TASK_TYPES}")
         return v
 
-    @validator("status")
+    @field_validator("status")
+    @classmethod
     def status_valid(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in VALID_STATUSES:
             raise ValueError(f"status must be one of {VALID_STATUSES}")
         return v
 
-    @validator("cron_expression")
+    @field_validator("cron_expression")
+    @classmethod
     def cron_valid(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             v = v.strip()
@@ -141,8 +148,7 @@ class ScheduleListResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ScheduleResponse(ScheduleListResponse):
@@ -150,8 +156,7 @@ class ScheduleResponse(ScheduleListResponse):
 
     run_history: List[RunHistoryResponse] = []
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ScheduleHistoryPageResponse(BaseModel):

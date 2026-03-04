@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SystemMetricBase(BaseModel):
@@ -19,10 +19,9 @@ class SystemMetricCreate(SystemMetricBase):
 class SystemMetricResponse(SystemMetricBase):
     id: int
     recorded_at: datetime
-    
+
     # Calculated fields
     memory_usage_percent: Optional[float] = None
     swap_usage_percent: Optional[float] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)

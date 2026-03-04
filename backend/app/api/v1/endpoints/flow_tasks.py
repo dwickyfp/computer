@@ -5,6 +5,8 @@ Provides REST API for managing visual ETL flow tasks, graphs,
 run triggers, node previews, and execution history.
 """
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import get_flow_task_service
@@ -177,14 +179,21 @@ def get_graph(
     """
     Load the saved node/edge graph for a flow task.
 
-    Returns 404 if the graph has never been saved.
+    Returns an empty graph (id=0) when no graph has been saved yet,
+    so the client never receives a 404 for a valid but new flow.
     """
     try:
         graph = service.get_graph(flow_task_id)
         if not graph:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No graph found for flow task {flow_task_id}. Save the graph first.",
+            now = datetime.now(timezone.utc)
+            return FlowTaskGraphResponse(
+                id=0,
+                flow_task_id=flow_task_id,
+                nodes_json=[],
+                edges_json=[],
+                version=0,
+                created_at=now,
+                updated_at=now,
             )
         return FlowTaskGraphResponse.from_orm(graph)
     except EntityNotFoundError as e:

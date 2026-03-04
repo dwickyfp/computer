@@ -7,13 +7,9 @@ Defines schemas for creating, updating, and retrieving source configurations.
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.schemas.common import BaseSchema, TimestampSchema
-
-
-
-
 
 
 class SourceBase(BaseSchema):
@@ -85,7 +81,8 @@ class SourceCreate(SourceBase):
         examples=["SecurePassword123!"],
     )
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: str) -> str:
         """Validate source name format."""
         if not v.replace("-", "").replace("_", "").isalnum():
@@ -95,7 +92,8 @@ class SourceCreate(SourceBase):
             )
         return v.lower()
 
-    @validator("publication_name")
+    @field_validator("publication_name")
+    @classmethod
     def validate_publication_name(cls, v: str) -> str:
         """Validate publication name format."""
         if not v.replace("_", "").isalnum():
@@ -105,8 +103,8 @@ class SourceCreate(SourceBase):
             )
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "name": "production-postgres",
                 "pg_host": "postgres.example.com",
@@ -118,12 +116,14 @@ class SourceCreate(SourceBase):
                 "replication_name": "dbz_replication_slot",
             }
         }
+    )
 
 
 class SourceConnectionTest(BaseSchema):
     """
     Schema for testing database connection.
     """
+
     pg_host: str = Field(
         ...,
         min_length=1,
@@ -201,7 +201,8 @@ class SourceUpdate(BaseSchema):
         description="Replication slot name",
     )
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v: str | None) -> str | None:
         """Validate source name format."""
         if v is not None:
@@ -222,21 +223,23 @@ class SourceResponse(SourceBase, TimestampSchema):
     """
 
     id: int = Field(..., description="Unique source identifier", examples=[1, 42])
-    is_publication_enabled: bool = Field(default=False, description="Whether publication is enabled")
-    is_replication_enabled: bool = Field(default=False, description="Whether replication is enabled")
-    last_check_replication_publication: Optional[datetime] = Field(default=None, description="Last timestamp of replication/publication check")
+    is_publication_enabled: bool = Field(
+        default=False, description="Whether publication is enabled"
+    )
+    is_replication_enabled: bool = Field(
+        default=False, description="Whether replication is enabled"
+    )
+    last_check_replication_publication: Optional[datetime] = Field(
+        default=None, description="Last timestamp of replication/publication check"
+    )
     total_tables: int = Field(default=0, description="Total tables in publication")
-    
+
     # Explicitly exclude password to ensure it's never returned
     pg_password: Optional[str] = Field(default=None, exclude=True)
 
-
-    class Config:
-        orm_mode = True
-        fields = {
-            'pg_password': {'exclude': True}
-        }
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "name": "production-postgres",
@@ -252,7 +255,11 @@ class SourceResponse(SourceBase, TimestampSchema):
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z",
             }
-        }
+        },
+    )
+
 
 class PublicationCreateRequest(BaseModel):
-    tables: List[str] = Field(..., min_items=1, description="List of tables to include in publication")
+    tables: List[str] = Field(
+        ..., min_length=1, description="List of tables to include in publication"
+    )

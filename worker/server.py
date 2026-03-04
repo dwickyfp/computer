@@ -28,27 +28,16 @@ _health_cache_time: float = 0
 _cache_ttl: float = 3.0
 
 
-@app.get("/health")
-async def health_check():
+def _sync_health_check() -> dict:
     """
-    Health check endpoint.
+    Synchronous health check worker — must run in a thread-pool executor so it
+    does NOT block the asyncio event loop (C-1 fix).
 
-    Checks if the Celery worker is responding by inspecting active workers.
-    Results are cached for 3 seconds to improve response time.
+    Returns a result dict with keys: status, healthy, active_workers,
+    active_tasks, reserved_tasks, timestamp, and optionally error / note.
     """
-    global _health_cache, _health_cache_time
-
-    # Return cached result if fresh
-    now = time.time()
-    if _health_cache and (now - _health_cache_time) < _cache_ttl:
-        return _health_cache
-
     try:
-        # Use shared Celery app from worker
         celery_app = _worker_celery_app
-
-        # Try inspector with reduced timeout to avoid blocking health API
-        # Note: inspector.ping() can be unreliable even when workers are functioning
         inspector = celery_app.control.inspect(timeout=1.0)
 
         active_workers = 0
@@ -56,12 +45,10 @@ async def health_check():
         reserved_tasks = 0
 
         try:
-            # Quick ping attempt - if it fails, we'll still check Redis broker
             ping_result = inspector.ping()
             if ping_result:
                 active_workers = len(ping_result)
 
-                # Count active and reserved tasks
                 active = inspector.active()
                 if active:
                     for worker_tasks in active.values():
@@ -72,32 +59,29 @@ async def health_check():
                     for worker_tasks in reserved.values():
                         reserved_tasks += len(worker_tasks)
         except Exception as ping_error:
-            # Ping failed, but check if Redis broker is accessible
             logger.debug(f"Inspector ping failed (might be busy): {ping_error}")
 
-            # Test Redis broker connectivity as fallback
-            # Use existing connection pool to avoid leaking connections
+            # Celery inspector is unavailable — check whether the Redis broker
+            # is at least reachable before deciding on the health status.
             try:
                 redis_client = get_redis()
                 if redis_client:
                     redis_client.ping()
-                # Redis is accessible, assume worker is healthy
-                # (If preview tasks work, worker is functional even if ping fails)
-                result = {
-                    "status": "healthy",
-                    "healthy": True,
-                    "active_workers": 1,  # Assume at least 1 worker (can't inspect)
+                # C-2 fix: Redis alive but Celery inspector unresponsive means we
+                # cannot confirm the worker is running.  Report 'degraded' so the
+                # backend health-check job does NOT dispatch work that will hang.
+                return {
+                    "status": "degraded",
+                    "healthy": False,
+                    "active_workers": 0,
                     "active_tasks": 0,
                     "reserved_tasks": 0,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "note": "Celery inspector unavailable, verified via Redis broker",
+                    "note": "Celery inspector unavailable; Redis broker is reachable",
                 }
-                _health_cache = result
-                _health_cache_time = now
-                return result
             except Exception as redis_error:
                 logger.error(f"Redis broker check failed: {redis_error}")
-                result = {
+                return {
                     "status": "unhealthy",
                     "healthy": False,
                     "active_workers": 0,
@@ -106,11 +90,9 @@ async def health_check():
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "error": f"Celery ping failed and Redis unreachable: {redis_error}",
                 }
-                return result
 
-        # If we got here, ping succeeded
         if active_workers == 0:
-            result = {
+            return {
                 "status": "unhealthy",
                 "healthy": False,
                 "active_workers": 0,
@@ -119,9 +101,8 @@ async def health_check():
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "error": "No workers responding to ping",
             }
-            return result
 
-        result = {
+        return {
             "status": "healthy",
             "healthy": True,
             "active_workers": active_workers,
@@ -130,14 +111,9 @@ async def health_check():
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-        # Cache the successful result
-        _health_cache = result
-        _health_cache_time = now
-        return result
-
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        result = {
+        return {
             "status": "unhealthy",
             "healthy": False,
             "active_workers": 0,
@@ -146,8 +122,31 @@ async def health_check():
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "error": str(e),
         }
-        # Don't cache errors
-        return result
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint.
+
+    Delegates all blocking I/O to a thread-pool executor so the asyncio event
+    loop is never stalled (C-1 fix).  Results are cached for 3 seconds.
+    """
+    global _health_cache, _health_cache_time
+
+    now = time.time()
+    if _health_cache and (now - _health_cache_time) < _cache_ttl:
+        return _health_cache
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _sync_health_check)
+
+    # Cache healthy and degraded results; never cache transient error responses.
+    if result.get("status") in ("healthy", "degraded"):
+        _health_cache = result
+        _health_cache_time = now
+
+    return result
 
 
 def run_server() -> None:
@@ -190,7 +189,9 @@ async def get_node_schema(request: NodeSchemaRequest):
     try:
         from app.tasks.flow_task.preview_executor import execute_node_schema
 
-        loop = asyncio.get_event_loop()
+        # M-3 fix: use get_running_loop() — get_event_loop() is deprecated in
+        # Python 3.10+ when called from within a running async context.
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
             execute_node_schema,

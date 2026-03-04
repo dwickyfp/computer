@@ -179,8 +179,11 @@ class PostgreSQLDestination(BaseDestination):
 
         try:
             # Create in-memory DuckDB connection with performance tuning
+            import os
+
+            duckdb_mem = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
             self._duckdb_conn = duckdb.connect(":memory:")
-            self._duckdb_conn.execute("SET memory_limit='4GB'")
+            self._duckdb_conn.execute(f"SET memory_limit='{duckdb_mem}'")
             self._duckdb_conn.execute("SET threads=4")
             self._duckdb_conn.execute("SET enable_progress_bar=false")
 
@@ -311,9 +314,17 @@ class PostgreSQLDestination(BaseDestination):
 
         try:
             if pg_type == "date":
-                # Debezium sends DATE as days since epoch
+                # Debezium sends DATE as days since epoch (int or numeric string
+                # when coming through Rosetta Chain where all values are str-ified)
                 if isinstance(value, int):
                     return datetime.date(1970, 1, 1) + datetime.timedelta(days=value)
+                if isinstance(value, str):
+                    try:
+                        return datetime.date(1970, 1, 1) + datetime.timedelta(
+                            days=int(value)
+                        )
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type in (
@@ -326,6 +337,13 @@ class PostgreSQLDestination(BaseDestination):
                     return datetime.datetime(1970, 1, 1) + datetime.timedelta(
                         microseconds=value
                     )
+                if isinstance(value, str):
+                    try:
+                        return datetime.datetime(1970, 1, 1) + datetime.timedelta(
+                            microseconds=int(value)
+                        )
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type == "time without time zone":
@@ -334,15 +352,30 @@ class PostgreSQLDestination(BaseDestination):
                     return (
                         datetime.datetime.min + datetime.timedelta(microseconds=value)
                     ).time()
+                if isinstance(value, str):
+                    try:
+                        return (
+                            datetime.datetime.min
+                            + datetime.timedelta(microseconds=int(value))
+                        ).time()
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type in ("time with time zone", "timetz"):
                 # Debezium sends TIME WITH TIME ZONE as microseconds since midnight
-                # The timezone offset is preserved in the PostgreSQL column metadata
                 if isinstance(value, int):
                     return (
                         datetime.datetime.min + datetime.timedelta(microseconds=value)
                     ).time()
+                if isinstance(value, str):
+                    try:
+                        return (
+                            datetime.datetime.min
+                            + datetime.timedelta(microseconds=int(value))
+                        ).time()
+                    except (ValueError, TypeError):
+                        pass
                 return value
 
             elif pg_type in ("numeric", "decimal"):
@@ -451,10 +484,6 @@ class PostgreSQLDestination(BaseDestination):
                     except Exception as e:
                         self._logger.warning(f"Failed to process geometry WKB: {e}")
                         return None
-                return value
-
-            elif pg_type == "ARRAY" or "[]" in str(pg_type):
-                # Handle array types
                 return value
 
             else:
@@ -591,11 +620,39 @@ class PostgreSQLDestination(BaseDestination):
 
         return result
 
+    # Whitelist of allowed SQL operators for filter clauses
+    _ALLOWED_OPERATORS = frozenset(
+        {
+            "=",
+            "!=",
+            "<>",
+            ">",
+            "<",
+            ">=",
+            "<=",
+            "LIKE",
+            "ILIKE",
+            "NOT LIKE",
+            "NOT ILIKE",
+            "IN",
+            "NOT IN",
+            "BETWEEN",
+            "IS NULL",
+            "IS NOT NULL",
+        }
+    )
+
+    # Pattern for valid SQL identifiers (column names)
+    _IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
+
     def _build_single_clause(
         self, column: str, operator: str, value: str, value2: str = ""
     ) -> str:
         """
         Build a single SQL clause from filter components.
+
+        Validates operator against whitelist and sanitizes column names
+        to prevent SQL injection.
 
         Args:
             column: Column name
@@ -608,8 +665,25 @@ class PostgreSQLDestination(BaseDestination):
         """
         op_upper = operator.upper().strip()
 
+        # Validate operator against whitelist
+        if op_upper not in self._ALLOWED_OPERATORS:
+            self._logger.warning(
+                f"Rejected disallowed operator '{operator}' in filter SQL"
+            )
+            return ""
+
+        # Validate column name is a safe identifier
+        if not self._IDENTIFIER_PATTERN.match(column):
+            self._logger.warning(
+                f"Rejected invalid column name '{column}' in filter SQL"
+            )
+            return ""
+
+        # Quote column name for safety
+        safe_column = f'"{column}"'
+
         if op_upper in ("IS NULL", "IS NOT NULL"):
-            return f"{column} {op_upper}"
+            return f"{safe_column} {op_upper}"
 
         if not value and op_upper not in ("IS NULL", "IS NOT NULL"):
             return ""
@@ -617,26 +691,32 @@ class PostgreSQLDestination(BaseDestination):
         if op_upper == "BETWEEN" and value and value2:
             q_val = self._quote_filter_value(value)
             q_val2 = self._quote_filter_value(value2)
-            return f"{column} BETWEEN {q_val} AND {q_val2}"
+            return f"{safe_column} BETWEEN {q_val} AND {q_val2}"
 
-        if op_upper in ("LIKE", "ILIKE"):
-            return f"{column} {op_upper} '%{value}%'"
+        if op_upper in ("LIKE", "ILIKE", "NOT LIKE", "NOT ILIKE"):
+            safe_value = self._escape_sql_string(value)
+            return f"{safe_column} {op_upper} '%{safe_value}%'"
 
-        if op_upper == "IN":
+        if op_upper in ("IN", "NOT IN"):
             # Values are comma-separated
             values = [v.strip() for v in value.split(",") if v.strip()]
             quoted = [self._quote_filter_value(v) for v in values]
-            return f"{column} IN ({', '.join(quoted)})"
+            return f"{safe_column} {op_upper} ({', '.join(quoted)})"
 
-        return f"{column} {operator} {self._quote_filter_value(value)}"
+        return f"{safe_column} {operator} {self._quote_filter_value(value)}"
+
+    @staticmethod
+    def _escape_sql_string(value: str) -> str:
+        """Escape single quotes in a string value for safe SQL interpolation."""
+        return value.replace("'", "''")
 
     def _quote_filter_value(self, value: str) -> str:
-        """Quote a filter value - numeric values are unquoted, strings are quoted."""
+        """Quote a filter value - numeric values are unquoted, strings are quoted with escaping."""
         try:
             float(value)
             return value
         except (ValueError, TypeError):
-            return f"'{value}'"
+            return f"'{self._escape_sql_string(value)}'"
 
     def _parse_debezium_field_types(self, schema: Optional[dict]) -> dict[str, dict]:
         """
@@ -887,11 +967,11 @@ class PostgreSQLDestination(BaseDestination):
         if not records:
             return
 
-        # Sanitize table name for DuckDB
-        safe_table_name = table_name.replace(".", "_").replace("-", "_")
+        # Sanitize table name for DuckDB — strip to alphanumeric + underscores
+        safe_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
 
-        # Drop existing table if exists
-        self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {safe_table_name}")
+        # Drop existing table if exists (use identifier quoting for safety)
+        self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{safe_table_name}"')
 
         # Convert records to columnar format
         data = [record.value for record in records]
@@ -918,9 +998,8 @@ class PostgreSQLDestination(BaseDestination):
         # Create Arrow table — DuckDB's native format (zero-copy)
         arrow_table = pa.table(arrays)
 
-        # Register the Arrow table and create DuckDB table from it
         self._duckdb_conn.execute(
-            f"CREATE TABLE {safe_table_name} AS SELECT * FROM arrow_table"
+            f'CREATE TABLE "{safe_table_name}" AS SELECT * FROM arrow_table'
         )
 
         self._logger.debug(
@@ -948,7 +1027,7 @@ class PostgreSQLDestination(BaseDestination):
             return
 
         # Sanitize table name
-        safe_table_name = table_name.replace(".", "_").replace("-", "_")
+        safe_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
 
         # Build WHERE clause using the unified method
         where_conditions = self._build_where_clause_from_filter_sql(filter_sql)
@@ -957,7 +1036,7 @@ class PostgreSQLDestination(BaseDestination):
 
         # Delete rows that DON'T match the filter (keep only matching rows)
         delete_sql = f"""
-            DELETE FROM {safe_table_name}
+            DELETE FROM "{safe_table_name}"
             WHERE NOT ({where_conditions})
         """
 
@@ -983,11 +1062,11 @@ class PostgreSQLDestination(BaseDestination):
             Transformed records as dicts
         """
         # Sanitize table name
-        safe_table_name = table_name.replace(".", "_").replace("-", "_")
+        safe_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
 
         if not custom_sql:
             # Return all rows from table
-            sql = f"SELECT * FROM {safe_table_name}"
+            sql = f'SELECT * FROM "{safe_table_name}"'
         else:
             # Replace original table name with sanitized version in user's SQL
             # This allows users to write: SELECT * FROM tbl_sales
@@ -1457,12 +1536,32 @@ class PostgreSQLDestination(BaseDestination):
                 # Use base type for others
                 return pg_type
 
-            # 1. DELETE existing rows that match keys
+            # 1a. Deduplicate staging table by PK — keep last row per key.
+            # This prevents intra-batch duplicate key violations when the DLQ
+            # replays multiple CDC events (e.g. op=c) for the same primary key.
             if key_columns:
-                pk_conditions = " AND ".join(
-                    [f'target."{k}" = source."{k}"' for k in key_columns]
-                )
+                pk_row_num_expr = ", ".join([f'"{k}"' for k in key_columns])
+                dedup_sql = f"""
+                    DELETE FROM {temp_source}
+                    WHERE rowid NOT IN (
+                        SELECT MAX(rowid)
+                        FROM {temp_source}
+                        GROUP BY {pk_row_num_expr}
+                    )
+                """
+                try:
+                    self._duckdb_conn.execute(dedup_sql)
+                    self._logger.debug(
+                        f"Deduped staging table '{temp_source}' by keys {key_columns}"
+                    )
+                except Exception as e_dedup:
+                    # rowid may not exist on all DuckDB versions; log and continue
+                    self._logger.debug(
+                        f"Staging dedup skipped (rowid unavailable): {e_dedup}"
+                    )
 
+            # 1b. DELETE existing rows that match keys
+            if key_columns:
                 # DuckDB doesn't support DELETE ... FROM ... USING directly for Postgres attached tables
                 # We use a subquery with IN or a JOIN-like condition if possible,
                 # but the most reliable way in DuckDB for this is a combined DELETE via the scanner
@@ -1599,7 +1698,13 @@ class PostgreSQLDestination(BaseDestination):
                 )
 
             # Determine primary key columns for MERGE
-            # Priority: custom primary keys > target table PK (for custom SQL) > source CDC PK
+            # Priority:
+            #   1. primary_key_column_target  – explicit user override
+            #   2. custom_sql present         – target table PK (SQL may reshape schema)
+            #   3. filter_sql present         – target table PK (source CDC key may not
+            #                                   be present in record.value columns)
+            #   4. base query                 – source CDC record PK, validated against
+            #                                   actual output columns before use
             if table_sync.primary_key_column_target:
                 # User has specified custom primary key columns
                 custom_keys = [
@@ -1635,8 +1740,51 @@ class PostgreSQLDestination(BaseDestination):
                             f"and source PK {source_pk} not in output columns. "
                             f"Using first output column as key: {key_columns}"
                         )
+            elif table_sync.filter_sql:
+                # filter_sql only filters rows; it does not reshape columns.  However
+                # the source CDC record key (e.g. "sale_key_id") may be a logical key
+                # that is absent from record.value columns — causing a Binder Error when
+                # it is referenced in the MERGE DELETE subquery.
+                # Prefer the target table's actual PK; fall back gracefully.
+                key_columns = self._get_target_primary_key(target_table)
+                if not key_columns:
+                    source_pk = self._get_primary_key_columns(records[0])
+                    output_cols = set(transformed[0].keys()) if transformed else set()
+                    if all(k in output_cols for k in source_pk):
+                        key_columns = source_pk
+                        self._logger.warning(
+                            f"Could not detect target PK for '{target_table}' (filter_sql path), "
+                            f"falling back to source PK: {source_pk}"
+                        )
+                    else:
+                        key_columns = (
+                            [list(output_cols)[0]] if output_cols else source_pk
+                        )
+                        self._logger.warning(
+                            f"Could not detect target PK for '{target_table}' and source PK "
+                            f"{source_pk} not in output columns (filter_sql path). "
+                            f"Using first output column as key: {key_columns}"
+                        )
             else:
-                key_columns = self._get_primary_key_columns(records[0])
+                # Base query: use source CDC record PK but verify it is actually present
+                # in the output columns.  The CDC key dict may name a column that is
+                # absent from record.value (different logical vs physical PK), which
+                # would cause a DuckDB Binder Error in the MERGE DELETE subquery.
+                source_pk = self._get_primary_key_columns(records[0])
+                output_cols = set(transformed[0].keys()) if transformed else set()
+                if all(k in output_cols for k in source_pk):
+                    key_columns = source_pk
+                else:
+                    # Source PK column(s) not present in output — fall back to target PK
+                    key_columns = self._get_target_primary_key(target_table)
+                    if not key_columns:
+                        key_columns = (
+                            [list(output_cols)[0]] if output_cols else source_pk
+                        )
+                    self._logger.warning(
+                        f"Source PK {source_pk} not found in output columns for '{target_table}'. "
+                        f"Using target PK instead: {key_columns}"
+                    )
 
             # Step 4: MERGE INTO destination
             written = self._merge_into_postgres(transformed, target_table, key_columns)

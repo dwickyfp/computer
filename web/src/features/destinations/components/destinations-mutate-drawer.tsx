@@ -207,6 +207,7 @@ export function DestinationsMutateDrawer({
                           Postgre<span style={{ color: '#316192' }}>SQL</span>
                         </span>
                       </SelectItem>
+
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -484,6 +485,7 @@ export function DestinationsMutateDrawer({
                 />
               </>
             )}
+
           </form>
         </Form>
         <SheetFooter className='gap-2 sm:space-x-0'>

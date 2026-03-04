@@ -5,6 +5,9 @@ Provides high-level interface for creating and running Debezium engines.
 """
 
 import logging
+import os
+import threading
+from pathlib import Path
 from typing import Any, Optional
 
 from pydbzengine import DebeziumJsonEngine
@@ -27,8 +30,86 @@ from sources.postgresql import PostgreSQLSource
 from destinations.base import BaseDestination
 from destinations.snowflake import SnowflakeDestination
 from destinations.postgresql import PostgreSQLDestination
+from destinations.rosetta import RosettaDestination
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_jvm_started() -> None:
+    """
+    Pre-start the JVM with the correct classpath before pydbzengine's lazy init.
+
+    pydbzengine/_jvm.py starts the JVM on first access of DebeziumJsonEngine.run(),
+    but it relies on JPype internally appending org.jpype.jar to the classpath.
+    On some Windows + JDK combinations this internal append does not propagate to
+    System.getProperty("java.class.path"), causing JPypeContext.java to throw:
+      "Can't find org.jpype.jar support library"
+
+    The fix: start the JVM ourselves with org.jpype.jar explicitly in CLASS_PATHS.
+    pydbzengine/_jvm.py checks `if not jpype.isJVMStarted()` and skips its own
+    startJVM call when the JVM is already running.
+    """
+    try:
+        import jpype
+        import importlib.util
+
+        if jpype.isJVMStarted():
+            return
+
+        # Locate org.jpype.jar relative to the jpype package directory
+        jpype_pkg_dir = Path(jpype.__file__).parent
+        org_jpype_jar = jpype_pkg_dir.parent / "org.jpype.jar"
+        if not org_jpype_jar.exists():
+            logger.warning(
+                "org.jpype.jar not found at %s — letting pydbzengine handle JVM startup",
+                org_jpype_jar,
+            )
+            return
+
+        # Locate Debezium JARs from pydbzengine's bundled libs
+        spec = importlib.util.find_spec("pydbzengine")
+        if spec is None or spec.origin is None:
+            logger.warning(
+                "pydbzengine not found — letting default JVM startup proceed"
+            )
+            return
+
+        dbz_libs_dir = Path(spec.origin).parent / "debezium" / "libs"
+        class_paths = [str(j) for j in dbz_libs_dir.glob("*.jar")]
+
+        # Append pydbzengine config dir
+        dbz_conf_dir = Path(spec.origin).parent / "config"
+        class_paths.append(dbz_conf_dir.as_posix())
+
+        # Also append compute/config if present (mirrors pydbzengine/_jvm.py behaviour)
+        local_conf = Path.cwd() / "config"
+        if local_conf.is_dir():
+            class_paths.append(local_conf.as_posix())
+
+        # Explicitly include org.jpype.jar so it appears in -Djava.class.path
+        class_paths.append(str(org_jpype_jar))
+
+        jvm_path = jpype.getDefaultJVMPath()
+        if isinstance(jvm_path, bytes):
+            jvm_path = jvm_path.decode("utf-8")
+
+        # C3/R3: Add configurable JVM heap size to prevent unbounded memory growth
+        jvm_max_heap = os.getenv("JVM_MAX_HEAP", "16G")
+        jvm_args = [f"-Xmx{jvm_max_heap}"]
+
+        logger.debug(
+            "Pre-starting JVM with explicit org.jpype.jar on classpath "
+            "(heap max=%s)",
+            jvm_max_heap,
+        )
+        jpype.startJVM(jvm_path, *jvm_args, classpath=class_paths)
+        logger.debug("JVM pre-started successfully (heap max=%s)", jvm_max_heap)
+
+    except Exception as exc:
+        logger.warning(
+            "JVM pre-start failed (%s) — falling back to pydbzengine default startup",
+            exc,
+        )
 
 
 class PipelineEngine:
@@ -56,6 +137,9 @@ class PipelineEngine:
         self._engine: Optional[DebeziumJsonEngine] = None
         self._logger = logging.getLogger(f"{__name__}.Pipeline_{pipeline_id}")
         self._is_running = False
+
+        # C4/R5: Shutdown synchronization — event handler checks this before writing
+        self._shutdown_event = threading.Event()
 
         # DLQ components
         self._dlq_manager: Optional[DLQManager] = None
@@ -110,6 +194,9 @@ class PipelineEngine:
         Returns:
             BaseDestination instance
         """
+        destination_type = (
+            destination_type.strip() if destination_type else destination_type
+        )
         if destination_type.upper() == DestinationType.SNOWFLAKE.value:
             # Get Snowflake timeout config from global config
             cfg = get_config()
@@ -124,6 +211,8 @@ class PipelineEngine:
             return SnowflakeDestination(config, timeout_config=timeout_config)
         elif destination_type.upper() == DestinationType.POSTGRES.value:
             return PostgreSQLDestination(config, source_config=source_config)
+        elif destination_type.upper() == DestinationType.ROSETTA.value:
+            return RosettaDestination(config)
         else:
             raise PipelineException(
                 f"Unsupported destination type: {destination_type}",
@@ -334,8 +423,12 @@ class PipelineEngine:
                             f"Schema compatibility WARNING: {issue.message}"
                         )
 
-                error_count = sum(1 for i in schema_result.issues if i.severity == "ERROR")
-                warn_count = sum(1 for i in schema_result.issues if i.severity == "WARNING")
+                error_count = sum(
+                    1 for i in schema_result.issues if i.severity == "ERROR"
+                )
+                warn_count = sum(
+                    1 for i in schema_result.issues if i.severity == "WARNING"
+                )
                 self._logger.info(
                     f"Schema validation: {schema_result.tables_checked} tables checked, "
                     f"{error_count} errors, {warn_count} warnings"
@@ -364,6 +457,7 @@ class PipelineEngine:
             pipeline=self._pipeline,
             destinations=self._destinations,
             dlq_manager=self._dlq_manager,
+            shutdown_event=self._shutdown_event,
         )
 
         # Start DLQ recovery worker
@@ -391,6 +485,10 @@ class PipelineEngine:
         self._is_running = True
 
         try:
+            # Ensure JVM is started with org.jpype.jar explicitly on classpath
+            # before pydbzengine's lazy init runs (avoids "Can't find org.jpype.jar" error)
+            _ensure_jvm_started()
+
             # Create and run Debezium engine
             self._engine = DebeziumJsonEngine(properties=props, handler=handler)
             self._engine.run()
@@ -404,9 +502,20 @@ class PipelineEngine:
         finally:
             self._is_running = False
 
-    def stop(self) -> None:
-        """Stop the pipeline engine."""
+    def stop(self, set_status: bool = True) -> None:
+        """Stop the pipeline engine.
+
+        Args:
+            set_status: When True (default) write PAUSED status to the DB.
+                        Pass False when the caller has already written an ERROR
+                        status so this method does not overwrite it. (BUG-8)
+        """
         self._is_running = False
+
+        # C4/R5: Signal event handler to stop writing BEFORE closing destinations.
+        # This prevents the race condition where event handler tries to write
+        # to a destination that has already been closed.
+        self._shutdown_event.set()
 
         # CRITICAL: Stop all Python threads BEFORE stopping Debezium/JPype
         # This prevents GIL conflicts during JPype shutdown
@@ -437,8 +546,8 @@ class PipelineEngine:
                 self._logger.warning(f"Error closing DLQ manager: {e}")
             self._dlq_manager = None
 
-        # Update metadata
-        if self._pipeline:
+        # Update metadata — only if caller has not already set an error status
+        if set_status and self._pipeline:
             PipelineMetadataRepository.upsert(self._pipeline_id, "PAUSED")
 
         self._logger.info(f"Pipeline {self._pipeline_id} stopped")

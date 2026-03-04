@@ -7,7 +7,8 @@ Handles all application configuration with validation and type safety.
 from functools import lru_cache
 from typing import Any, List
 
-from pydantic import BaseSettings, Field, validator
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -18,11 +19,12 @@ class Settings(BaseSettings):
     Pydantic ensures type safety and validation at startup.
     """
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # Application Configuration
     app_name: str = Field(
@@ -79,9 +81,7 @@ class Settings(BaseSettings):
         description="Master key for credential encryption (AES-256-GCM)",
     )
     api_key: str = Field(default="", description="Optional API key for authentication")
-    cors_origins: List[str] = Field(
-        default=["http://localhost:3000"], description="Allowed CORS origins"
-    )
+    cors_origins: List[str] = Field(default=["*"], description="Allowed CORS origins")
 
     # WAL Monitoring Configuration
     wal_monitor_enabled: bool = Field(
@@ -161,7 +161,8 @@ class Settings(BaseSettings):
         default="http://0.0.0.0:8002", description="URL for the worker health API"
     )
 
-    @validator("app_env")
+    @field_validator("app_env")
+    @classmethod
     def validate_environment(cls, v: str) -> str:
         """Validate environment is one of allowed values."""
         allowed = ["development", "staging", "production"]
@@ -169,7 +170,8 @@ class Settings(BaseSettings):
             raise ValueError(f"app_env must be one of {allowed}")
         return v.lower()
 
-    @validator("log_level")
+    @field_validator("log_level")
+    @classmethod
     def validate_log_level(cls, v: str) -> str:
         """Validate log level is valid."""
         allowed = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]

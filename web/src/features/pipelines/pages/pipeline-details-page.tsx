@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link, useLocation, useRouter } from '@tanstack/react-router'
-import { api } from '@/repo/client'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { sourcesRepo } from '@/repo/sources'
 import {
@@ -140,17 +139,16 @@ export default function PipelineDetailsPage() {
     error: pipelineError,
   } = useQuery({
     queryKey: ['pipeline', id],
-    queryFn: async () => {
-      return await pipelinesRepo.get(id)
-    },
+    queryFn: () => pipelinesRepo.get(id),
     retry: false,
-    refetchInterval: 5000, // Refetch every 5 seconds
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   })
 
   // 2. Fetch Source Details using pipeline.source_id
   const { data: sourceDetails, isLoading: isSourceLoading } = useQuery({
     queryKey: ['source-details', pipeline?.source_id],
-    queryFn: () => sourcesRepo.getDetails(pipeline!.source_id),
+    queryFn: () => sourcesRepo.getDetails(pipeline!.source_id!),
     enabled: !!pipeline?.source_id,
   })
 
@@ -162,22 +160,18 @@ export default function PipelineDetailsPage() {
   } = useQuery<TableSyncDetails>({
     queryKey: ['table-sync-details', id, selectedDestId, selectedSyncId],
     queryFn: () =>
-      api
-        .get(
-          `/pipelines/${id}/destinations/${selectedDestId}/tables/${selectedSyncId}`
-        )
-        .then((r) => r.data),
+      pipelinesRepo.getTableSyncDetail(id, selectedDestId!, selectedSyncId!),
     enabled: !!selectedDestId && !!selectedSyncId && !isNaN(id),
-    refetchInterval: 5000,
+    // Only poll when a table is actually selected
+    refetchInterval: selectedSyncId ? 5000 : false,
+    refetchIntervalInBackground: false,
     retry: 2,
   })
 
   // 4. Generate Lineage Mutation
   const generateLineage = useMutation({
     mutationFn: () =>
-      api.post(
-        `/pipelines/${id}/destinations/${selectedDestId}/tables/${selectedSyncId}/lineage/generate`
-      ),
+      pipelinesRepo.generateLineage(id, selectedDestId!, selectedSyncId!),
     onSuccess: () => {
       toast.success('Lineage generation started')
       setTimeout(() => {
@@ -193,9 +187,15 @@ export default function PipelineDetailsPage() {
 
   const handleRefresh = async () => {
     if (!pipeline) return
-    await pipelinesRepo.refresh(id)
-    await sourcesRepo.refreshSource(pipeline.source_id)
-    toast.success('Pipeline and Source restarted successfully')
+    try {
+      await pipelinesRepo.refresh(id)
+      if (pipeline.source_id !== null) {
+        await sourcesRepo.refreshSource(pipeline.source_id)
+      }
+      toast.success('Pipeline and Source restarted successfully')
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to restart pipeline')
+    }
   }
 
   const handleBackToOverview = () => {
@@ -675,7 +675,7 @@ export default function PipelineDetailsPage() {
                   <div className='inline-flex items-center gap-2 rounded-sm bg-secondary/50 px-3 py-1.5 text-xs font-medium text-[#7b828f] ring-1 ring-gray-500/10 ring-inset dark:bg-[#0f161d] dark:text-[#7b828f]'>
                     <div className='flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100'>
                       <Database className='h-3.5 w-3.5' />
-                      <span>{pipeline?.source?.name}</span>
+                      <span>{pipeline?.source ? pipeline.source.name : 'Rosetta Chain'}</span>
                     </div>
                     <ArrowRight className='h-3 w-3 opacity-40' />
                     <div className='flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100'>
@@ -763,7 +763,7 @@ export default function PipelineDetailsPage() {
             ) : pipeline ? (
               <BackfillDataTab
                 pipelineId={pipeline.id}
-                sourceId={pipeline.source_id}
+                sourceId={pipeline.source_id ?? 0}
                 pipeline={pipeline}
               />
             ) : (

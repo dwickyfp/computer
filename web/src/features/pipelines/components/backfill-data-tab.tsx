@@ -651,6 +651,7 @@ export function BackfillDataTab({
     queryKey: ['backfill-jobs', pipelineId, tableFilter],
     queryFn: () => backfillApi.listJobs(pipelineId),
     refetchInterval: 5000, // Refresh every 5 seconds to show progress
+    refetchIntervalInBackground: false,
   })
 
   // Filter jobs by table name if filter is set

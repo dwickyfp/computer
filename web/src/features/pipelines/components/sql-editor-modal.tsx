@@ -50,9 +50,10 @@ export function SqlEditorModal({
       {/* Overlay */}
       <div className="absolute inset-0 bg-black/20" />
 
-      {/* Modal positioned to the right of the drawer */}
+      {/* Modal — sits beside the drawer on wide screens, centred on narrow screens */}
       <div
-        className="absolute left-[520px] top-[60px] z-50 w-[600px] bg-background border rounded-lg shadow-lg overflow-hidden"
+        className="absolute left-4 right-4 top-[60px] z-50 max-h-[calc(100vh-80px)] overflow-y-auto rounded-lg border bg-background shadow-lg
+                   lg:left-[520px] lg:right-auto lg:w-[600px] lg:max-h-[calc(100vh-80px)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

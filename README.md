@@ -1,10 +1,11 @@
 # Rosetta ETL Platform
 
-Rosetta is a production-ready, real-time ETL platform with a modular three-service architecture for managing and executing Change Data Capture (CDC) pipelines from **PostgreSQL** to multiple destinations (**Snowflake**, **PostgreSQL**).
+Rosetta is a production-ready, real-time ETL platform with a modular three-service architecture for managing and executing Change Data Capture (CDC) pipelines from **PostgreSQL** to multiple destinations (**Snowflake**, **PostgreSQL**, and other **Rosetta instances**).
 
 ## Why Rosetta?
 
 - ✅ **Multi-Destination Fan-Out**: Replicate one source to many destinations with a single CDC stream
+- ✅ **Rosetta Chain**: Stream data between Rosetta instances over Arrow IPC — no Kafka or middleware required
 - ✅ **Process Isolation**: Crash-resistant architecture where pipeline failures don't affect others
 - ✅ **Historical Backfill**: DuckDB-powered batch processing for retroactive data sync
 - ✅ **Failure Recovery**: Redis-based DLQ ensures no data loss with automatic retry
@@ -52,6 +53,17 @@ The platform consists of three independent services:
 - **Independent Health Tracking**: Each destination has its own health status, metrics, and error reporting via `pipeline_metadata`
 - **Flexible Configuration**: Add or remove destinations on the fly through the `pipeline_destinations` join table
 - **Efficient Processing**: Single Debezium connector fans out to all destinations, reducing resource overhead
+
+### 🔗 Rosetta Chain (Rosetta-to-Rosetta Streaming)
+
+- **No Middleware Required**: Stream CDC data directly from one Rosetta instance to another over **Apache Arrow IPC** — no Kafka, no message broker
+- **Secure Authentication**: Each instance exposes a chain key; remote senders must present it in the `X-Chain-Key` header
+- **Redis-Buffered Ingestion**: Incoming Arrow IPC batches are written to Redis Streams, then consumed by a dedicated `ChainPipelineEngine`
+- **Pipeline Integration**: ROSETTA is a first-class source type — create pipelines with `source_type=ROSETTA` and choose a chain client instead of a PostgreSQL source
+- **ROSETTA Destination**: Add a ROSETTA-type destination to any pipeline to push CDC changes to a remote instance
+- **Schema Sync**: Table schemas are automatically pushed to the receiving instance on first connection
+- **Managed via UI**: Configure chain keys, register remote clients, test connectivity, and browse remote tables from the _Rosetta Chain_ page in the dashboard
+- **Environment**: Enable with `CHAIN_ENABLED=true`; server host/port controlled by `SERVER_HOST`/`SERVER_PORT`
 
 ### 📦 Backfill Feature
 

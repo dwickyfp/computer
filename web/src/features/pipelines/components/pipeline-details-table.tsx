@@ -30,9 +30,10 @@ import { getPipelineDetailsTableColumns } from './pipeline-details-table-columns
 interface PipelineDetailsTableProps {
     pipelineId: number
     tables: SourceTableInfo[]
+    destinationId?: number | null
 }
 
-export function PipelineDetailsTable({ pipelineId, tables, destinationId }: PipelineDetailsTableProps & { destinationId?: number | null }) {
+export function PipelineDetailsTable({ pipelineId, tables, destinationId }: PipelineDetailsTableProps) {
     const [rowSelection, setRowSelection] = useState({})
     const [sorting, setSorting] = useState<SortingState>([])
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
@@ -42,7 +43,8 @@ export function PipelineDetailsTable({ pipelineId, tables, destinationId }: Pipe
         queryKey: ['pipeline-stats', pipelineId],
         queryFn: () => pipelinesRepo.getStats(pipelineId),
         enabled: !!pipelineId,
-        refetchInterval: 5000, // Refetch every 5 seconds
+        refetchInterval: 5000,
+        refetchIntervalInBackground: false,
     })
 
     const statsMap = useMemo(() => {

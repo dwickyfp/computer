@@ -159,7 +159,15 @@ export const useFlowTaskStore = create<FlowTaskStore>((set) => ({
     // ─── Preview actions ────────────────────────────────────────────────────────
 
     openPreview: (nodeId, nodeLabel, nodeType, celeryTaskId) => {
-        const previewSessionId = crypto.randomUUID()
+        // crypto.randomUUID() requires a secure context (HTTPS / localhost).
+        // Provide a RFC-4122 v4 fallback for plain-HTTP environments.
+        const previewSessionId =
+            typeof crypto?.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                      const r = (Math.random() * 16) | 0
+                      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+                  })
         set({
             preview: {
                 isOpen: true,
