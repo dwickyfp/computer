@@ -137,7 +137,7 @@ export function SourceReplicationTable({ sourceId, tables }: SourceReplicationTa
 
     return (
         <>
-            <Card>
+            <Card className="bg-sidebar">
                 <CardHeader>
                     <CardTitle>Monitored Tables</CardTitle>
                     <CardDescription>View and manage tables currently being replicated.</CardDescription>

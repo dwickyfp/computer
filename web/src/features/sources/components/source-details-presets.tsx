@@ -166,7 +166,7 @@ export function SourceDetailsPresets() {
 
                 {/* Empty state */}
                 {filteredPresets?.length === 0 && (
-                    <Card className="border-dashed">
+                    <Card className="border-dashed bg-sidebar">
                         <CardContent className="flex flex-col items-center justify-center p-12 text-center">
                             <div className="rounded-full bg-muted p-4 mb-4">
                                 <Table2 className="h-8 w-8 text-muted-foreground" />
@@ -190,7 +190,7 @@ export function SourceDetailsPresets() {
                             <Card 
                                 key={preset.id} 
                                 className={cn(
-                                    "group relative overflow-hidden transition-all duration-200 hover:shadow-lg hover:border-primary/50",
+                                    "group relative overflow-hidden transition-all duration-200 hover:shadow-lg hover:border-primary/50 bg-sidebar",
                                     isRecentlyUpdated(preset.updated_at) && "border-primary/20"
                                 )}
                             >
@@ -312,7 +312,7 @@ export function SourceDetailsPresets() {
                             <Card 
                                 key={preset.id} 
                                 className={cn(
-                                    "group transition-all duration-200 hover:shadow-md hover:border-primary/50",
+                                    "group transition-all duration-200 hover:shadow-md hover:border-primary/50 bg-sidebar",
                                     isRecentlyUpdated(preset.updated_at) && "border-primary/20"
                                 )}
                             >
