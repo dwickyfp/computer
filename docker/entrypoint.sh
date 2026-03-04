@@ -75,7 +75,7 @@ case "${MODE,,}" in
     trap "echo 'Stopping health API...'; kill ${HEALTH_PID} 2>/dev/null" EXIT INT TERM
 
     log_info "Starting Celery worker..."
-    exec celery -A main worker \
+    exec python -m celery -A main worker \
         --loglevel="${LOGLEVEL}" \
         -Q "${QUEUES}" \
         -c "${CONCURRENCY}" \
