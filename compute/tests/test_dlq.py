@@ -4,11 +4,8 @@ Unit tests for DLQ Manager (Redis Streams backend).
 Uses fakeredis to mock Redis for testing without a real Redis instance.
 """
 
-import json
-import time
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
 
 # Try to import fakeredis - will be used to mock Redis
 try:
@@ -431,15 +428,15 @@ class TestDLQManagerPurge:
         assert purged == 1
         assert dlq_manager.get_queue_size(1, "users", 2) == 1
 
-    def test_purge_by_age(
-        self, dlq_manager, sample_cdc_record, sample_table_sync
-    ):
+    def test_purge_by_age(self, dlq_manager, sample_cdc_record, sample_table_sync):
         """Test that messages exceeding max age are purged."""
         stream_key = dlq_manager._stream_key(1, "users", 2)
         dlq_manager._ensure_consumer_group(stream_key)
 
         # Add an old message (8 days ago)
-        old_date = (datetime.now(timezone(timedelta(hours=7))) - timedelta(days=8)).isoformat()
+        old_date = (
+            datetime.now(timezone(timedelta(hours=7))) - timedelta(days=8)
+        ).isoformat()
         old_msg = DLQMessage(
             pipeline_id=1,
             source_id=1,

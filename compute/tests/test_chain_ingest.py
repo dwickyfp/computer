@@ -4,11 +4,9 @@ Unit tests for compute/chain/ingest.py (ChainIngestManager).
 Uses fakeredis so no real Redis instance is required.
 """
 
-import json
 import os
 import sys
 from io import BytesIO
-from unittest.mock import patch, MagicMock
 
 import pytest
 import pyarrow as pa
