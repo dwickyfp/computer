@@ -303,7 +303,7 @@ export function SourceDetailsListTable({ sourceId: propSourceId, isPublicationEn
     const selectedCount = Object.keys(rowSelection).length
 
     return (
-        <Card>
+        <Card className="bg-sidebar">
             <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                     <CardTitle>Available Tables</CardTitle>
