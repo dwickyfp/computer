@@ -109,6 +109,14 @@ def run_migration(logger: logging.Logger) -> None:
             return_db_connection(conn)
 
 
+_LOG_FORMAT_ALIASES = {
+    "text": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "json": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+}
+
+_DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
 def setup_logging() -> None:
     """Configure logging based on environment and config."""
     config = get_config()
@@ -117,9 +125,18 @@ def setup_logging() -> None:
     debug = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
     level = logging.DEBUG if debug else getattr(logging, config.logging.level.upper())
 
+    # LOG_FORMAT may be a human-readable label ("text", "json") from Docker env vars
+    # rather than a real Python %-style format string — map it to an actual format.
+    raw_format = config.logging.format
+    log_format = (
+        _LOG_FORMAT_ALIASES.get(raw_format.lower(), raw_format)
+        if raw_format
+        else _DEFAULT_LOG_FORMAT
+    )
+
     logging.basicConfig(
         level=level,
-        format=config.logging.format,
+        format=log_format,
         handlers=[
             logging.StreamHandler(sys.stdout),
         ],
@@ -136,6 +153,7 @@ def main() -> int:
     # fork() can inherit parent's DB connection file descriptors into children,
     # causing corruption. 'spawn' starts fresh child processes.
     import multiprocessing
+
     try:
         multiprocessing.set_start_method("spawn")
     except RuntimeError:
@@ -187,6 +205,7 @@ def main() -> int:
 
         # Start Catalog Health Worker
         from core.catalog_health_worker import CatalogHealthWorker
+
         catalog_health_worker = CatalogHealthWorker(check_interval_seconds=60)
         catalog_health_thread = threading.Thread(
             target=catalog_health_worker.run,
