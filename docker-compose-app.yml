@@ -17,7 +17,7 @@ services:
   # COMPUTE NODE - Python Pipeline Manager (CDC Engine)
   # ===========================================================================
   rosetta-compute-node:
-    image: rosetta-etl:1.0.0-compute
+    image: rosetta-etl:1.0.0
     container_name: rosetta-compute
     restart: unless-stopped
     ports:
@@ -26,7 +26,7 @@ services:
       # Set CHAIN_ENABLED=true to activate chain ingestion.
       - "${COMPUTE_PORT:-8001}:8001"
     environment:
-      MODE: worker
+      MODE: compute
       # Database Configuration
       ROSETTA_DB_HOST: ${ROSETTA_DB_HOST:-rosetta-postgres}
       ROSETTA_DB_PORT: ${ROSETTA_DB_PORT:-5432}
@@ -108,7 +108,7 @@ services:
       start_period: 20s
 
   rosetta-web:
-    image: rosetta-etl:1.0.0-web
+    image: rosetta-etl:1.0.0
     container_name: rosetta-web
     restart: unless-stopped
     ports:
@@ -228,12 +228,13 @@ services:
   # WORKER - Celery Background Task Processor (HIGH PERFORMANCE)
   # ===========================================================================
   rosetta-worker:
-    image: rosetta-etl:1.0.0-worker
+    image: rosetta-etl:1.0.0
     container_name: rosetta-worker
     restart: unless-stopped
     ports:
       - "8002:8002"
     environment:
+      MODE: worker
       # Database (Config DB - same as backend)
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@rosetta-postgres:5432/postgres}
       # Connection Pool

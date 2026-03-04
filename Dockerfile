@@ -306,3 +306,77 @@ CMD ["./worker/start.sh"]
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8002/health || exit 1
+
+# =============================================================================
+# STAGE 7: ROSETTA — UNIFIED IMAGE
+# =============================================================================
+# Single image that runs any service based on the MODE environment variable:
+#   MODE=compute  →  CDC Pipeline Engine          (port 8001)
+#   MODE=web      →  FastAPI + React via Nginx     (ports 80 / 8000)
+#   MODE=worker   →  Celery Task Processor         (port 8002)
+#
+# Each service uses its own isolated virtual environment:
+#   /app/.venv-compute   ← compute deps  (pydbzengine, psycopg2, httpx, duckdb …)
+#   /app/.venv-backend   ← backend deps  (fastapi, sqlalchemy, alembic …)
+#   /app/.venv-worker    ← worker deps   (celery, duckdb, pyarrow, adbc …)
+# =============================================================================
+FROM python:3.12-slim-bookworm AS rosetta
+
+LABEL maintainer="Rosetta Team"
+LABEL description="Rosetta ETL Platform - Unified Image (compute / web / worker)"
+
+# Install all runtime system dependencies needed by any mode
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx \
+    supervisor \
+    libpq5 \
+    default-jre-headless \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Virtual environments (one per service, fully isolated) ──────────────────
+COPY --from=compute-deps /app/.venv /app/.venv-compute
+COPY --from=backend-deps /app/.venv /app/.venv-backend
+COPY --from=worker-deps  /app/.venv /app/.venv-worker
+
+# ── DuckDB ADBC extensions (worker mode) ────────────────────────────────────
+COPY --from=worker-deps /root/.duckdb /root/.duckdb
+
+# ── Application source code ─────────────────────────────────────────────────
+COPY compute/   ./compute/
+COPY backend/   ./backend/
+COPY worker/    ./worker/
+COPY migrations/ ./migrations/
+
+# ── Frontend (web mode) ─────────────────────────────────────────────────────
+COPY --from=frontend-builder /app/dist /var/www/html
+
+# ── Nginx + Supervisor config (web mode) ────────────────────────────────────
+COPY docker/nginx.conf        /etc/nginx/nginx.conf
+COPY docker/supervisord.conf  /etc/supervisor/conf.d/supervisord.conf
+
+# ── Unified entrypoint ───────────────────────────────────────────────────────
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh /app/worker/start.sh
+
+# ── Shared environment defaults ─────────────────────────────────────────────
+ENV MODE=web
+ENV TZ=Asia/Jakarta
+ENV SNOWFLAKE_HOME=/tmp/.snowflake
+ENV C_FORCE_ROOT=true
+# Explicit fallback path for ADBC Snowflake driver (worker mode)
+ENV SNOWFLAKE_ADBC_DRIVER_PATH="/app/.venv-worker/lib/python3.12/site-packages/adbc_driver_snowflake/libadbc_driver_snowflake.so"
+
+# ── Runtime directories ──────────────────────────────────────────────────────
+RUN mkdir -p /app/tmp/offsets /var/log/supervisor /var/log/nginx
+
+# ── Ports ────────────────────────────────────────────────────────────────────
+# 80    — Nginx (web mode, serves React frontend)
+# 8000  — Uvicorn / FastAPI (web mode)
+# 8001  — Compute health API + Chain ingest endpoints (compute mode)
+# 8002  — Celery worker health API (worker mode)
+EXPOSE 80 8000 8001 8002
+
+CMD ["/app/entrypoint.sh"]

@@ -2,13 +2,13 @@
 # =============================================================================
 # ROSETTA BUILD SCRIPT
 # =============================================================================
-# Builds Docker images for the Rosetta ETL Platform
+# Builds the single unified Rosetta Docker image.
+# The same image is used by all three services (compute / web / worker);
+# the MODE environment variable selects the runtime behaviour.
 #
 # Usage:
-#   ./build.sh                    # Build all images
-#   ./build.sh compute-node       # Build compute-node only
-#   ./build.sh web                # Build web only
-#   ./build.sh worker             # Build worker only
+#   ./build.sh                    # Build unified image
+#   ./build.sh --push             # Build and push to registry
 # =============================================================================
 
 set -e
@@ -23,64 +23,33 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
+log_info()    { echo -e "${BLUE}[INFO]${NC}    $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${NC}   $1"; }
 
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
+build_rosetta() {
+    log_info "Building unified Rosetta image: ${IMAGE_NAME}:${IMAGE_TAG}..."
 
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-build_compute_node() {
-    log_info "Building compute-node image..."
-    docker build \
-        --target compute-node \
-        --tag "${IMAGE_NAME}:${IMAGE_TAG}-compute" \
-        --file ${DOCKERFILE} \
-        .
-    log_success "Built ${IMAGE_NAME}:${IMAGE_TAG}-compute"
-}
-
-build_web() {
-    log_info "Building web image..."
-    
-    # Build args for frontend
+    # Optional Vite build args
     BUILD_ARGS=""
-    if [ -n "${VITE_CLERK_PUBLISHABLE_KEY}" ]; then
+    if [ -n "${VITE_CLERK_PUBLISHABLE_KEY:-}" ]; then
         BUILD_ARGS="${BUILD_ARGS} --build-arg VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}"
     fi
-    if [ -n "${VITE_API_URL}" ]; then
+    if [ -n "${VITE_API_URL:-}" ]; then
         BUILD_ARGS="${BUILD_ARGS} --build-arg VITE_API_URL=${VITE_API_URL}"
     fi
-    
+
     docker build \
-        --target web \
-        --tag "${IMAGE_NAME}:${IMAGE_TAG}-web" \
+        --target rosetta \
+        --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
+        --tag "${IMAGE_NAME}:latest" \
         ${BUILD_ARGS} \
         --file ${DOCKERFILE} \
         .
-    log_success "Built ${IMAGE_NAME}:${IMAGE_TAG}-web"
-}
-
-build_worker() {
-    log_info "Building worker image..."
-    docker build \
-        --target worker \
-        --tag "${IMAGE_NAME}:${IMAGE_TAG}-worker" \
-        --file ${DOCKERFILE} \
-        .
-    log_success "Built ${IMAGE_NAME}:${IMAGE_TAG}-worker"
+    log_success "Built ${IMAGE_NAME}:${IMAGE_TAG}"
 }
 
 show_images() {
@@ -94,34 +63,11 @@ show_images() {
 # Main
 echo "=============================================="
 echo "  ROSETTA ETL PLATFORM - BUILD SCRIPT"
-echo "  Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+echo "  Unified image: ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "=============================================="
 echo ""
 
-TARGET=${1:-all}
-
-case $TARGET in
-    compute-node|compute)
-        build_compute_node
-        ;;
-    web)
-        build_web
-        ;;
-    worker)
-        build_worker
-        ;;
-    all|"")
-        build_compute_node
-        build_web
-        build_worker
-        ;;
-    *)
-        log_error "Unknown target: $TARGET"
-        echo "Usage: $0 [compute-node|web|worker|all]"
-        exit 1
-        ;;
-esac
-
+build_rosetta
 show_images
 
 echo ""
