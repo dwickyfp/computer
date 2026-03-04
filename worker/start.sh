@@ -51,7 +51,7 @@ echo "  Log Level: $LOGLEVEL"
 
 # Start health API server in background
 echo "Starting health API server on port ${SERVER_PORT:-8002}..."
-uv run python server.py &
+python server.py &
 HEALTH_PID=$!
 echo "  Health API PID: $HEALTH_PID"
 
@@ -60,14 +60,14 @@ trap "echo 'Stopping health API server...'; kill $HEALTH_PID 2>/dev/null" EXIT I
 
 if [ "$RUN_BEAT" = true ]; then
     echo "  Beat: enabled"
-    uv run celery -A main worker \
+    exec python -m celery -A main worker \
         --loglevel=$LOGLEVEL \
         -Q $QUEUES \
         -c $CONCURRENCY \
         --pool=threads \
         --beat
 else
-    uv run celery -A main worker \
+    exec python -m celery -A main worker \
         --loglevel=$LOGLEVEL \
         -Q $QUEUES \
         -c $CONCURRENCY \
