@@ -228,6 +228,7 @@ export interface NodePreviewRequest {
     nodes: FlowNode[]
     edges: FlowEdge[]
     limit?: number
+    include_profiling?: boolean
 }
 
 export interface NodePreviewTaskResponse {
@@ -251,10 +252,13 @@ export interface ColumnProfile {
     total_count: number
     null_count: number
     null_percent: number
-    distinct_count: number
+    distinct_count: number | null
+    distinct_percent?: number | null
     min?: unknown
     max?: unknown
     mean?: number
+    std_dev?: number
+    median?: number
     top_values?: Array<{ value: unknown; count: number; percent: number }>
 }
 

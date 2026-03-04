@@ -83,6 +83,7 @@ def preview_flow_task_node_task(
     node_id: str,
     graph_snapshot: dict,
     limit: int = 500,
+    include_profiling: bool = True,
 ) -> dict[str, Any]:
     """
     Preview a single node's output within the given graph snapshot.
@@ -92,9 +93,10 @@ def preview_flow_task_node_task(
         node_id: ID of the node to preview up to.
         graph_snapshot: Unsaved {nodes, edges} graph snapshot from the editor.
         limit: Maximum rows to return (default 500).
+        include_profiling: If True, include per-column profiling statistics.
 
     Returns:
-        Dict with columns, column_types, rows, row_count, elapsed_ms.
+        Dict with columns, column_types, rows, row_count, elapsed_ms (+ profile if requested).
     """
     logger.info(
         "Flow task node preview started",
@@ -102,6 +104,7 @@ def preview_flow_task_node_task(
         flow_task_id=flow_task_id,
         node_id=node_id,
         limit=limit,
+        include_profiling=include_profiling,
     )
 
     self.update_state(
@@ -118,4 +121,5 @@ def preview_flow_task_node_task(
         node_id=node_id,
         graph_snapshot=graph_snapshot,
         limit=limit,
+        include_profiling=include_profiling,
     )

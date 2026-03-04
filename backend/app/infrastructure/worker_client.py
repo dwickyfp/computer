@@ -200,6 +200,7 @@ class WorkerClient:
         node_id: str,
         graph_snapshot: dict,
         limit: int = 500,
+        include_profiling: bool = True,
     ) -> str:
         """
         Submit a node preview task to the Celery worker.
@@ -209,6 +210,7 @@ class WorkerClient:
             node_id: Target node ID to preview up to
             graph_snapshot: Current unsaved graph {nodes, edges}
             limit: Row limit for the preview query
+            include_profiling: If True, include per-column profiling statistics
 
         Returns:
             Celery task ID string
@@ -216,7 +218,7 @@ class WorkerClient:
         try:
             result = self._send_task_with_retry(
                 "worker.flow_task.preview",
-                args=[flow_task_id, node_id, graph_snapshot, limit],
+                args=[flow_task_id, node_id, graph_snapshot, limit, include_profiling],
                 queue="preview",
             )
             logger.info(

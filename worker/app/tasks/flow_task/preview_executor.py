@@ -84,6 +84,7 @@ def execute_node_preview(
     node_id: str,
     graph_snapshot: dict,
     limit: int = 500,
+    include_profiling: bool = True,
 ) -> dict:
     """
     Preview the output of a single node without executing the full graph.
@@ -165,12 +166,10 @@ def execute_node_preview(
         preview_sql = f"{partial_prefix}\nSELECT * FROM {target_cte}"
         logger.debug(f"Preview SQL for node {node_id}:\n{preview_sql}")
 
-        # Execute
-        rel = conn.execute(preview_sql)
+        # Execute — fetch as Arrow table to enable profiling and type extraction
+        arrow_result = conn.execute(preview_sql).fetch_arrow_table()
 
-        # Collect column metadata
-        description = rel.description  # list of (name, type_code, ...)
-        if not description:
+        if not arrow_result.column_names:
             return {
                 "columns": [],
                 "column_types": {},
@@ -179,14 +178,16 @@ def execute_node_preview(
                 "elapsed_ms": int((time.time() - start_time) * 1000),
             }
 
-        columns = [col[0] for col in description]
-        raw_rows = rel.fetchall()
+        columns = arrow_result.column_names
+        column_types = {
+            col: str(arrow_result.schema.field(col).type) for col in columns
+        }
 
         # Serialize rows (handle non-JSON-serializable types)
-        serialized_rows = [_serialize_row(row) for row in raw_rows]
-
-        # Map DuckDB type codes to human-readable strings
-        column_types = _extract_column_types(description)
+        serialized_rows = [
+            _serialize_row(tuple(row[col] for col in columns))
+            for row in arrow_result.to_pylist()
+        ]
 
         elapsed = int((time.time() - start_time) * 1000)
         logger.info(
@@ -197,13 +198,24 @@ def execute_node_preview(
             elapsed_ms=elapsed,
         )
 
-        return {
+        result: dict = {
             "columns": columns,
             "column_types": column_types,
             "rows": serialized_rows,
             "row_count": len(serialized_rows),
             "elapsed_ms": elapsed,
         }
+
+        # Data profiling — compute column statistics from Arrow table
+        if include_profiling:
+            try:
+                from app.tasks.preview.profiler import profile_arrow_table
+                result["profile"] = profile_arrow_table(arrow_result)
+            except Exception as e:
+                logger.warning("Data profiling failed", error=str(e))
+                result["profile"] = []
+
+        return result
 
     finally:
         if conn:

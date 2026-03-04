@@ -294,6 +294,7 @@ class NodePreviewRequest(BaseSchema):
     nodes: List[FlowNode] = Field(..., description="Full node list from the canvas")
     edges: List[FlowEdge] = Field(..., description="Full edge list from the canvas")
     limit: int = Field(default=500, ge=1, le=5000, description="Max preview rows")
+    include_profiling: bool = Field(default=True, description="Include per-column profiling statistics")
 
 
 class NodePreviewTaskResponse(BaseSchema):

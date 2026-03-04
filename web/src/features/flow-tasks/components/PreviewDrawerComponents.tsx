@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import type { ReactNode } from 'react'
 import {
     BarChart,
     Bar,
@@ -653,81 +654,251 @@ function ChartRenderer({ cfg, data, height }: { cfg: ChartConfig, data: Record<s
 
 // ─── Profiling ─────────────────────────────────────────────────────────────────
 
+function qualityBadge(nullPct: number): { label: string; className: string } {
+    if (nullPct === 0) return { label: 'Complete', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' }
+    if (nullPct < 5) return { label: 'Good', className: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' }
+    if (nullPct < 20) return { label: 'Fair', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300' }
+    if (nullPct < 50) return { label: 'Poor', className: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300' }
+    return { label: 'Critical', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' }
+}
+
+function FillBar({ value, max = 100, colorClass }: { value: number; max?: number; colorClass: string }) {
+    const pct = Math.min(100, Math.max(0, max > 0 ? (value / max) * 100 : 0))
+    return (
+        <div className="h-1.5 w-full rounded-full bg-muted/50 overflow-hidden">
+            <div className={cn('h-full rounded-full transition-all', colorClass)} style={{ width: `${pct}%` }} />
+        </div>
+    )
+}
+
+function StatCell({ label, value }: { label: string; value: ReactNode }) {
+    return (
+        <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">{label}</span>
+            <span className="text-xs font-mono font-medium text-foreground truncate">{value ?? '—'}</span>
+        </div>
+    )
+}
+
+function TopValuesChart({ topValues, totalCount }: {
+    topValues: Array<{ value: unknown; count: number; percent: number }>,
+    totalCount: number,
+}) {
+    const maxCount = topValues[0]?.count ?? 1
+    return (
+        <div className="space-y-1">
+            {topValues.slice(0, 5).map((tv, i) => {
+                const barWidth = maxCount > 0 ? (tv.count / maxCount) * 100 : 0
+                const pct = totalCount > 0 ? ((tv.count / totalCount) * 100).toFixed(1) : '0'
+                return (
+                    <div key={i} className="flex items-center gap-2 text-[11px]">
+                        <span
+                            className="font-mono truncate text-foreground/90 shrink-0"
+                            style={{ maxWidth: 100 }}
+                            title={String(tv.value ?? 'NULL')}
+                        >
+                            {tv.value === null || tv.value === undefined
+                                ? <span className="italic text-muted-foreground/60">NULL</span>
+                                : String(tv.value)}
+                        </span>
+                        <div className="flex-1 h-3 rounded-sm bg-muted/40 overflow-hidden min-w-0">
+                            <div
+                                className="h-full rounded-sm bg-indigo-400/60 dark:bg-indigo-500/50"
+                                style={{ width: `${barWidth}%` }}
+                            />
+                        </div>
+                        <span className="text-muted-foreground shrink-0 tabular-nums w-10 text-right">
+                            {pct}%
+                        </span>
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
+function ColumnProfileCard({ col }: { col: ColumnProfile }) {
+    const quality = qualityBadge(col.null_percent)
+    const isNumeric = col.mean !== undefined || col.min !== undefined
+    const distinctPct = col.distinct_percent ?? (
+        col.distinct_count != null && col.total_count > 0
+            ? (col.distinct_count / col.total_count) * 100
+            : null
+    )
+    const hasTopValues = col.top_values && col.top_values.length > 0
+    const hasNumericStats = col.mean != null || col.std_dev != null || col.median != null
+
+    const formatNum = (v: unknown) => {
+        if (v === null || v === undefined) return '—'
+        const n = Number(v)
+        if (isNaN(n)) return String(v)
+        return Math.abs(n) >= 1e6
+            ? n.toExponential(2)
+            : n % 1 === 0
+                ? n.toLocaleString()
+                : n.toFixed(4).replace(/\.?0+$/, '')
+    }
+
+    return (
+        <div className="rounded-lg border border-border bg-background shadow-sm flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border/50 bg-muted/20">
+                <span className="font-mono text-xs font-semibold text-foreground truncate" title={col.column}>
+                    {col.column}
+                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] border border-border/50 text-muted-foreground font-mono">
+                        {col.type}
+                    </span>
+                    <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold', quality.className)}>
+                        {quality.label}
+                    </span>
+                </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-3 space-y-3 flex-1">
+                {/* Coverage stats */}
+                <div className="grid grid-cols-2 gap-3">
+                    {/* Null */}
+                    <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-muted-foreground font-medium">Null</span>
+                            <span className="tabular-nums font-mono">
+                                {col.null_count.toLocaleString()} ({col.null_percent.toFixed(1)}%)
+                            </span>
+                        </div>
+                        <FillBar
+                            value={col.null_percent}
+                            max={100}
+                            colorClass={col.null_percent > 50
+                                ? 'bg-red-400'
+                                : col.null_percent > 20
+                                    ? 'bg-orange-400'
+                                    : col.null_percent > 5
+                                        ? 'bg-yellow-400'
+                                        : 'bg-emerald-400'}
+                        />
+                    </div>
+                    {/* Distinct */}
+                    <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-muted-foreground font-medium">Distinct</span>
+                            <span className="tabular-nums font-mono">
+                                {col.distinct_count != null
+                                    ? `${col.distinct_count.toLocaleString()} (${distinctPct != null ? distinctPct.toFixed(1) : '—'}%)`
+                                    : '—'
+                                }
+                            </span>
+                        </div>
+                        <FillBar
+                            value={distinctPct ?? 0}
+                            max={100}
+                            colorClass="bg-indigo-400"
+                        />
+                    </div>
+                </div>
+
+                {/* Count row */}
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground border-t border-border/30 pt-2">
+                    <span>Total rows</span>
+                    <span className="font-mono tabular-nums font-medium text-foreground">
+                        {col.total_count.toLocaleString()}
+                    </span>
+                </div>
+
+                {/* Numeric stats */}
+                {(isNumeric || hasNumericStats) && (
+                    <div className="grid grid-cols-3 gap-2 border-t border-border/30 pt-2">
+                        <StatCell label="Min" value={formatNum(col.min)} />
+                        <StatCell label="Max" value={formatNum(col.max)} />
+                        <StatCell label="Mean" value={col.mean != null ? formatNum(col.mean) : '—'} />
+                        {col.median != null && (
+                            <StatCell label="Median" value={formatNum(col.median)} />
+                        )}
+                        {col.std_dev != null && (
+                            <StatCell label="Std Dev" value={formatNum(col.std_dev)} />
+                        )}
+                    </div>
+                )}
+
+                {/* Min/max for non-numeric (string, date) */}
+                {!isNumeric && !hasNumericStats && (col.min != null || col.max != null) && (
+                    <div className="grid grid-cols-2 gap-2 border-t border-border/30 pt-2">
+                        <StatCell label="Min" value={String(col.min ?? '—')} />
+                        <StatCell label="Max" value={String(col.max ?? '—')} />
+                    </div>
+                )}
+
+                {/* Top values */}
+                {hasTopValues && (
+                    <div className="border-t border-border/30 pt-2 space-y-1.5">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                            Top values
+                        </span>
+                        <TopValuesChart
+                            topValues={col.top_values!}
+                            totalCount={col.total_count}
+                        />
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
 export function ProfilingResults({ profile }: { profile: ColumnProfile[] }) {
     if (!profile || profile.length === 0) {
         return (
-            <div className="flex items-center justify-center h-full text-sm text-muted-foreground p-8">
-                No profiling data available.
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
+                <Layers2 className="h-8 w-8 opacity-30" />
+                <p className="text-sm">No profiling data available.</p>
             </div>
         )
     }
 
+    const avgNull = profile.reduce((s, c) => s + c.null_percent, 0) / profile.length
+    const totalRows = profile[0]?.total_count ?? 0
+
     return (
-        <table className="w-full text-sm border-collapse bg-background rounded-lg shadow-sm ring-1 ring-border">
-            <thead className="sticky top-0 bg-muted/80 backdrop-blur-md z-10">
-                <tr className="text-left text-muted-foreground border-b border-border shadow-sm">
-                    <th className="p-3 font-semibold uppercase tracking-wider text-xs">Column</th>
-                    <th className="p-3 font-semibold uppercase tracking-wider text-xs">Type</th>
-                    <th className="p-3 font-semibold text-right uppercase tracking-wider text-xs">Total</th>
-                    <th className="p-3 font-semibold text-right uppercase tracking-wider text-xs">Nulls</th>
-                    <th className="p-3 font-semibold text-right uppercase tracking-wider text-xs">Null %</th>
-                    <th className="p-3 font-semibold text-right uppercase tracking-wider text-xs">Distinct</th>
-                    <th className="p-3 font-semibold text-right uppercase tracking-wider text-xs">Min</th>
-                    <th className="p-3 font-semibold text-right uppercase tracking-wider text-xs">Max</th>
-                    <th className="p-3 font-semibold text-right uppercase tracking-wider text-xs">Mean</th>
-                    <th className="p-3 font-semibold uppercase tracking-wider text-xs">Top Values</th>
-                </tr>
-            </thead>
-            <tbody>
+        <div className="space-y-4">
+            {/* Summary bar */}
+            <div className="flex items-center gap-4 rounded-lg border border-border bg-muted/10 px-4 py-2.5 text-xs">
+                <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">Columns</span>
+                    <span className="font-semibold font-mono">{profile.length}</span>
+                </div>
+                <div className="h-3 w-px bg-border/50" />
+                <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">Rows sampled</span>
+                    <span className="font-semibold font-mono">{totalRows.toLocaleString()}</span>
+                </div>
+                <div className="h-3 w-px bg-border/50" />
+                <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">Avg null %</span>
+                    <span className={cn(
+                        'font-semibold font-mono',
+                        avgNull > 20 ? 'text-orange-500' : avgNull > 5 ? 'text-yellow-500' : 'text-emerald-500'
+                    )}>
+                        {avgNull.toFixed(1)}%
+                    </span>
+                </div>
+                <div className="h-3 w-px bg-border/50" />
+                <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">Complete columns</span>
+                    <span className="font-semibold font-mono text-emerald-600 dark:text-emerald-400">
+                        {profile.filter(c => c.null_percent === 0).length}
+                        <span className="text-muted-foreground font-normal"> / {profile.length}</span>
+                    </span>
+                </div>
+            </div>
+
+            {/* Column cards grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
                 {profile.map((col) => (
-                    <tr key={col.column} className="border-b border-border/40 hover:bg-muted/30 transition-colors">
-                        <td className="p-3 font-mono font-medium">{col.column}</td>
-                        <td className="p-3">
-                            <span className="rounded bg-muted/60 px-2 py-1 text-xs border border-border/50">
-                                {col.type}
-                            </span>
-                        </td>
-                        <td className="p-3 text-right tabular-nums">{col.total_count.toLocaleString()}</td>
-                        <td className="p-3 text-right tabular-nums">{col.null_count.toLocaleString()}</td>
-                        <td className="p-3 text-right tabular-nums">
-                            <span className={cn(col.null_percent > 50 && 'text-destructive font-medium bg-destructive/10 px-1.5 py-0.5 rounded')}>
-                                {col.null_percent.toFixed(1)}%
-                            </span>
-                        </td>
-                        <td className="p-3 text-right tabular-nums">{col.distinct_count.toLocaleString()}</td>
-                        <td className="p-3 text-right tabular-nums font-mono text-xs">
-                            {col.min != null ? String(col.min) : '—'}
-                        </td>
-                        <td className="p-3 text-right tabular-nums font-mono text-xs">
-                            {col.max != null ? String(col.max) : '—'}
-                        </td>
-                        <td className="p-3 text-right tabular-nums text-xs">
-                            {col.mean != null ? col.mean.toFixed(2) : '—'}
-                        </td>
-                        <td className="p-3">
-                            {col.top_values && col.top_values.length > 0 ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                    {col.top_values.slice(0, 3).map((tv, i) => (
-                                        <span
-                                            key={i}
-                                            className="inline-flex items-center gap-1 rounded bg-background border border-border px-1.5 py-0.5 text-[11px] shadow-sm"
-                                        >
-                                            <span className="font-mono truncate max-w-[80px] font-medium" title={String(tv.value)}>
-                                                {String(tv.value)}
-                                            </span>
-                                            <span className="text-muted-foreground/80 border-l border-border pl-1">
-                                                {tv.count}
-                                            </span>
-                                        </span>
-                                    ))}
-                                </div>
-                            ) : (
-                                <span className="text-muted-foreground italic">—</span>
-                            )}
-                        </td>
-                    </tr>
+                    <ColumnProfileCard key={col.column} col={col} />
                 ))}
-            </tbody>
-        </table>
+            </div>
+        </div>
     )
 }

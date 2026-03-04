@@ -431,6 +431,7 @@ function FlowCanvas({ flowTaskId }: { flowTaskId: number }) {
                     nodes: graphSnapshot.nodes,
                     edges: graphSnapshot.edges,
                     limit: 500,
+                    include_profiling: true,
                 })
                 const { task_id } = resp.data
                 // Guard: if the user triggered another preview while we were

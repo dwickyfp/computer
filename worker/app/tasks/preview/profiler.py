@@ -3,9 +3,10 @@ Data profiling module for preview results (D7).
 
 Computes per-column statistics from Arrow tables:
 - null_count, null_percent
-- distinct_count
-- min, max, mean (for numeric columns)
-- top_values (most frequent values)
+- distinct_count, distinct_percent
+- min, max, mean, std_dev, median (for numeric columns)
+- min, max (for date/timestamp/string columns)
+- top_values with count + percent (most frequent values)
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def profile_arrow_table(arrow_table) -> list[dict[str, Any]]:
     """
-    Compute profiling statistics for each column in an Arrow table.
+    Compute comprehensive profiling statistics for each column in an Arrow table.
 
     Args:
         arrow_table: PyArrow Table from DuckDB query result
@@ -33,10 +34,13 @@ def profile_arrow_table(arrow_table) -> list[dict[str, Any]]:
                 "null_count": 5,
                 "null_percent": 5.0,
                 "distinct_count": 42,
+                "distinct_percent": 42.0,
                 "min": 1,
                 "max": 100,
                 "mean": 50.5,
-                "top_values": [{"value": "foo", "count": 10}, ...]
+                "std_dev": 12.3,
+                "median": 48.0,
+                "top_values": [{"value": "foo", "count": 10, "percent": 10.0}, ...]
             },
             ...
         ]
@@ -61,6 +65,7 @@ def profile_arrow_table(arrow_table) -> list[dict[str, Any]]:
                 "null_count": 0,
                 "null_percent": 0.0,
                 "distinct_count": 0,
+                "distinct_percent": 0.0,
             })
         return profiles
 
@@ -75,6 +80,7 @@ def profile_arrow_table(arrow_table) -> list[dict[str, Any]]:
             "null_count": 0,
             "null_percent": 0.0,
             "distinct_count": 0,
+            "distinct_percent": 0.0,
         }
 
         try:
@@ -85,14 +91,19 @@ def profile_arrow_table(arrow_table) -> list[dict[str, Any]]:
                 (null_count / total_rows) * 100, 2
             ) if total_rows > 0 else 0.0
 
-            # Distinct count
+            # Distinct count + percent
             try:
                 unique_values = pc.unique(col)
-                profile["distinct_count"] = len(unique_values)
+                distinct_count = len(unique_values)
+                profile["distinct_count"] = distinct_count
+                profile["distinct_percent"] = round(
+                    (distinct_count / total_rows) * 100, 2
+                ) if total_rows > 0 else 0.0
             except Exception:
                 profile["distinct_count"] = None
+                profile["distinct_percent"] = None
 
-            # Numeric stats (min, max, mean)
+            # Numeric stats (min, max, mean, std_dev, median)
             if _is_numeric_type(col_type):
                 try:
                     non_null = pc.drop_null(col)
@@ -103,12 +114,33 @@ def profile_arrow_table(arrow_table) -> list[dict[str, Any]]:
                         profile["min"] = _safe_scalar(min_val)
                         profile["max"] = _safe_scalar(max_val)
                         profile["mean"] = round(mean_val, 4) if mean_val is not None else None
+                        # Standard deviation
+                        try:
+                            std_val = pc.stddev(non_null).as_py()
+                            profile["std_dev"] = round(std_val, 4) if std_val is not None else None
+                        except Exception:
+                            pass
+                        # Approximate median
+                        try:
+                            median_val = pc.approximate_median(non_null).as_py()
+                            profile["median"] = round(median_val, 4) if median_val is not None else None
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            elif _is_temporal_type(col_type) or _is_string_type(col_type):
+                # Min/max for dates, timestamps, strings
+                try:
+                    non_null = pc.drop_null(col)
+                    if len(non_null) > 0:
+                        profile["min"] = _safe_scalar(pc.min(non_null).as_py())
+                        profile["max"] = _safe_scalar(pc.max(non_null).as_py())
                 except Exception:
                     pass
 
-            # Top values (value frequencies) — limited to top 5
+            # Top values (value frequencies with percent) — limited to top 10
             try:
-                top_values = _compute_top_values(col, limit=5)
+                top_values = _compute_top_values(col, limit=10, total_rows=total_rows)
                 if top_values:
                     profile["top_values"] = top_values
             except Exception:
@@ -135,6 +167,20 @@ def _is_numeric_type(type_str: str) -> bool:
     return base_type in numeric_types
 
 
+def _is_temporal_type(type_str: str) -> bool:
+    """Check if Arrow type string represents a date/time type."""
+    temporal_prefixes = ("date", "time", "timestamp", "duration", "interval")
+    base_type = type_str.split("(")[0].split("[")[0].strip().lower()
+    return any(base_type.startswith(p) for p in temporal_prefixes)
+
+
+def _is_string_type(type_str: str) -> bool:
+    """Check if Arrow type string represents a string/binary type."""
+    string_types = {"string", "utf8", "large_string", "large_utf8", "binary", "large_binary"}
+    base_type = type_str.split("(")[0].strip().lower()
+    return base_type in string_types
+
+
 def _safe_scalar(value: Any) -> Any:
     """Convert Arrow scalar to JSON-safe Python type."""
     if value is None:
@@ -148,8 +194,8 @@ def _safe_scalar(value: Any) -> Any:
         return str(value)
 
 
-def _compute_top_values(col, limit: int = 5) -> list[dict[str, Any]]:
-    """Compute top N most frequent values for a column."""
+def _compute_top_values(col, limit: int = 10, total_rows: int = 0) -> list[dict[str, Any]]:
+    """Compute top N most frequent values for a column, with count and percent."""
     import pyarrow.compute as pc
 
     # Use value_counts for frequency analysis
@@ -174,6 +220,10 @@ def _compute_top_values(col, limit: int = 5) -> list[dict[str, Any]]:
     entries = entries[:limit]
 
     return [
-        {"value": _safe_scalar(v), "count": c}
+        {
+            "value": _safe_scalar(v),
+            "count": c,
+            "percent": round((c / total_rows) * 100, 2) if total_rows > 0 else 0.0,
+        }
         for v, c in entries
     ]

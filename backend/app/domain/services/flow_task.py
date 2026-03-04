@@ -556,6 +556,7 @@ class FlowTaskService:
                 node_id=request.node_id,
                 graph_snapshot=graph_snapshot,
                 limit=request.limit,
+                include_profiling=request.include_profiling,
             )
         except Exception as e:
             raise ConnectionError(f"Worker preview dispatch failed: {e}") from e
