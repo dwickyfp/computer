@@ -11,9 +11,15 @@ import {
   BarChart2,
   Layers2,
   Settings2,
+  Ban,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useFlowTaskStore } from '../store/flow-task-store'
 // Components
 import { NodeTypeConfig } from './NodeTypeConfig'
@@ -100,6 +106,12 @@ export function NodeEditorDrawer() {
   // Drawer is active if a node is selected OR if preview is forcefully open
   const isActive = !!selectedNode || preview.isOpen
 
+  // Preview requires a fully-configured input node (source + table).
+  // Disable all preview tabs until the user fills in those fields.
+  const isPreviewBlocked =
+    selectedNode?.type === 'input' &&
+    (!selectedNode.data.source_id || !selectedNode.data.table_name)
+
   // Trigger enter animation
   useEffect(() => {
     if (isActive) {
@@ -119,6 +131,11 @@ export function NodeEditorDrawer() {
       setTab('config')
       return
     }
+    // Redirect to config if the node cannot be previewed yet
+    if (isPreviewBlocked && tab !== 'config') {
+      setTab('config')
+      return
+    }
     if (tab !== 'config' && selectedNode && requestPreview) {
       if (preview.nodeId !== selectedNode.id && !preview.isLoading) {
         requestPreview(
@@ -131,6 +148,7 @@ export function NodeEditorDrawer() {
     tab,
     selectedNode?.id,
     selectedNode?.type,
+    isPreviewBlocked,
     requestPreview,
     preview.nodeId,
     preview.isLoading,
@@ -140,6 +158,7 @@ export function NodeEditorDrawer() {
   const handleTabClick = (
     newTab: 'config' | 'table' | 'chart' | 'profiling'
   ) => {
+    if (newTab !== 'config' && isPreviewBlocked) return
     if (newTab !== 'config' && selectedNode && requestPreview) {
       // Force refetch if switching from config, ensuring latest data is shown
       if (tab === 'config') {
@@ -245,48 +264,68 @@ export function NodeEditorDrawer() {
             </button>
             {nodeTypeToUse !== 'note' && (
               <>
-                <button
-                  className={cn(
-                    'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all',
-                    tab === 'table'
-                      ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                  onClick={() => handleTabClick('table')}
-                >
-                  <Table2 className='h-3.5 w-3.5' />
-                  Data Preview
-                </button>
-                <button
-                  className={cn(
-                    'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all',
-                    tab === 'chart'
-                      ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
-                      : 'text-muted-foreground hover:text-foreground',
-                    !preview.result &&
-                      tab !== 'config' &&
-                      'pointer-events-none opacity-40'
-                  )}
-                  onClick={() => handleTabClick('chart')}
-                >
-                  <BarChart2 className='h-3.5 w-3.5' />
-                  Chart
-                </button>
-                <button
-                  className={cn(
-                    'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all',
-                    tab === 'profiling'
-                      ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
-                      : 'text-muted-foreground hover:text-foreground',
-                    !preview.result &&
-                      tab !== 'config' &&
-                      'pointer-events-none opacity-40'
-                  )}
-                  onClick={() => handleTabClick('profiling')}
-                >
-                  <Layers2 className='h-3.5 w-3.5' />
-                  Profiling
-                </button>
+                {isPreviewBlocked ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className='flex cursor-not-allowed items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-muted-foreground/50 select-none'>
+                        <Ban className='h-3.5 w-3.5' />
+                        Preview unavailable
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side='top'
+                      className='max-w-[220px] text-center'
+                    >
+                      Set a source connection and table in the Configuration tab
+                      to enable Data Preview, Chart, and Profiling.
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <>
+                    <button
+                      className={cn(
+                        'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all',
+                        tab === 'table'
+                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                      onClick={() => handleTabClick('table')}
+                    >
+                      <Table2 className='h-3.5 w-3.5' />
+                      Data Preview
+                    </button>
+                    <button
+                      className={cn(
+                        'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all',
+                        tab === 'chart'
+                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
+                          : 'text-muted-foreground hover:text-foreground',
+                        !preview.result &&
+                          tab !== 'config' &&
+                          'pointer-events-none opacity-40'
+                      )}
+                      onClick={() => handleTabClick('chart')}
+                    >
+                      <BarChart2 className='h-3.5 w-3.5' />
+                      Chart
+                    </button>
+                    <button
+                      className={cn(
+                        'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all',
+                        tab === 'profiling'
+                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
+                          : 'text-muted-foreground hover:text-foreground',
+                        !preview.result &&
+                          tab !== 'config' &&
+                          'pointer-events-none opacity-40'
+                      )}
+                      onClick={() => handleTabClick('profiling')}
+                    >
+                      <Layers2 className='h-3.5 w-3.5' />
+                      Profiling
+                    </button>
+                  </>
+                )}
               </>
             )}
           </div>
