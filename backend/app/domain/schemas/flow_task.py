@@ -71,7 +71,9 @@ class FlowEdge(BaseSchema):
 class FlowTaskCreate(BaseSchema):
     """Payload for creating a new flow task."""
 
-    name: str = Field(..., min_length=1, max_length=255, description="Unique flow task name")
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="Unique flow task name"
+    )
     description: Optional[str] = Field(default=None, description="Optional description")
     trigger_type: FlowTaskTriggerType = Field(
         default=FlowTaskTriggerType.MANUAL,
@@ -248,9 +250,13 @@ class TaskStatusResponse(BaseSchema):
     state: str = Field(
         ..., description="PENDING | STARTED | PROGRESS | SUCCESS | FAILURE | UNKNOWN"
     )
-    result: Optional[Any] = Field(default=None, description="Task result payload on SUCCESS")
+    result: Optional[Any] = Field(
+        default=None, description="Task result payload on SUCCESS"
+    )
     error: Optional[str] = Field(default=None, description="Error message on FAILURE")
-    progress: Optional[Dict[str, Any]] = Field(default=None, description="Progress metadata")
+    progress: Optional[Dict[str, Any]] = Field(
+        default=None, description="Progress metadata"
+    )
 
 
 # --- D8: Watermark schemas ----------------------------------------------------
@@ -290,11 +296,15 @@ class NodePreviewRequest(BaseSchema):
     works before the graph is persisted.
     """
 
-    node_id: str = Field(..., description="Target node ID to preview/resolve schema for")
+    node_id: str = Field(
+        ..., description="Target node ID to preview/resolve schema for"
+    )
     nodes: List[FlowNode] = Field(..., description="Full node list from the canvas")
     edges: List[FlowEdge] = Field(..., description="Full edge list from the canvas")
     limit: int = Field(default=500, ge=1, le=5000, description="Max preview rows")
-    include_profiling: bool = Field(default=True, description="Include per-column profiling statistics")
+    include_profiling: bool = Field(
+        default=True, description="Include per-column profiling statistics"
+    )
 
 
 class NodePreviewTaskResponse(BaseSchema):

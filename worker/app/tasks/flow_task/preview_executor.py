@@ -28,6 +28,7 @@ logger = structlog.get_logger(__name__)
 
 # ─── Upstream graph trimming ───────────────────────────────────────────────────
 
+
 def _get_upstream_subgraph(
     target_node_id: str,
     nodes: List[dict],
@@ -66,8 +67,7 @@ def _get_upstream_subgraph(
     # Filter nodes and edges to the ancestor set
     filtered_nodes = [n for n in nodes if n["id"] in visited]
     filtered_edges = [
-        e for e in edges
-        if e.get("source") in visited and e.get("target") in visited
+        e for e in edges if e.get("source") in visited and e.get("target") in visited
     ]
 
     logger.debug(
@@ -109,6 +109,7 @@ def execute_node_preview(
     conn: Optional[duckdb.DuckDBPyConnection] = None
 
     from app.core.concurrency import acquire_duckdb_slot, release_duckdb_slot
+
     acquire_duckdb_slot()
     try:
         conn = _setup_duckdb_connection()
@@ -210,6 +211,7 @@ def execute_node_preview(
         if include_profiling:
             try:
                 from app.tasks.preview.profiler import profile_arrow_table
+
                 result["profile"] = profile_arrow_table(arrow_result)
             except Exception as e:
                 logger.warning("Data profiling failed", error=str(e))
@@ -225,6 +227,7 @@ def execute_node_preview(
                 pass
         release_duckdb_slot()
         from app.tasks.flow_task.connection_factory import cleanup_temp_files
+
         cleanup_temp_files()
 
 
@@ -249,6 +252,7 @@ def execute_node_schema(
     """
     conn: Optional[duckdb.DuckDBPyConnection] = None
     from app.core.concurrency import acquire_duckdb_slot, release_duckdb_slot
+
     acquire_duckdb_slot()
     try:
         conn = _setup_duckdb_connection()
@@ -305,6 +309,7 @@ def execute_node_schema(
                 pass
         release_duckdb_slot()
         from app.tasks.flow_task.connection_factory import cleanup_temp_files
+
         cleanup_temp_files()
 
 

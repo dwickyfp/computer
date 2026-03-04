@@ -176,9 +176,7 @@ class FlowTaskService:
                 )
             )
         except Exception as exc:
-            logger.warning(
-                f"Failed to push notification key={key}: {exc}"
-            )
+            logger.warning(f"Failed to push notification key={key}: {exc}")
 
     # ─── CRUD ─────────────────────────────────────────────────────────────────
 
@@ -235,17 +233,17 @@ class FlowTaskService:
     def duplicate_flow_task(self, flow_task_id: int) -> FlowTask:
         """
         Duplicate a flow task and its graph.
-        
+
         Creates a new task with name "{original_name} - copy".
         Copies the graph structure (nodes, edges) if it exists.
         Resulting task is IDLE and has no history.
         """
         original = self.get_flow_task(flow_task_id)
-        
+
         # 1. Create new task metadata
         new_name = c = f"{original.name} - copy"
         # If name is too long, truncate? For now typical usage won't hit limits quickly.
-        
+
         new_task = self.flow_task_repo.create(
             name=new_name,
             description=original.description,
@@ -253,7 +251,7 @@ class FlowTaskService:
             trigger_type=original.trigger_type,
         )
         self.db.flush()
-        
+
         # 2. Copy graph if exists
         original_graph = self.graph_repo.get_by_flow_task_id(flow_task_id)
         if original_graph:
@@ -262,7 +260,7 @@ class FlowTaskService:
                 nodes_json=original_graph.nodes_json,
                 edges_json=original_graph.edges_json,
             )
-        
+
         self.db.commit()
         self.db.refresh(new_task)
         logger.info(f"FlowTask duplicated: src={flow_task_id} dst={new_task.id}")
@@ -381,9 +379,7 @@ class FlowTaskService:
 
         # Check not already running
         if task.status == FlowTaskStatus.RUNNING:
-            raise ValueError(
-                f"FlowTask {flow_task_id} is already running"
-            )
+            raise ValueError(f"FlowTask {flow_task_id} is already running")
 
         # Mark flow as RUNNING
         self.flow_task_repo.update(flow_task_id, status=FlowTaskStatus.RUNNING)
@@ -607,7 +603,11 @@ class FlowTaskService:
                 result_data = status.get("result") or {}
                 self.run_history_repo.complete_run(
                     run_id=run.id,
-                    status=FlowTaskRunStatus.SUCCESS if is_success else FlowTaskRunStatus.FAILED,
+                    status=(
+                        FlowTaskRunStatus.SUCCESS
+                        if is_success
+                        else FlowTaskRunStatus.FAILED
+                    ),
                     finished_at=datetime.now(ZoneInfo("Asia/Jakarta")),
                     total_input_records=result_data.get("total_input_records", 0),
                     total_output_records=result_data.get("total_output_records", 0),
@@ -615,9 +615,15 @@ class FlowTaskService:
                 )
                 self.flow_task_repo.update_run_summary(
                     flow_task_id=run.flow_task_id,
-                    status=FlowTaskStatus.SUCCESS if is_success else FlowTaskStatus.FAILED,
+                    status=(
+                        FlowTaskStatus.SUCCESS if is_success else FlowTaskStatus.FAILED
+                    ),
                     last_run_at=datetime.now(ZoneInfo("Asia/Jakarta")),
-                    last_run_status=FlowTaskRunStatus.SUCCESS if is_success else FlowTaskRunStatus.FAILED,
+                    last_run_status=(
+                        FlowTaskRunStatus.SUCCESS
+                        if is_success
+                        else FlowTaskRunStatus.FAILED
+                    ),
                     last_run_record_count=result_data.get("total_output_records"),
                 )
                 self.db.commit()
