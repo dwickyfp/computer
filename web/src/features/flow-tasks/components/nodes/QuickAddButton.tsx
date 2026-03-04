@@ -199,8 +199,6 @@ export function QuickAddButton({ nodeId }: QuickAddButtonProps) {
         align='start'
         sideOffset={20}
         className='w-52 p-2'
-        // Prevent ReactFlow from treating this click as a canvas interaction
-        onPointerDownOutside={(e) => e.preventDefault()}
         onClick={(e) => e.stopPropagation()}
       >
         <p className='mb-2 px-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase'>
