@@ -1109,3 +1109,35 @@ ALTER TABLE rosetta_chain_tables
 ADD COLUMN IF NOT EXISTS database_id INTEGER REFERENCES rosetta_chain_databases(id) ON DELETE SET NULL;
 
 
+-- ============================================================
+-- Migration: Internal Notification Engine
+-- Allows configuring multiple HTTP-based internal notification
+-- endpoints (e.g. company email API) with per-config enable/disable.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS internal_notification_config (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    base_url TEXT NOT NULL,
+    requester VARCHAR(255) NOT NULL,
+    menu_code VARCHAR(255) NOT NULL,
+    company_group_id INTEGER NOT NULL DEFAULT 1,
+    mail_from_code VARCHAR(255) NOT NULL,
+    mail_to TEXT NOT NULL,       -- comma-separated email addresses
+    subject VARCHAR(500) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_internal_notification_config_is_enabled
+    ON internal_notification_config(is_enabled);
+
+COMMENT ON TABLE internal_notification_config IS 'Internal HTTP notification endpoint configurations — multiple configs, each independently toggle-able';
+COMMENT ON COLUMN internal_notification_config.mail_to IS 'Comma-separated list of recipient email addresses';
+COMMENT ON COLUMN internal_notification_config.base_url IS 'Base URL of the internal notification API (without path)';
+
+-- Global on/off flag for the whole internal notification channel
+INSERT INTO rosetta_setting_configuration(config_key, config_value)
+VALUES('ENABLE_ALERT_NOTIFICATION_INTERNAL', 'FALSE')
+ON CONFLICT(config_key) DO NOTHING;
