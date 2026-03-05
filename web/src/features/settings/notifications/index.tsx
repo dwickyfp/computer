@@ -5,7 +5,7 @@ export function SettingsNotifications() {
   return (
     <ContentSection
       title='Notification Setting'
-      desc='Configure webhook URL and alert thresholds for WAL monitoring notifications.'
+      desc='Configure internal, webhook, and Telegram notification channels for WAL monitoring alerts.'
       fullWidth
     >
       <NotificationsForm />
