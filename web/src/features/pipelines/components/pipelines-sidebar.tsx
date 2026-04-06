@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams, useNavigate } from '@tanstack/react-router'
+import { useParams, useNavigate } from '@tanstack/react-router'
 import { pipelinesRepo, type Pipeline } from '@/repo/pipelines'
 import { sourcesRepo, type SourceDetailResponse } from '@/repo/sources'
 import {
@@ -8,6 +8,7 @@ import {
   Table,
   Layers,
   Workflow,
+  ChevronRight,
   Loader2,
   Search,
   RefreshCw,
@@ -17,13 +18,12 @@ import {
   Command,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   CustomTabs,
   CustomTabsList,
@@ -37,6 +37,14 @@ import {
 } from '@/components/ui/hover-card'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+} from '@/components/ui/sidebar'
 import { usePipelineSelection } from '@/features/pipelines/context/pipeline-selection-context'
 
 function HighlightedText({
@@ -50,7 +58,8 @@ function HighlightedText({
     return <span>{text}</span>
   }
 
-  const parts = text.split(new RegExp(`(${highlight})`, 'gi'))
+  const escapedHighlight = highlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = text.split(new RegExp(`(${escapedHighlight})`, 'gi'))
   return (
     <span>
       {parts.map((part, i) =>
@@ -66,14 +75,54 @@ function HighlightedText({
   )
 }
 
-const explorerTreeTriggerClassName =
-  'justify-start gap-2 rounded-md py-1 pl-0 pr-2 text-sm font-normal hover:bg-muted/50 hover:no-underline dark:text-[#bec4d6]'
+const explorerSubButtonClassName =
+  'h-8 w-full justify-start text-left text-muted-foreground dark:text-[#bec4d6] data-[active=true]:border-border/60 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground'
 
-const explorerTreeRootBranchClassName =
-  'relative ml-2 flex flex-col gap-1 before:absolute before:inset-y-0 before:left-2 before:w-px before:bg-border/40'
+function mergeExpandedItems(previous: string[], nextItems: string[]) {
+  if (nextItems.length === 0) {
+    return previous
+  }
 
-const explorerTreeBranchClassName =
-  'relative ml-6 flex flex-col gap-1 before:absolute before:inset-y-0 before:left-2 before:w-px before:bg-border/50'
+  const nextSet = new Set(previous)
+  let changed = false
+
+  nextItems.forEach((item) => {
+    if (!nextSet.has(item)) {
+      nextSet.add(item)
+      changed = true
+    }
+  })
+
+  return changed ? Array.from(nextSet) : previous
+}
+
+function setExpandedItem(previous: string[], item: string, open: boolean) {
+  const hasItem = previous.includes(item)
+
+  if (open) {
+    return hasItem ? previous : [...previous, item]
+  }
+
+  return hasItem ? previous.filter((value) => value !== item) : previous
+}
+
+function ExplorerChevron({
+  open,
+  className,
+}: {
+  open: boolean
+  className?: string
+}) {
+  return (
+    <ChevronRight
+      className={cn(
+        'size-4 shrink-0 text-muted-foreground transition-transform duration-200',
+        open && 'rotate-90',
+        className
+      )}
+    />
+  )
+}
 
 // -- Sub-components for clean recursion
 
@@ -94,29 +143,24 @@ function TableItem({
   onClick?: () => void
 }) {
   return (
-    <div className='group/table relative pl-6' onClick={onClick}>
-      <div
-        className={cn(
-          'absolute top-1/2 left-2 h-px w-4 -translate-y-1/2 bg-border/50'
-          // "group-hover/table:bg-accent-foreground/50 transition-colors"
-        )}
-      />
+    <SidebarMenuSubItem>
       <HoverCard openDelay={100} closeDelay={200}>
         <HoverCardTrigger asChild>
-          <div
-            className={cn(
-              'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground dark:text-[#bec4d6]',
-              isActive && 'bg-accent font-medium text-accent-foreground'
-            )}
+          <SidebarMenuSubButton
+            asChild
+            isActive={isActive}
+            className={explorerSubButtonClassName}
           >
-            <Table className='h-3 w-3 shrink-0' />
-            <div className='max-w-42.5 min-w-0 flex-1 truncate'>
-              <HighlightedText
-                text={name.toUpperCase()}
-                highlight={highlight}
-              />
-            </div>
-          </div>
+            <button type='button' onClick={onClick}>
+              <Table className='h-3.5 w-3.5 shrink-0' />
+              <span className='min-w-0 flex-1 truncate'>
+                <HighlightedText
+                  text={name.toUpperCase()}
+                  highlight={highlight}
+                />
+              </span>
+            </button>
+          </SidebarMenuSubButton>
         </HoverCardTrigger>
         <HoverCardContent className='w-80' side='right' align='start'>
           <div className='space-y-2'>
@@ -148,7 +192,7 @@ function TableItem({
           </div>
         </HoverCardContent>
       </HoverCard>
-    </div>
+    </SidebarMenuSubItem>
   )
 }
 
@@ -170,14 +214,16 @@ function SourceTables({
   if (!filteredTables?.length) {
     if (searchQuery) return null // Hide if no matches during search
     return (
-      <div className='ml-6 py-1 text-xs text-muted-foreground'>
-        No tables found
-      </div>
+      <SidebarMenuSub className='mt-1'>
+        <div className='px-2 py-1 text-xs text-muted-foreground'>
+          No tables found
+        </div>
+      </SidebarMenuSub>
     )
   }
 
   return (
-    <div className={cn(explorerTreeBranchClassName, 'mt-1 gap-0.5')}>
+    <SidebarMenuSub className='mt-1'>
       {filteredTables.map((table) => (
         <TableItem
           key={table.id}
@@ -186,7 +232,7 @@ function SourceTables({
           type='source'
         />
       ))}
-    </div>
+    </SidebarMenuSub>
   )
 }
 
@@ -206,34 +252,41 @@ function PipelineItem({
   const navigate = useNavigate()
   const { selectTable } = usePipelineSelection()
   const sourceName = pipeline.source?.name || 'Source'
-  const destinations = pipeline.destinations || []
+  const destinations = useMemo(
+    () => pipeline.destinations ?? [],
+    [pipeline.destinations]
+  )
 
   // Use passed source details or empty if not loaded yet
   const sourceTables = sourceDetails?.tables || []
 
   const [openItems, setOpenItems] = useState<string[]>([])
+  const handleOpenChange = (value: string, open: boolean) => {
+    setOpenItems((previous) => setExpandedItem(previous, value, open))
+  }
 
-  useEffect(() => {
-    if (checkExpanded && checkExpanded.length > 0) {
-      setOpenItems((prev) => Array.from(new Set([...prev, ...checkExpanded])))
-    }
-  }, [checkExpanded])
+  const autoOpenItems = useMemo(() => {
+    const nextItems = [...(checkExpanded ?? [])]
 
-  // Auto-expand destination containing selected table
-  useEffect(() => {
     if (selectedSyncId) {
-      destinations.forEach((d) => {
-        const hasSelectedSync = d.table_syncs?.some(
+      destinations.forEach((destination) => {
+        const hasSelectedSync = destination.table_syncs?.some(
           (sync) => sync.id === selectedSyncId
         )
         if (hasSelectedSync) {
-          setOpenItems((prev) =>
-            Array.from(new Set([...prev, 'destinations', `dest-${d.id}`]))
-          )
+          nextItems.push('destinations', `dest-${destination.id}`)
         }
       })
     }
-  }, [selectedSyncId, destinations])
+
+    return nextItems
+  }, [checkExpanded, selectedSyncId, destinations])
+
+  const effectiveOpenItems = useMemo(
+    () => mergeExpandedItems(openItems, autoOpenItems),
+    [openItems, autoOpenItems]
+  )
+  const isOpen = (value: string) => effectiveOpenItems.includes(value)
 
   // Filter destinations logic
   const filteredDestinations = useMemo(() => {
@@ -259,107 +312,121 @@ function PipelineItem({
   }, [destinations, searchQuery])
 
   return (
-    <div className='flex flex-col gap-1 pb-2'>
-      <Accordion
-        type='multiple'
-        className='w-full'
-        value={openItems}
-        onValueChange={setOpenItems}
+    <SidebarMenuSub className='mt-1'>
+      <Collapsible
+        open={isOpen('sources')}
+        onOpenChange={(open) => handleOpenChange('sources', open)}
+        className='group/collapsible'
       >
-        {/* SOURCES FOLDER */}
-        <AccordionItem value='sources' className='border-none'>
-          <AccordionTrigger
-            chevronPosition='left'
-            className={explorerTreeTriggerClassName}
-          >
-            <div className='flex items-center gap-2'>
-              <FolderInput className='h-4 w-4' />
-              <span>Sources</span>
-            </div>
-          </AccordionTrigger>
-          <AccordionContent className='pt-0.5 pb-0'>
-            <div className={explorerTreeBranchClassName}>
-              <Accordion
-                type='multiple'
-                className='w-full'
-                value={openItems}
-                onValueChange={setOpenItems}
+        <SidebarMenuSubItem>
+          <CollapsibleTrigger asChild>
+            <SidebarMenuSubButton
+              asChild
+              className={explorerSubButtonClassName}
+            >
+              <button type='button'>
+                <ExplorerChevron open={isOpen('sources')} />
+                <FolderInput className='h-4 w-4 shrink-0' />
+                <span className='truncate'>Sources</span>
+              </button>
+            </SidebarMenuSubButton>
+          </CollapsibleTrigger>
+          <CollapsibleContent className='pt-1'>
+            <SidebarMenuSub>
+              <Collapsible
+                open={isOpen(`src-${pipeline.source_id}`)}
+                onOpenChange={(open) =>
+                  handleOpenChange(`src-${pipeline.source_id}`, open)
+                }
+                className='group/collapsible'
               >
-                <AccordionItem
-                  value={`src-${pipeline.source_id}`}
-                  className='border-none'
-                >
-                  <AccordionTrigger
-                    chevronPosition='left'
-                    className={explorerTreeTriggerClassName}
-                  >
-                    <div className='flex w-full items-center gap-2 overflow-hidden'>
-                      <Database className='h-3.5 w-3.5 shrink-0' />
-                      <div className='max-w-50 min-w-0 flex-1 truncate'>
-                        <HighlightedText
-                          text={sourceName}
-                          highlight={searchQuery}
+                <SidebarMenuSubItem>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuSubButton
+                      asChild
+                      className={explorerSubButtonClassName}
+                    >
+                      <button type='button'>
+                        <ExplorerChevron
+                          open={isOpen(`src-${pipeline.source_id}`)}
                         />
-                      </div>
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent className='pb-0'>
+                        <Database className='h-3.5 w-3.5 shrink-0' />
+                        <span className='min-w-0 flex-1 truncate'>
+                          <HighlightedText
+                            text={sourceName}
+                            highlight={searchQuery}
+                          />
+                        </span>
+                      </button>
+                    </SidebarMenuSubButton>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className='pt-1'>
                     <SourceTables
                       tables={sourceTables}
                       searchQuery={searchQuery}
                     />
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
-            </div>
-          </AccordionContent>
-        </AccordionItem>
+                  </CollapsibleContent>
+                </SidebarMenuSubItem>
+              </Collapsible>
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </SidebarMenuSubItem>
+      </Collapsible>
 
-        {/* DESTINATIONS FOLDER */}
-        <AccordionItem value='destinations' className='border-none'>
-          <AccordionTrigger
-            chevronPosition='left'
-            className={explorerTreeTriggerClassName}
-          >
-            <div className='flex items-center gap-2'>
-              <FolderSync className='h-4 w-4' />
-              <span>Destinations</span>
-            </div>
-          </AccordionTrigger>
-          <AccordionContent className='pt-0.5 pb-0'>
-            <div className={explorerTreeBranchClassName}>
+      <Collapsible
+        open={isOpen('destinations')}
+        onOpenChange={(open) => handleOpenChange('destinations', open)}
+        className='group/collapsible'
+      >
+        <SidebarMenuSubItem>
+          <CollapsibleTrigger asChild>
+            <SidebarMenuSubButton
+              asChild
+              className={explorerSubButtonClassName}
+            >
+              <button type='button'>
+                <ExplorerChevron open={isOpen('destinations')} />
+                <FolderSync className='h-4 w-4 shrink-0' />
+                <span className='truncate'>Destinations</span>
+              </button>
+            </SidebarMenuSubButton>
+          </CollapsibleTrigger>
+          <CollapsibleContent className='pt-1'>
+            <SidebarMenuSub>
               {filteredDestinations.length === 0 && (
                 <div className='px-2 py-1 text-xs text-muted-foreground'>
                   No destinations found
                 </div>
               )}
               {filteredDestinations.map((d) => (
-                <Accordion
+                <Collapsible
                   key={d.id}
-                  type='multiple'
-                  className='w-full'
-                  value={openItems}
-                  onValueChange={setOpenItems}
+                  open={isOpen(`dest-${d.id}`)}
+                  onOpenChange={(open) =>
+                    handleOpenChange(`dest-${d.id}`, open)
+                  }
+                  className='group/collapsible'
                 >
-                  <AccordionItem value={`dest-${d.id}`} className='border-none'>
-                    <AccordionTrigger
-                      chevronPosition='left'
-                      className={explorerTreeTriggerClassName}
-                    >
-                      <div className='flex w-full items-center gap-2 overflow-hidden'>
-                        <Layers className='h-3.5 w-3.5 shrink-0' />
-                        <div className='max-w-50 min-w-0 flex-1 truncate'>
-                          <HighlightedText
-                            text={d.destination.name}
-                            highlight={searchQuery}
-                          />
-                        </div>
-                      </div>
-                    </AccordionTrigger>
-                    <AccordionContent className='pb-0'>
-                      <div
-                        className={cn(explorerTreeBranchClassName, 'mt-1 gap-0.5')}
+                  <SidebarMenuSubItem>
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuSubButton
+                        asChild
+                        className={explorerSubButtonClassName}
                       >
+                        <button type='button'>
+                          <ExplorerChevron open={isOpen(`dest-${d.id}`)} />
+                          <Layers className='h-3.5 w-3.5 shrink-0' />
+                          <span className='min-w-0 flex-1 truncate'>
+                            <HighlightedText
+                              text={d.destination.name}
+                              highlight={searchQuery}
+                            />
+                          </span>
+                        </button>
+                      </SidebarMenuSubButton>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className='pt-1'>
+                      <SidebarMenuSub>
                         {d.table_syncs
                           ?.filter(
                             (sync) =>
@@ -377,33 +444,31 @@ function PipelineItem({
                               sourceTable={sync.table_name}
                               isActive={selectedSyncId === sync.id}
                               onClick={() => {
-                                // Navigate to pipeline first if not already there
                                 navigate({
                                   to: '/pipelines/$pipelineId',
                                   params: {
                                     pipelineId: pipeline.id.toString(),
                                   },
                                 })
-                                // Select the table via context
                                 selectTable(d.id, sync.id)
                               }}
                             />
                           ))}
                         {(!d.table_syncs || d.table_syncs.length === 0) && (
-                          <div className='pl-6 py-1 text-xs text-muted-foreground'>
+                          <div className='px-2 py-1 text-xs text-muted-foreground'>
                             No synced tables
                           </div>
                         )}
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </SidebarMenuSubItem>
+                </Collapsible>
               ))}
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-      </Accordion>
-    </div>
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </SidebarMenuSubItem>
+      </Collapsible>
+    </SidebarMenuSub>
   )
 }
 
@@ -428,7 +493,7 @@ export function PipelinesSidebar() {
     queryFn: pipelinesRepo.getAll,
   })
 
-  const pipelines = pipelinesData?.pipelines || []
+  const pipelines = useMemo(() => pipelinesData?.pipelines ?? [], [pipelinesData])
 
   // 2. Fetch Source Details (Eager Loading)
   // Extract unique source IDs
@@ -448,15 +513,12 @@ export function PipelinesSidebar() {
   })
 
   // Create a map for easy access: sourceId -> details
-  const sourceDetailsMap = useMemo(() => {
-    const map = new Map<number, SourceDetailResponse>()
-    sourceQueries.forEach((query, index) => {
-      if (query.data) {
-        map.set(sourceIds[index], query.data)
-      }
-    })
-    return map
-  }, [sourceQueries, sourceIds])
+  const sourceDetailsMap = new Map<number, SourceDetailResponse>()
+  sourceQueries.forEach((query, index) => {
+    if (query.data) {
+      sourceDetailsMap.set(sourceIds[index], query.data)
+    }
+  })
 
   // 3. Search Logic
   // We modify this to also return "internal expansion" maps per pipeline
@@ -517,10 +579,8 @@ export function PipelinesSidebar() {
             isMatch = true
             expanded.add(pId)
             internalIds.add('destinations')
-            // internalIds.add(`dest-${dId}`) // Optional: expand destination itself if name matches? Maybe just folder.
           }
 
-          // Check Destination Tables
           const matchingSyncs = d.table_syncs?.filter((s) =>
             (s.table_name_target || s.table_name)
               .toLowerCase()
@@ -548,30 +608,19 @@ export function PipelinesSidebar() {
       }
     }, [pipelines, searchQuery, sourceDetailsMap])
 
-  // Update expanded items when search results change
-  useEffect(() => {
-    if (searchQuery.trim() && itemsToExpand.length > 0) {
-      setExpandedItems((prev) => {
-        const prevSet = new Set(prev)
-        const newItems = itemsToExpand.filter((id) => !prevSet.has(id))
+  const effectiveExpandedItems = useMemo(() => {
+    let nextItems = expandedItems
 
-        if (newItems.length === 0) {
-          return prev
-        }
-
-        return [...prev, ...newItems]
-      })
+    if (searchQuery.trim()) {
+      nextItems = mergeExpandedItems(nextItems, itemsToExpand)
     }
-  }, [itemsToExpand, searchQuery])
 
-  // Auto-expand current pipeline
-  useEffect(() => {
     if (currentId && !searchQuery) {
-      setExpandedItems((prev) =>
-        Array.from(new Set([...prev, `pipeline-${currentId}`]))
-      )
+      nextItems = mergeExpandedItems(nextItems, [`pipeline-${currentId}`])
     }
-  }, [currentId, searchQuery])
+
+    return nextItems
+  }, [expandedItems, itemsToExpand, currentId, searchQuery])
 
   if (isError) {
     return (
@@ -598,9 +647,7 @@ export function PipelinesSidebar() {
         </h1>
         <div className='mb-4 flex items-center gap-2'>
           <Command className='h-4 w-4 text-cyan-500' />
-          <span className='text-sm font-semibold text-cyan-500'>
-            PIPELINES
-          </span>
+          <span className='text-sm font-semibold text-cyan-500'>PIPELINES</span>
         </div>
       </div>
       {/* Pipelines Tab with Search */}
@@ -666,88 +713,90 @@ export function PipelinesSidebar() {
                     : 'No pipelines found'}
                 </div>
               )}
-              <Accordion
-                type='multiple'
-                value={expandedItems}
-                onValueChange={setExpandedItems}
-                className='w-full'
-              >
-                {filteredPipelines.map((pipeline) => (
-                  <AccordionItem
-                    key={pipeline.id}
-                    value={`pipeline-${pipeline.id}`}
-                    className='mb-1 border-none'
-                  >
-                    <div className='group relative'>
-                      <AccordionTrigger
-                        chevronPosition='left'
-                        className={cn(
-                          'flex-1 justify-start gap-1.5 rounded-md px-2 py-2 pr-8 text-sm font-medium hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:no-underline',
-                          currentId === pipeline.id &&
-                            'bg-[#d6e6ff] text-[#088ae8] hover:bg-[#d6e6ff] hover:text-[#088ae8] dark:bg-[#002c6e] dark:text-[#5999f7]'
-                        )}
-                        onClick={(e) => {
-                          // If clicking on a non-active pipeline, navigate to it instead of expanding
-                          if (currentId !== pipeline.id) {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            navigate({
-                              to: '/pipelines/$pipelineId',
-                              params: { pipelineId: pipeline.id.toString() },
-                            })
-                          }
-                          // If it's already active, let the accordion expand/collapse normally
-                        }}
-                      >
-                        <div className='flex flex-1 items-center gap-2 overflow-hidden'>
-                          <Workflow
+              <SidebarMenu>
+                {filteredPipelines.map((pipeline) => {
+                  const pipelineKey = `pipeline-${pipeline.id}`
+                  const isPipelineOpen =
+                    effectiveExpandedItems.includes(pipelineKey)
+
+                  return (
+                    <Collapsible
+                      key={pipeline.id}
+                      open={isPipelineOpen}
+                      onOpenChange={(open) => {
+                        if (currentId !== pipeline.id) return
+
+                        setExpandedItems((previous) =>
+                          setExpandedItem(previous, pipelineKey, open)
+                        )
+                      }}
+                      className='group/collapsible'
+                    >
+                      <SidebarMenuItem className='mb-1'>
+                        <CollapsibleTrigger asChild>
+                          <SidebarMenuButton
+                            isActive={currentId === pipeline.id}
                             className={cn(
-                              'h-4 w-4 shrink-0',
-                              currentId === pipeline.id
-                                ? 'text-[#5999f7]'
-                                : 'text-primary'
+                              'justify-start gap-2 text-sm font-medium',
+                              currentId === pipeline.id &&
+                                'bg-[#d6e6ff] text-[#088ae8] hover:bg-[#d6e6ff] hover:text-[#088ae8] dark:bg-[#002c6e] dark:text-[#5999f7]'
                             )}
-                          />
-                          <div className='max-w-50 min-w-0 flex-1 truncate'>
-                            <HighlightedText
-                              text={pipeline.name}
-                              highlight={searchQuery}
+                            onClick={(event) => {
+                              if (currentId !== pipeline.id) {
+                                event.preventDefault()
+                                navigate({
+                                  to: '/pipelines/$pipelineId',
+                                  params: {
+                                    pipelineId: pipeline.id.toString(),
+                                  },
+                                })
+                              }
+                            }}
+                          >
+                            <ExplorerChevron
+                              open={isPipelineOpen}
+                              className={
+                                currentId === pipeline.id
+                                  ? 'text-[#5999f7]'
+                                  : undefined
+                              }
                             />
-                          </div>
-                        </div>
-                      </AccordionTrigger>
-                      <Link
-                        to='/pipelines/$pipelineId'
-                        params={{ pipelineId: pipeline.id.toString() }}
-                        className={cn(
-                          'absolute top-1/2 right-2 -translate-y-1/2 rounded-md p-1 opacity-0 transition-opacity group-hover:opacity-100',
-                          currentId === pipeline.id
-                            ? 'text-[#5999f7] hover:bg-white/20'
-                            : 'text-muted-foreground hover:bg-sidebar-accent-foreground/5 hover:text-foreground'
-                        )}
-                        title='Go to details'
-                      >
-                        <Workflow className='h-3 w-3' />
-                      </Link>
-                    </div>
-                    <AccordionContent className='pt-1 pb-0'>
-                      <div className={explorerTreeRootBranchClassName}>
-                        <PipelineItem
-                          pipeline={pipeline}
-                          sourceDetails={
-                            pipeline.source_id !== null
-                              ? sourceDetailsMap.get(pipeline.source_id)
-                              : undefined
-                          }
-                          checkExpanded={internalExpansionMap.get(pipeline.id)}
-                          searchQuery={searchQuery}
-                          selectedSyncId={selection.syncId}
-                        />
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                ))}
-              </Accordion>
+                            <Workflow
+                              className={cn(
+                                'h-4 w-4 shrink-0',
+                                currentId === pipeline.id
+                                  ? 'text-[#5999f7]'
+                                  : 'text-primary'
+                              )}
+                            />
+                            <span className='min-w-0 flex-1 truncate'>
+                              <HighlightedText
+                                text={pipeline.name}
+                                highlight={searchQuery}
+                              />
+                            </span>
+                          </SidebarMenuButton>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className='pt-1'>
+                          <PipelineItem
+                            pipeline={pipeline}
+                            sourceDetails={
+                              pipeline.source_id !== null
+                                ? sourceDetailsMap.get(pipeline.source_id)
+                                : undefined
+                            }
+                            checkExpanded={internalExpansionMap.get(
+                              pipeline.id
+                            )}
+                            searchQuery={searchQuery}
+                            selectedSyncId={selection.syncId}
+                          />
+                        </CollapsibleContent>
+                      </SidebarMenuItem>
+                    </Collapsible>
+                  )
+                })}
+              </SidebarMenu>
             </div>
           </ScrollArea>
         </CustomTabsContent>
