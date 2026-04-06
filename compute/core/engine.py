@@ -10,11 +10,9 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from pydbzengine import DebeziumJsonEngine
-
 from config.config import get_config
 from core.models import Pipeline, DestinationType
-from core.event_handler import CDCEventHandler
+from core.record_router import RecordRouter
 from core.repository import (
     PipelineRepository,
     TableMetadataRepository,
@@ -25,12 +23,13 @@ from core.error_sanitizer import sanitize_for_db, sanitize_for_log
 from core.dlq_manager import DLQManager
 from core.dlq_recovery import DLQRecoveryWorker
 from core.schema_validator import validate_pipeline_schemas
-from sources.base import BaseSource
 from sources.postgresql import PostgreSQLSource
+from sources.postgres_runner import PostgresSourceRunner
+from sources.kafka_runner import KafkaSourceRunner
 from destinations.base import BaseDestination
 from destinations.snowflake import SnowflakeDestination
 from destinations.postgresql import PostgreSQLDestination
-from destinations.rosetta import RosettaDestination
+from destinations.kafka import KafkaDestination
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +131,9 @@ class PipelineEngine:
         """
         self._pipeline_id = pipeline_id
         self._pipeline: Optional[Pipeline] = None
-        self._source: Optional[BaseSource] = None
+        self._source = None
         self._destinations: dict[int, BaseDestination] = {}
-        self._engine: Optional[DebeziumJsonEngine] = None
+        self._source_runner = None
         self._logger = logging.getLogger(f"{__name__}.Pipeline_{pipeline_id}")
         self._is_running = False
 
@@ -171,14 +170,34 @@ class PipelineEngine:
 
         return pipeline
 
-    def _create_source(self, pipeline: Pipeline) -> BaseSource:
-        """
-        Create source instance based on configuration.
+    def _create_source(self, pipeline: Pipeline):
+        """Create the typed source helper used by the runner."""
+        if not pipeline.source:
+            raise PipelineException("Pipeline source is not loaded")
+        if pipeline.source.is_postgres:
+            return PostgreSQLSource(pipeline.source)
+        if pipeline.source.is_kafka:
+            return pipeline.source
+        raise PipelineException(
+            f"Unsupported source type: {pipeline.source.source_type}",
+            {"source_type": pipeline.source.source_type},
+        )
 
-        Currently only PostgreSQL is supported.
-        """
-        # For now, all sources are PostgreSQL
-        return PostgreSQLSource(pipeline.source)
+    def _create_source_runner(self):
+        """Create the runtime runner for the configured source."""
+        if self._pipeline.source.is_postgres:
+            offset_file = get_config().debezium.get_offset_file(self._pipeline.name)
+            return PostgresSourceRunner(
+                source=self._source,
+                offset_file=offset_file,
+                shutdown_event=self._shutdown_event,
+            )
+        if self._pipeline.source.is_kafka:
+            return KafkaSourceRunner(self._pipeline.source)
+        raise PipelineException(
+            f"Unsupported source type: {self._pipeline.source.source_type}",
+            {"source_type": self._pipeline.source.source_type},
+        )
 
     def _create_destination(
         self, destination_type: str, config: Any, source_config: Optional[Any] = None
@@ -187,7 +206,7 @@ class PipelineEngine:
         Create destination instance based on type.
 
         Args:
-            destination_type: Type of destination (SNOWFLAKE, POSTGRES)
+            destination_type: Type of destination (SNOWFLAKE, POSTGRES, KAFKA)
             config: Destination configuration model
             source_config: Optional source configuration (for PostgreSQL destinations)
 
@@ -211,8 +230,8 @@ class PipelineEngine:
             return SnowflakeDestination(config, timeout_config=timeout_config)
         elif destination_type.upper() == DestinationType.POSTGRES.value:
             return PostgreSQLDestination(config, source_config=source_config)
-        elif destination_type.upper() == DestinationType.ROSETTA.value:
-            return RosettaDestination(config)
+        elif destination_type.upper() == DestinationType.KAFKA.value:
+            return KafkaDestination(config)
         else:
             raise PipelineException(
                 f"Unsupported destination type: {destination_type}",
@@ -250,6 +269,7 @@ class PipelineEngine:
         """
         self._pipeline = self._load_pipeline()
         self._source = self._create_source(self._pipeline)
+        self._source_runner = self._create_source_runner()
 
         # Create and initialize destination instances independently
         successful_destinations = 0
@@ -391,74 +411,31 @@ class PipelineEngine:
                 {"pipeline_id": self._pipeline_id},
             )
 
-        # Validate replication setup before starting
-        # This catches missing publication/replication slot issues early
-        if hasattr(self._source, "validate_replication_setup"):
-            is_valid, error_msg = self._source.validate_replication_setup(
-                self._pipeline.name
-            )
-            if not is_valid:
-                self._logger.error(f"Replication setup validation failed: {error_msg}")
-                raise PipelineException(
-                    f"Replication setup validation failed: {error_msg}",
-                    {
-                        "pipeline_id": self._pipeline_id,
-                        "pipeline_name": self._pipeline.name,
-                    },
+        self._source_runner.validate(self._pipeline.name, table_list)
+
+        if self._pipeline.source and self._pipeline.source.is_postgres:
+            try:
+                schema_result = validate_pipeline_schemas(self._pipeline, table_list)
+                if schema_result.issues:
+                    for issue in schema_result.issues:
+                        if issue.severity == "ERROR":
+                            self._logger.warning(
+                                f"Schema compatibility ERROR: {issue.message} "
+                                f"(table={issue.table_name}, column={issue.column_name})"
+                            )
+                        else:
+                            self._logger.info(
+                                f"Schema compatibility WARNING: {issue.message}"
+                            )
+            except Exception as e:
+                self._logger.warning(
+                    f"Schema validation skipped due to error: {e}",
+                    exc_info=True,
                 )
 
-        # Validate schema compatibility between source and destinations (B2)
-        # Only warns on issues; errors are logged but don't block pipeline start
-        try:
-            schema_result = validate_pipeline_schemas(self._pipeline, table_list)
-            if schema_result.issues:
-                for issue in schema_result.issues:
-                    if issue.severity == "ERROR":
-                        self._logger.warning(
-                            f"Schema compatibility ERROR: {issue.message} "
-                            f"(table={issue.table_name}, column={issue.column_name})"
-                        )
-                    else:
-                        self._logger.info(
-                            f"Schema compatibility WARNING: {issue.message}"
-                        )
-
-                error_count = sum(
-                    1 for i in schema_result.issues if i.severity == "ERROR"
-                )
-                warn_count = sum(
-                    1 for i in schema_result.issues if i.severity == "WARNING"
-                )
-                self._logger.info(
-                    f"Schema validation: {schema_result.tables_checked} tables checked, "
-                    f"{error_count} errors, {warn_count} warnings"
-                )
-        except Exception as e:
-            self._logger.warning(
-                f"Schema validation skipped due to error: {e}",
-                exc_info=True,
-            )
-
-        # Build Debezium properties
-        offset_file = config.debezium.get_offset_file(self._pipeline.name)
-
-        # Delete offset file to ensure fresh start
-        # This prevents LSN mismatch errors and ensures pipeline starts from current position
-        self._clean_offset_on_start(offset_file)
-
-        props = self._source.build_debezium_props(
-            pipeline_name=self._pipeline.name,
-            table_include_list=table_list,
-            offset_file=offset_file,
-        )
-
-        # Create event handler with DLQ manager
-        handler = CDCEventHandler(
-            pipeline=self._pipeline,
-            destinations=self._destinations,
-            dlq_manager=self._dlq_manager,
-            shutdown_event=self._shutdown_event,
-        )
+        if self._pipeline.source and self._pipeline.source.is_postgres:
+            offset_file = config.debezium.get_offset_file(self._pipeline.name)
+            self._clean_offset_on_start(offset_file)
 
         # Start DLQ recovery worker
         if self._dlq_manager:
@@ -485,13 +462,21 @@ class PipelineEngine:
         self._is_running = True
 
         try:
-            # Ensure JVM is started with org.jpype.jar explicitly on classpath
-            # before pydbzengine's lazy init runs (avoids "Can't find org.jpype.jar" error)
-            _ensure_jvm_started()
+            if self._pipeline.source and self._pipeline.source.is_postgres:
+                _ensure_jvm_started()
 
-            # Create and run Debezium engine
-            self._engine = DebeziumJsonEngine(properties=props, handler=handler)
-            self._engine.run()
+            router = RecordRouter(
+                pipeline=self._pipeline,
+                destinations=self._destinations,
+                dlq_manager=self._dlq_manager,
+                shutdown_event=self._shutdown_event,
+            )
+            self._source_runner.run(
+                pipeline_name=self._pipeline.name,
+                table_include_list=table_list,
+                router=router,
+                stop_event=self._shutdown_event,
+            )
         except Exception as e:
             self._logger.error(
                 f"Pipeline {self._pipeline.name} failed: {sanitize_for_log(e)}"
@@ -516,6 +501,12 @@ class PipelineEngine:
         # This prevents the race condition where event handler tries to write
         # to a destination that has already been closed.
         self._shutdown_event.set()
+
+        if self._source_runner:
+            try:
+                self._source_runner.stop()
+            except Exception as exc:
+                self._logger.warning(f"Failed to stop source runner cleanly: {exc}")
 
         # CRITICAL: Stop all Python threads BEFORE stopping Debezium/JPype
         # This prevents GIL conflicts during JPype shutdown

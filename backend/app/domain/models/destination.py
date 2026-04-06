@@ -5,9 +5,9 @@ Represents Snowflake connection configurations for ETL destinations.
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Integer, String, UniqueConstraint, ForeignKey
+from sqlalchemy import Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import DateTime
@@ -16,7 +16,6 @@ from app.domain.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.domain.models.pipeline import PipelineDestination
-    from app.domain.models.rosetta_chain import RosettaChainClient
 
 
 class Destination(Base, TimestampMixin):
@@ -85,16 +84,6 @@ class Destination(Base, TimestampMixin):
         nullable=True,
         default=None,
         comment="Timestamp of last table list check",
-    )
-
-    # Link back to the chain client that spawned this destination (ROSETTA type only)
-    chain_client_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("rosetta_chain_clients.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-        default=None,
-        comment="Chain client that owns this destination (ROSETTA type only)",
     )
 
     # Relationships

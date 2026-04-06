@@ -185,12 +185,23 @@ async def validation_exception_handler(
         "Validation error", extra={"errors": exc.errors(), "path": request.url.path}
     )
 
+    details = []
+    for error in exc.errors():
+        sanitized = dict(error)
+        ctx = sanitized.get("ctx")
+        if isinstance(ctx, dict):
+            sanitized["ctx"] = {
+                key: str(value) if isinstance(value, Exception) else value
+                for key, value in ctx.items()
+            }
+        details.append(sanitized)
+
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "error": "ValidationError",
             "message": "Request validation failed",
-            "details": exc.errors(),
+            "details": details,
         },
     )
 

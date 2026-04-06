@@ -1,0 +1,71 @@
+version: "3.9"
+
+networks:
+  kafka-net:
+    name: kafka-net
+    driver: bridge
+
+services:
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    hostname: kafka
+    restart: unless-stopped
+    networks: [kafka-net]
+    ports:
+      - "9092:9092"      # internal Docker network (kafka-net)
+      - "9093:9093"      # akses dari luar VM: PLAINTEXT_EXTERNAL
+    environment:
+      # ====== KRaft (tanpa ZooKeeper) ======
+      KAFKA_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:19093
+
+      # ====== Listener ======
+      KAFKA_LISTENERS: PLAINTEXT_INTERNAL://:9092,PLAINTEXT_EXTERNAL://:9093,CONTROLLER://:19093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_INTERNAL://kafka:9092,PLAINTEXT_EXTERNAL://192.168.200.83:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT_INTERNAL:PLAINTEXT,PLAINTEXT_EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+
+      # ====== Setting single-node yang aman/masuk akal ======
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "1"
+      KAFKA_MIN_INSYNC_REPLICAS: "1"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+
+      # JVM (sesuaikan resource VM)
+      KAFKA_HEAP_OPTS: -Xms1g -Xmx1g
+
+    ulimits:
+      nofile: { soft: 100000, hard: 100000 }
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  kafka-ui:
+    container_name: kafka-ui-cluster
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 9080:8080
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: kafka_cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    restart: unless-stopped
+    networks: [kafka-net]
+
+volumes:
+  kafka-data:

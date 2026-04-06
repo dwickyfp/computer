@@ -42,7 +42,7 @@ export function Sources() {
                     <div>
                         <h2 className='text-2xl font-bold tracking-tight'>Sources</h2>
                         <p className='text-muted-foreground'>
-                            Manage your PostgreSQL data sources.
+                            Manage your PostgreSQL and Kafka CDC sources.
                         </p>
                     </div>
                     <SourcesPrimaryButtons />

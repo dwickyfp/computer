@@ -18,14 +18,18 @@ export interface SchemaValidationResult {
 // ─── Repository ──────────────────────────────────────────────────────────────
 
 export const schemaValidationRepo = {
-  validate(params: {
+  async validate(params: {
     source_id: number
     table_name: string
     destination_id: number
     target_table?: string
   }) {
-    return api.get<SchemaValidationResult>('/schema/validate-schema', {
-      params,
-    })
+    const { data } = await api.get<SchemaValidationResult>(
+      '/schema/validate-schema',
+      {
+        params,
+      }
+    )
+    return data
   },
 }

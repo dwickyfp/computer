@@ -4,6 +4,7 @@ import { type Row } from '@tanstack/react-table'
 import { type Pipeline, pipelinesRepo } from '@/repo/pipelines'
 import { MoreHorizontal, Lock, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -91,8 +92,8 @@ export function PipelineRowActions<TData>({
       await new Promise((r) => setTimeout(r, 300))
       queryClient.invalidateQueries({ queryKey: ['pipelines'] })
     },
-    onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'Failed to rename pipeline')
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Failed to rename pipeline'))
     },
   })
 

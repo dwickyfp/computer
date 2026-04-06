@@ -1,4 +1,3 @@
-import { type AxiosResponse } from 'axios'
 import { api } from './client'
 
 export interface Tag {
@@ -97,20 +96,23 @@ export interface TagRelationsResponse {
 
 export const tagsRepo = {
   // Tag CRUD operations
-  getAll: async (skip: number = 0, limit: number = 100): Promise<TagListResponse> => {
-    const response: AxiosResponse<TagListResponse> = await api.get('/tags', {
+  getAll: async (
+    skip: number = 0,
+    limit: number = 100
+  ): Promise<TagListResponse> => {
+    const response = await api.get<TagListResponse>('/tags', {
       params: { skip, limit },
     })
     return response.data
   },
 
   create: async (data: CreateTagRequest): Promise<Tag> => {
-    const response: AxiosResponse<Tag> = await api.post('/tags', data)
+    const response = await api.post<Tag>('/tags', data)
     return response.data
   },
 
   get: async (id: number): Promise<Tag> => {
-    const response: AxiosResponse<Tag> = await api.get(`/tags/${id}`)
+    const response = await api.get<Tag>(`/tags/${id}`)
     return response.data
   },
 
@@ -118,33 +120,40 @@ export const tagsRepo = {
     await api.delete(`/tags/${id}`)
   },
 
-  search: async (query: string, limit: number = 10): Promise<TagSuggestionResponse> => {
-    const response: AxiosResponse<TagSuggestionResponse> = await api.get('/tags/search', {
+  search: async (
+    query: string,
+    limit: number = 10
+  ): Promise<TagSuggestionResponse> => {
+    const response = await api.get<TagSuggestionResponse>('/tags/search', {
       params: { q: query, limit },
     })
     return response.data
   },
 
-  getSmartTags: async (params?: SmartTagsFilterParams): Promise<SmartTagsResponse> => {
-    const response: AxiosResponse<SmartTagsResponse> = await api.get('/tags/smart-tags', {
+  getSmartTags: async (
+    params?: SmartTagsFilterParams
+  ): Promise<SmartTagsResponse> => {
+    const response = await api.get<SmartTagsResponse>('/tags/smart-tags', {
       params,
     })
     return response.data
   },
 
   getUsage: async (id: number): Promise<TagUsageResponse> => {
-    const response: AxiosResponse<TagUsageResponse> = await api.get(`/tags/${id}/usage`)
+    const response = await api.get<TagUsageResponse>(`/tags/${id}/usage`)
     return response.data
   },
 
   getRelations: async (): Promise<TagRelationsResponse> => {
-    const response: AxiosResponse<TagRelationsResponse> = await api.get('/tags/relations')
+    const response = await api.get<TagRelationsResponse>('/tags/relations')
     return response.data
   },
 
   // Table Sync Tag Association operations
-  getTableSyncTags: async (tableSyncId: number): Promise<TableSyncTagsResponse> => {
-    const response: AxiosResponse<TableSyncTagsResponse> = await api.get(
+  getTableSyncTags: async (
+    tableSyncId: number
+  ): Promise<TableSyncTagsResponse> => {
+    const response = await api.get<TableSyncTagsResponse>(
       `/tags/table-sync/${tableSyncId}`
     )
     return response.data
@@ -154,19 +163,22 @@ export const tagsRepo = {
     tableSyncId: number,
     data: AddTagToTableSyncRequest
   ): Promise<TableSyncTagAssociation> => {
-    const response: AxiosResponse<TableSyncTagAssociation> = await api.post(
+    const response = await api.post<TableSyncTagAssociation>(
       `/tags/table-sync/${tableSyncId}`,
       data
     )
     return response.data
   },
 
-  removeTagFromTableSync: async (tableSyncId: number, tagId: number): Promise<void> => {
+  removeTagFromTableSync: async (
+    tableSyncId: number,
+    tagId: number
+  ): Promise<void> => {
     await api.delete(`/tags/table-sync/${tableSyncId}/tags/${tagId}`)
   },
 
   getTableSyncsByTag: async (tagId: number): Promise<number[]> => {
-    const response: AxiosResponse<number[]> = await api.get(`/tags/tag/${tagId}/table-syncs`)
+    const response = await api.get<number[]>(`/tags/tag/${tagId}/table-syncs`)
     return response.data
   },
 }

@@ -21,7 +21,6 @@ from app.api.v1.endpoints import (
     linked_tasks,
     schedules,
     schema_validation,
-    rosetta_chain,
     catalog,
     internal_notification,
 )
@@ -77,8 +76,6 @@ api_router.include_router(schedules.router, prefix="/schedules", tags=["schedule
 api_router.include_router(
     schema_validation.router, prefix="/schema", tags=["schema-validation"]
 )
-
-api_router.include_router(rosetta_chain.router, prefix="/chain", tags=["rosetta-chain"])
 
 api_router.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
 

@@ -586,7 +586,7 @@ export function PipelinesSidebar() {
         <div className='mb-4 flex items-center gap-2'>
           <Command className='h-4 w-4 text-cyan-500' />
           <span className='text-sm font-semibold text-cyan-500'>
-            ROSETTA CATALOG
+            PIPELINES
           </span>
         </div>
       </div>

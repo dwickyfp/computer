@@ -19,6 +19,7 @@ from core.models import (
     Pipeline,
     PipelineStatus,
     DestinationType,
+    SourceType,
     MetadataStatus,
     BackfillStatus,
 )
@@ -91,6 +92,15 @@ class TestSourceModel:
         base = dict(
             id=1,
             name="prod-source",
+            type="POSTGRES",
+            config={
+                "host": "db.example.com",
+                "port": 5432,
+                "database": "mydb",
+                "username": "repl_user",
+                "publication_name": "dbz_pub",
+                "replication_name": "dbz_slot",
+            },
             pg_host="db.example.com",
             pg_port=5432,
             pg_database="mydb",
@@ -118,6 +128,28 @@ class TestSourceModel:
         assert src.replication_name == "dbz_slot"
         assert src.is_publication_enabled is True
         assert src.total_tables == 5
+        assert src.is_postgres is True
+
+    def test_kafka_source_type_properties(self):
+        src = Source.from_dict(
+            self._base_dict(
+                type="KAFKA",
+                config={
+                    "bootstrap_servers": "kafka:9092",
+                    "topic_prefix": "dbserver1.inventory",
+                    "group_id": "compute-consumer",
+                    "format": "PLAIN_JSON",
+                },
+                pg_host=None,
+                pg_port=None,
+                pg_database=None,
+                pg_username=None,
+                publication_name=None,
+                replication_name=None,
+            )
+        )
+        assert src.is_kafka is True
+        assert src.source_type == "KAFKA"
 
     def test_from_dict_optional_default_false(self):
         """Optional bool fields default to False when absent."""
@@ -154,16 +186,24 @@ class TestDestinationModel:
         dest = Destination.from_dict(self._base_dict(type="POSTGRES"))
         assert dest.is_postgres is True
         assert dest.is_snowflake is False
-        assert dest.is_rosetta is False
+        assert dest.is_kafka is False
 
     def test_from_dict_type_snowflake(self):
         dest = Destination.from_dict(self._base_dict(type="SNOWFLAKE"))
         assert dest.is_snowflake is True
         assert dest.is_postgres is False
 
-    def test_from_dict_type_rosetta(self):
-        dest = Destination.from_dict(self._base_dict(type="ROSETTA"))
-        assert dest.is_rosetta is True
+    def test_from_dict_type_kafka(self):
+        dest = Destination.from_dict(
+            self._base_dict(
+                type="KAFKA",
+                config={
+                    "bootstrap_servers": "kafka:9092",
+                    "topic_prefix": "dbserver1.inventory",
+                },
+            )
+        )
+        assert dest.is_kafka is True
 
     def test_type_check_case_insensitive(self):
         """Type checks should be uppercase-normalised."""
@@ -176,14 +216,9 @@ class TestDestinationModel:
         dest = Destination.from_dict(d)
         assert dest.config == {}
 
-    def test_chain_client_id_optional(self):
-        dest = Destination.from_dict(self._base_dict())
-        assert dest.chain_client_id is None
-
-
-# ===========================================================================
-# TestPipelineModel
-# ===========================================================================
+    # ===========================================================================
+    # TestPipelineModel
+    # ===========================================================================
 
 
 class TestPipelineModel:
@@ -193,7 +228,6 @@ class TestPipelineModel:
             name="test-pipeline",
             source_id=1,
             status="START",
-            source_type="POSTGRES",
         )
         base.update(overrides)
         return base
@@ -204,10 +238,9 @@ class TestPipelineModel:
         assert p.name == "test-pipeline"
         assert p.source_id == 1
         assert p.status == "START"
-        assert p.source_type == "POSTGRES"
 
     def test_from_dict_source_id_nullable(self):
-        p = Pipeline.from_dict(self._base_dict(source_id=None, source_type="ROSETTA"))
+        p = Pipeline.from_dict(self._base_dict(source_id=None))
         assert p.source_id is None
 
     def test_destinations_default_empty(self):
@@ -229,7 +262,11 @@ class TestEnums:
     def test_destination_type_values(self):
         assert DestinationType.SNOWFLAKE.value == "SNOWFLAKE"
         assert DestinationType.POSTGRES.value == "POSTGRES"
-        assert DestinationType.ROSETTA.value == "ROSETTA"
+        assert DestinationType.KAFKA.value == "KAFKA"
+
+    def test_source_type_values(self):
+        assert SourceType.POSTGRES.value == "POSTGRES"
+        assert SourceType.KAFKA.value == "KAFKA"
 
     def test_metadata_status_values(self):
         assert MetadataStatus.RUNNING.value == "RUNNING"

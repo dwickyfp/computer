@@ -118,10 +118,9 @@ export function PipelineFlowTab({
     const nodes: Node<PipelineNodeData>[] = []
     const edges: Edge[] = []
 
-    // Source Node
-    // For Rosetta Chain sources, pipeline.source is null, so use fallback name and type
-    const sourceName = pipeline.source?.name || 'Rosetta Chain'
-    const sourceType = pipeline.source ? 'POSTGRESQL' : 'ROSETTA'
+    const normalizedSourceType = pipeline.source?.type || pipeline.source_type || 'POSTGRES'
+    const sourceName = pipeline.source?.name || 'Unknown Source'
+    const sourceType = normalizedSourceType === 'KAFKA' ? 'KAFKA' : 'POSTGRESQL'
     
     nodes.push({
       id: 'source',

@@ -54,6 +54,50 @@ export default defineConfig(
       ],
       // Prevent duplicate imports from the same module
       'no-duplicate-imports': 'error',
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'axios',
+              message:
+                'Use repo modules and the fetch-based api client instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: [
+      'src/components/**/*.{ts,tsx}',
+      'src/features/**/*.{ts,tsx}',
+      'src/hooks/**/*.{ts,tsx}',
+      'src/routes/**/*.{ts,tsx}',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'axios',
+              message:
+                'Use repo modules and the fetch-based api client instead.',
+            },
+            {
+              name: '@/repo/client',
+              message: 'Import a repo module instead of the shared api client.',
+            },
+          ],
+          patterns: [
+            {
+              group: ['../repo/client', '../../repo/client', './client'],
+              message: 'Import a repo module instead of the shared api client.',
+            },
+          ],
+        },
+      ],
     },
   }
 )

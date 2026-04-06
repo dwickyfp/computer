@@ -49,11 +49,13 @@ import { getSourceDetailsTablesColumns } from './source-details-tables-columns'
 interface SourceReplicationTableProps {
   sourceId: number
   tables: SourceTableInfo[]
+  sourceType?: 'POSTGRES' | 'KAFKA'
 }
 
 export function SourceReplicationTable({
   sourceId,
   tables,
+  sourceType = 'POSTGRES',
 }: SourceReplicationTableProps) {
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
@@ -160,7 +162,9 @@ export function SourceReplicationTable({
         <CardHeader>
           <CardTitle>Monitored Tables</CardTitle>
           <CardDescription>
-            View and manage tables currently being replicated.
+            {sourceType === 'KAFKA'
+              ? 'View and manage Kafka topics currently registered for this source.'
+              : 'View and manage tables currently being replicated.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -247,8 +251,17 @@ export function SourceReplicationTable({
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will drop the table <strong>{tableToDrop}</strong> from the
-              publication. This action cannot be undone immediately.
+              {sourceType === 'KAFKA' ? (
+                <>
+                  This will unregister <strong>{tableToDrop}</strong> from the
+                  source topic list.
+                </>
+              ) : (
+                <>
+                  This will drop the table <strong>{tableToDrop}</strong> from the
+                  publication. This action cannot be undone immediately.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

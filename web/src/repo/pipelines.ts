@@ -1,4 +1,3 @@
-import { type AxiosResponse } from 'axios'
 import { api } from './client'
 
 export interface Pipeline {
@@ -6,8 +5,6 @@ export interface Pipeline {
   name: string
   source_id: number | null
   source_type?: string
-  chain_client_id?: number | null
-  catalog_database_id?: number | null
   destination_id: number
   status: 'START' | 'PAUSE' | 'REFRESH'
   ready_refresh?: boolean
@@ -26,13 +23,10 @@ export interface Pipeline {
   source?: {
     id: number
     name: string
+    type?: string
     is_publication_enabled?: boolean
     is_replication_enabled?: boolean
   }
-  chain_client?: {
-    id: number
-    name: string
-  } | null
   destinations?: {
     id: number
     destination: {
@@ -49,11 +43,7 @@ export interface Pipeline {
 
 export interface CreatePipelineRequest {
   name: string
-  source_id?: number
-  source_type?: string
-  chain_client_id?: number
-  catalog_table_id?: number
-  catalog_database_id?: number
+  source_id: number
   status?: string
 }
 
@@ -64,100 +54,6 @@ export interface AddPipelineDestinationRequest {
 export interface PipelineListResponse {
   pipelines: Pipeline[]
   total: number
-}
-
-export const pipelinesRepo = {
-  getAll: async (): Promise<PipelineListResponse> => {
-    const response: AxiosResponse<Pipeline[]> = await api.get('/pipelines')
-    return {
-      pipelines: response.data,
-      total: response.data.length,
-    }
-  },
-  create: async (data: CreatePipelineRequest): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.post('/pipelines', data)
-    return response.data
-  },
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/pipelines/${id}`)
-  },
-  rename: async (id: number, name: string): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.put(
-      `/pipelines/${id}`,
-      { name }
-    )
-    return response.data
-  },
-  start: async (id: number): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.post(
-      `/pipelines/${id}/start`
-    )
-    return response.data
-  },
-  pause: async (id: number): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.post(
-      `/pipelines/${id}/pause`
-    )
-    return response.data
-  },
-  get: async (id: number): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.get(`/pipelines/${id}`)
-    return response.data
-  },
-  refresh: async (id: number): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.post(
-      `/pipelines/${id}/refresh`
-    )
-    return response.data
-  },
-  getStats: async (id: number, days: number = 7): Promise<PipelineStats[]> => {
-    const response: AxiosResponse<PipelineStats[]> = await api.get(
-      `/pipelines/${id}/stats`,
-      { params: { days } }
-    )
-    return response.data
-  },
-  addDestination: async (
-    id: number,
-    destinationId: number
-  ): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.post(
-      `/pipelines/${id}/destinations`,
-      null,
-      {
-        params: { destination_id: destinationId },
-      }
-    )
-    return response.data
-  },
-  removeDestination: async (
-    id: number,
-    destinationId: number
-  ): Promise<Pipeline> => {
-    const response: AxiosResponse<Pipeline> = await api.delete(
-      `/pipelines/${id}/destinations/${destinationId}`
-    )
-    return response.data
-  },
-  getTableSyncDetail: async (
-    pipelineId: number,
-    destId: number,
-    syncId: number
-  ): Promise<any> => {
-    const response: AxiosResponse<any> = await api.get(
-      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}`
-    )
-    return response.data
-  },
-  generateLineage: async (
-    pipelineId: number,
-    destId: number,
-    syncId: number
-  ): Promise<void> => {
-    await api.post(
-      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}/lineage/generate`
-    )
-  },
 }
 
 export interface PipelineStats {
@@ -176,7 +72,6 @@ export interface PipelineStats {
   }[]
 }
 
-// Table Sync Types
 export interface ColumnSchema {
   column_name: string
   data_type?: string
@@ -198,12 +93,10 @@ export interface TableSyncConfig {
   filter_sql: string | null
   primary_key_column_target: string | null
   catalog_database_name: string | null
-
   is_exists_table_landing: boolean
   is_exists_stream: boolean
   is_exists_task: boolean
   is_exists_table_destination: boolean
-
   is_error: boolean
   error_message: string | null
   created_at: string
@@ -236,12 +129,210 @@ export interface TableValidationResponse {
   message: string | null
 }
 
+export interface TableSyncLineageMetadata {
+  version: number
+  source_tables: { table: string; type: string }[]
+  source_columns: string[]
+  output_columns: string[]
+  column_lineage: Record<string, { sources: string[]; transform: string }>
+  referenced_tables: string[]
+  parsed_at: string
+  error?: string
+}
+
+export interface TableSyncDetails {
+  id: number
+  pipeline: { id: number; name: string; status: string }
+  source: { id: number; name: string; database: string }
+  destination: { id: number; name: string; type: string }
+  table_name: string
+  table_name_target: string
+  custom_sql: string | null
+  filter_sql: string | null
+  primary_key_column_target: string | null
+  tags: string[]
+  record_count: number
+  is_error: boolean
+  error_message: string | null
+  lineage_metadata: TableSyncLineageMetadata | null
+  lineage_status: string
+  lineage_error: string | null
+  lineage_generated_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelinePreviewRequest {
+  destination_id: number
+  filter_sql?: string | null
+  source_id: number
+  sql?: string
+  table_name: string
+}
+
+export interface PipelinePreviewData {
+  column_types: string[]
+  columns: string[]
+  data: Record<string, unknown>[]
+  error?: string
+}
+
+export interface PipelinePreviewTaskResponse {
+  task_id: string
+}
+
+export interface PipelinePreviewStatusResponse {
+  error?: string | null
+  result?: PipelinePreviewData
+  state: string
+}
+
+export type PipelinePreviewResponse =
+  | PipelinePreviewData
+  | PipelinePreviewTaskResponse
+
+function normalizePipeline(data: Pipeline): Pipeline {
+  const sourceType = data.source?.type || data.source_type || 'POSTGRES'
+  return {
+    ...data,
+    source_type: sourceType,
+  }
+}
+
+export const pipelinesRepo = {
+  addDestination: async (
+    id: number,
+    destinationId: number
+  ): Promise<Pipeline> => {
+    const response = await api.post<Pipeline>(
+      `/pipelines/${id}/destinations`,
+      undefined,
+      {
+        params: { destination_id: destinationId },
+      }
+    )
+    return normalizePipeline(response.data)
+  },
+
+  create: async (data: CreatePipelineRequest): Promise<Pipeline> => {
+    const response = await api.post<Pipeline>('/pipelines', data)
+    return normalizePipeline(response.data)
+  },
+
+  delete: async (id: number): Promise<void> => {
+    await api.delete(`/pipelines/${id}`)
+  },
+
+  generateLineage: async (
+    pipelineId: number,
+    destId: number,
+    syncId: number
+  ): Promise<void> => {
+    await api.post(
+      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}/lineage/generate`
+    )
+  },
+
+  get: async (id: number): Promise<Pipeline> => {
+    const response = await api.get<Pipeline>(`/pipelines/${id}`)
+    return normalizePipeline(response.data)
+  },
+
+  getAll: async (): Promise<PipelineListResponse> => {
+    const response = await api.get<Pipeline[]>('/pipelines')
+    const pipelines = response.data.map(normalizePipeline)
+    return {
+      pipelines,
+      total: pipelines.length,
+    }
+  },
+
+  getPreviewStatus: async (
+    pipelineId: number,
+    taskId: string
+  ): Promise<PipelinePreviewStatusResponse> => {
+    const response = await api.get<PipelinePreviewStatusResponse>(
+      `/pipelines/${pipelineId}/preview/${taskId}`
+    )
+    return response.data
+  },
+
+  getStats: async (id: number, days = 7): Promise<PipelineStats[]> => {
+    const response = await api.get<PipelineStats[]>(`/pipelines/${id}/stats`, {
+      params: { days },
+    })
+    return response.data
+  },
+
+  getTableSyncDetail: async (
+    pipelineId: number,
+    destId: number,
+    syncId: number
+  ): Promise<TableSyncDetails> => {
+    const response = await api.get<TableSyncDetails>(
+      `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}`
+    )
+    return response.data
+  },
+
+  pause: async (id: number): Promise<Pipeline> => {
+    const response = await api.post<Pipeline>(`/pipelines/${id}/pause`)
+    return normalizePipeline(response.data)
+  },
+
+  refresh: async (id: number): Promise<Pipeline> => {
+    const response = await api.post<Pipeline>(`/pipelines/${id}/refresh`)
+    return normalizePipeline(response.data)
+  },
+
+  removeDestination: async (
+    id: number,
+    destinationId: number
+  ): Promise<Pipeline> => {
+    const response = await api.delete<Pipeline>(
+      `/pipelines/${id}/destinations/${destinationId}`
+    )
+    return normalizePipeline(response.data)
+  },
+
+  rename: async (id: number, name: string): Promise<Pipeline> => {
+    const response = await api.put<Pipeline>(`/pipelines/${id}`, { name })
+    return normalizePipeline(response.data)
+  },
+
+  start: async (id: number): Promise<Pipeline> => {
+    const response = await api.post<Pipeline>(`/pipelines/${id}/start`)
+    return normalizePipeline(response.data)
+  },
+
+  startPreview: async (
+    pipelineId: number,
+    payload: PipelinePreviewRequest
+  ): Promise<PipelinePreviewResponse> => {
+    const response = await api.post<PipelinePreviewResponse>(
+      `/pipelines/${pipelineId}/preview`,
+      payload
+    )
+    return response.data
+  },
+}
+
 export const tableSyncRepo = {
+  deleteTableSync: async (
+    pipelineId: number,
+    pipelineDestinationId: number,
+    syncId: number
+  ): Promise<void> => {
+    await api.delete(
+      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables/${syncId}`
+    )
+  },
+
   getDestinationTables: async (
     pipelineId: number,
     pipelineDestinationId: number
   ): Promise<TableWithSyncInfo[]> => {
-    const response: AxiosResponse<TableWithSyncInfo[]> = await api.get(
+    const response = await api.get<TableWithSyncInfo[]>(
       `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables`
     )
     return response.data
@@ -252,67 +343,10 @@ export const tableSyncRepo = {
     pipelineDestinationId: number,
     config: TableSyncRequest
   ): Promise<TableSyncConfig> => {
-    const response: AxiosResponse<TableSyncConfig> = await api.post(
+    const response = await api.post<TableSyncConfig>(
       `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables`,
       config
     )
-    return response.data
-  },
-
-  saveTableSyncBulk: async (
-    pipelineId: number,
-    pipelineDestinationId: number,
-    tableNames: string[]
-  ): Promise<TableSyncConfig[]> => {
-    const response: AxiosResponse<TableSyncConfig[]> = await api.post(
-      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables/bulk`,
-      { tables: tableNames.map((name) => ({ table_name: name })) }
-    )
-    return response.data
-  },
-
-  deleteTableSync: async (
-    pipelineId: number,
-    pipelineDestinationId: number,
-    tableName: string
-  ): Promise<void> => {
-    await api.delete(
-      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables/${tableName}`
-    )
-  },
-
-  deleteTableSyncById: async (
-    pipelineId: number,
-    pipelineDestinationId: number,
-    syncConfigId: number
-  ): Promise<void> => {
-    await api.delete(
-      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/table-syncs/${syncConfigId}`
-    )
-  },
-
-  updateCatalogDatabaseName: async (
-    pipelineId: number,
-    pipelineDestinationId: number,
-    syncConfigId: number,
-    catalogDatabaseName: string | null
-  ): Promise<TableSyncConfig> => {
-    const response: AxiosResponse<TableSyncConfig> = await api.patch(
-      `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/table-syncs/${syncConfigId}/catalog`,
-      { catalog_database_name: catalogDatabaseName }
-    )
-    return response.data
-  },
-
-  initSnowflakeTable: async (
-    pipelineId: number,
-    pipelineDestinationId: number,
-    tableName: string
-  ): Promise<{ status: string; message: string }> => {
-    const response: AxiosResponse<{ status: string; message: string }> =
-      await api.post(
-        `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables/${tableName}/init`
-      )
     return response.data
   },
 
@@ -321,7 +355,7 @@ export const tableSyncRepo = {
     pipelineDestinationId: number,
     tableName: string
   ): Promise<TableValidationResponse> => {
-    const response: AxiosResponse<TableValidationResponse> = await api.post(
+    const response = await api.post<TableValidationResponse>(
       `/pipelines/${pipelineId}/destinations/${pipelineDestinationId}/tables/validate`,
       { table_name: tableName }
     )

@@ -27,7 +27,8 @@ export interface InternalNotificationConfigCreate {
   subject: string
 }
 
-export interface InternalNotificationConfigUpdate extends Partial<InternalNotificationConfigCreate> {}
+export type InternalNotificationConfigUpdate =
+  Partial<InternalNotificationConfigCreate>
 
 export interface InternalNotificationGlobalStatus {
   is_active: boolean

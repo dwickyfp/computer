@@ -12,7 +12,6 @@ import {
   GitBranch,
   Link2,
   Calendar,
-  Unplug,
 } from 'lucide-react'
 import { type SidebarData } from '../types'
 
@@ -58,11 +57,6 @@ export const sidebarData: SidebarData = {
     {
       title: 'Integrations',
       items: [
-        {
-          title: 'Rosetta Chain',
-          icon: Unplug,
-          url: '/rosetta-chain',
-        },
         {
           title: 'Pipelines',
           icon: Workflow,

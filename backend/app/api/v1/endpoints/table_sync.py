@@ -168,7 +168,7 @@ class CatalogDatabaseUpdate(BaseModel):
     "/{pipeline_id}/destinations/{pipeline_destination_id}/table-syncs/{sync_config_id}/catalog",
     response_model=PipelineDestinationTableSyncResponse,
     summary="Update catalog database name",
-    description="Set or clear the remote Rosetta Chain destination database name for a sync config",
+    description="Set or clear the optional destination namespace override for a sync config",
 )
 def update_catalog_database_name(
     pipeline_id: int = Path(..., description="Pipeline ID"),
@@ -179,9 +179,6 @@ def update_catalog_database_name(
 ) -> PipelineDestinationTableSyncResponse:
     """
     Update the catalog_database_name for a table sync configuration.
-
-    Used by the Rosetta Chain schema registration dialog to persist which remote
-    database the table was registered to, enabling active-state UI and pre-population.
     """
     from app.domain.models.pipeline import PipelineDestinationTableSync
     from app.core.exceptions import EntityNotFoundError

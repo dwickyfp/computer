@@ -45,6 +45,27 @@ type DestinationsMutateDrawerProps = {
   currentRow?: Destination
 }
 
+const DEFAULT_KAFKA_FORMAT = 'PLAIN_JSON'
+
+function normalizeKafkaFormat(value?: unknown): string {
+  void value
+  return DEFAULT_KAFKA_FORMAT
+}
+
+function normalizeDestinationPayload(data: DestinationForm): DestinationForm {
+  if (data.type !== 'KAFKA') {
+    return data
+  }
+
+  return {
+    ...data,
+    config: {
+      ...(data.config || {}),
+      format: normalizeKafkaFormat(data.config?.format),
+    },
+  }
+}
+
 export function DestinationsMutateDrawer({
   open,
   onOpenChange,
@@ -60,7 +81,13 @@ export function DestinationsMutateDrawer({
       ? {
           name: currentRow.name,
           type: currentRow.type || 'SNOWFLAKE',
-          config: currentRow.config || {},
+          config:
+            currentRow.type === 'KAFKA'
+              ? {
+                  ...(currentRow.config || {}),
+                  format: normalizeKafkaFormat(currentRow.config?.format),
+                }
+              : currentRow.config || {},
         }
       : {
           name: '',
@@ -70,7 +97,8 @@ export function DestinationsMutateDrawer({
   })
 
   const createMutation = useMutation({
-    mutationFn: destinationsRepo.create,
+    mutationFn: (data: DestinationForm) =>
+      destinationsRepo.create(normalizeDestinationPayload(data)),
     onSuccess: async (newDestination) => {
       queryClient.setQueryData<DestinationListResponse>(
         ['destinations'],
@@ -101,7 +129,7 @@ export function DestinationsMutateDrawer({
 
   const updateMutation = useMutation({
     mutationFn: (data: DestinationForm) =>
-      destinationsRepo.update(currentRow!.id, data),
+      destinationsRepo.update(currentRow!.id, normalizeDestinationPayload(data)),
     onSuccess: async (updatedDestination) => {
       queryClient.setQueryData<DestinationListResponse>(
         ['destinations'],
@@ -162,7 +190,7 @@ export function DestinationsMutateDrawer({
         <SheetHeader className='text-start'>
           <SheetTitle>{isUpdate ? 'Update' : 'Add'} Destination</SheetTitle>
           <SheetDescription>
-            Configure your Snowflake destination details.
+            Configure your Snowflake, PostgreSQL, or Kafka destination details.
           </SheetDescription>
         </SheetHeader>
         <Form {...form}>
@@ -483,6 +511,63 @@ export function DestinationsMutateDrawer({
                     </FormItem>
                   )}
                 />
+              </>
+            )}
+            {form.watch('type') === 'KAFKA' && (
+              <>
+                <FormField
+                  control={form.control}
+                  name='config.bootstrap_servers'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Bootstrap Servers</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder='localhost:9092' />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className='grid grid-cols-2 gap-4'>
+                  <FormField
+                    control={form.control}
+                    name='config.topic_prefix'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Topic Prefix</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder='dbserver1.public' />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                  control={form.control}
+                  name='config.format'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Format</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={normalizeKafkaFormat(field.value)}
+                      >
+                        <FormControl>
+                          <SelectTrigger className='w-full'>
+                            <SelectValue placeholder='Select format' />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value={DEFAULT_KAFKA_FORMAT}>
+                            Plain JSON
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                </div>
               </>
             )}
 

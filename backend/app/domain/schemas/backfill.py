@@ -5,6 +5,7 @@ Request/response schemas for backfill operations.
 """
 
 from datetime import datetime
+import json
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -39,41 +40,32 @@ class BackfillJobCreate(BaseModel):
         return v
 
     def get_filter_sql(self) -> Optional[str]:
-        """Convert filters to SQL WHERE clause format, semicolon separated."""
+        """Convert filters to JSON v2 format."""
         if not self.filters:
             return None
 
-        clauses = []
+        conditions: list[dict[str, str]] = []
         for f in self.filters:
-            # Basic SQL injection prevention - in production add more validation
             clean_column = f.column.replace(";", "").replace("--", "")
             clean_value = f.value.replace(";", "").replace("--", "")
+            conditions.append(
+                {
+                    "column": clean_column,
+                    "operator": f.operator.upper(),
+                    "value": clean_value,
+                }
+            )
 
-            if f.operator.upper() in ["LIKE", "ILIKE"]:
-                clauses.append(f"{clean_column} {f.operator.upper()} '{clean_value}'")
-            elif f.operator.upper() in ["IS NULL", "IS NOT NULL"]:
-                clauses.append(f"{clean_column} {f.operator.upper()}")
-            elif f.operator.upper() == "IN":
-                # IN operator: values are comma-separated, wrap in parentheses
-                values = [v.strip() for v in clean_value.split(",") if v.strip()]
-                quoted_values = []
-                for v in values:
-                    try:
-                        float(v)
-                        quoted_values.append(v)
-                    except ValueError:
-                        quoted_values.append(f"'{v}'")
-                clauses.append(f"{clean_column} IN ({', '.join(quoted_values)})")
-            else:
-                # For numeric comparisons, don't quote
-                try:
-                    float(clean_value)
-                    clauses.append(f"{clean_column} {f.operator} {clean_value}")
-                except ValueError:
-                    # String value, quote it
-                    clauses.append(f"{clean_column} {f.operator} '{clean_value}'")
+        if not conditions:
+            return None
 
-        return ";".join(clauses) if clauses else None
+        return json.dumps(
+            {
+                "version": 2,
+                "groups": [{"conditions": conditions, "intraLogic": "AND"}],
+                "interLogic": [],
+            }
+        )
 
 
 class BackfillJobUpdate(BaseModel):

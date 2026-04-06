@@ -66,9 +66,23 @@ class BackfillService:
                 entity_id=pipeline_id,
             )
 
+        if pipeline.source and getattr(pipeline.source, "type", "POSTGRES") == "KAFKA":
+            raise ValidationError(
+                message="Backfill is not supported for Kafka sources in v1",
+                details={"field": "source_id"},
+            )
+
         # Validate pipeline is not already running a backfill for this table
         existing_jobs = self.repository.get_by_pipeline_id(pipeline_id)
         active_statuses = [BackfillStatus.PENDING.value, BackfillStatus.EXECUTING.value]
+        if any(
+            job.table_name == job_data.table_name and job.status in active_statuses
+            for job in existing_jobs
+        ):
+            raise ValidationError(
+                message=f"Backfill already exists for table '{job_data.table_name}'",
+                details={"field": "table_name"},
+            )
 
         # Validate table exists in source
         table_metadata = self.table_metadata_repo.get_by_source_and_name(

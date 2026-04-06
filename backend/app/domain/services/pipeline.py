@@ -769,25 +769,9 @@ class PipelineService:
             # 2. Get Source Tables
             self._update_progress(progress, 10, "Fetching source tables", "IN_PROGRESS")
 
-            tables = []
-            if pipeline.source_type == "POSTGRES":
-                source_service = SourceService(self.db)
-                source_details = source_service.get_source_details(pipeline.source_id)
-                tables = source_details.tables
-            elif pipeline.source_type == "CATALOG_TABLE":
-                from app.domain.services.catalog import CatalogService
-
-                catalog_service = CatalogService(self.db)
-                catalog_table = catalog_service.get_table(pipeline.catalog_table_id)
-                if catalog_table:
-                    # Mock SourceTableInfo structure for provision_table
-                    tables = [
-                        {
-                            "id": catalog_table.id,
-                            "table_name": catalog_table.table_name,
-                            "schema_definition": catalog_table.schema_definition,
-                        }
-                    ]
+            source_service = SourceService(self.db)
+            source_details = source_service.get_source_details(pipeline.source_id)
+            tables = source_details.tables
 
             if not tables:
                 self._update_progress(
@@ -1028,7 +1012,7 @@ class PipelineService:
             landing_table = f"LANDING_{table_name}"
             stream_name = f"STREAM_{landing_table}"
             target_table = table_name
-            task_name = f"ROSETTA_TASK_MERGE_{table_name}"
+            task_name = f"PIPELINE_TASK_MERGE_{table_name}"
             q_task = self._quote_sf_identifier(task_name)
             q_t_db = self._quote_sf_identifier(target_db)
             q_t_sc = self._quote_sf_identifier(target_schema)
@@ -1331,7 +1315,7 @@ class PipelineService:
         q_t_tbl = self._quote_sf_identifier(t_table)
         warehouse = self._quote_sf_identifier(destination.config.get("warehouse", ""))
         task_ddl = f"""
-        CREATE OR REPLACE TASK {q_l_db}.{q_l_sc}."ROSETTA_TASK_MERGE_{t_table}"
+        CREATE OR REPLACE TASK {q_l_db}.{q_l_sc}."PIPELINE_TASK_MERGE_{t_table}"
         WAREHOUSE = {warehouse}
         SCHEDULE = '60 MINUTE'
         WHEN SYSTEM$STREAM_HAS_DATA('{l_db}.{l_schema}.{stream}')
@@ -1594,116 +1578,47 @@ class PipelineService:
 
         response_list = []
 
-        if pipeline.source_type == "ROSETTA":
-            # 1a. For ROSETTA source, get tables from local catalog_tables
-            # filtered by catalog_database_id.  This uses the (database_id, table_name)
-            # unique constraint so re-registering the same table never creates duplicates.
-            from app.domain.models.catalog import CatalogTable
+        tm_repo = TableMetadataRepository(self.db)
+        all_tables_meta = tm_repo.get_by_source_id(pipeline.source_id)
 
-            database_id = pipeline.catalog_database_id
-            catalog_rows = (
-                (
-                    self.db.query(CatalogTable)
-                    .filter_by(database_id=database_id)
-                    .order_by(CatalogTable.table_name)
-                    .all()
-                )
-                if database_id
-                else []
-            )
+        for table_meta in all_tables_meta:
+            # Parse schema
+            columns = []
+            if table_meta.schema_table:
+                schema_items = table_meta.schema_table
+                if isinstance(schema_items, dict):
+                    schema_items = schema_items.values()
 
-            for catalog_table in catalog_rows:
-                # schema_json is stored as {"fields": [{name, type, nullable, primary_key}]}
-                columns = []
-                schema_data = catalog_table.schema_json or {}
-                fields = (
-                    schema_data.get("fields", [])
-                    if isinstance(schema_data, dict)
-                    else []
-                )
-                for field in fields:
-                    if isinstance(field, dict):
-                        col_name = field.get("name") or field.get("column_name", "")
-                        data_type = (
-                            field.get("type")
-                            or field.get("real_data_type")
-                            or field.get("data_type", "TEXT")
-                        )
+                for col in schema_items:
+                    if isinstance(col, dict):
                         columns.append(
                             ColumnSchemaResponse(
-                                column_name=col_name,
-                                data_type=data_type,
-                                real_data_type=data_type,
-                                is_nullable=field.get("nullable", True),
-                                is_primary_key=field.get("primary_key", False),
-                                has_default=False,
-                                default_value=None,
-                                numeric_precision=None,
-                                numeric_scale=None,
+                                column_name=col.get("column_name", ""),
+                                data_type=col.get("real_data_type")
+                                or col.get("data_type", ""),
+                                real_data_type=col.get("real_data_type"),
+                                is_nullable=col.get("is_nullable") in [True, "YES"],
+                                is_primary_key=col.get("is_primary_key", False),
+                                has_default=col.get("has_default", False),
+                                default_value=(
+                                    str(col.get("default_value"))
+                                    if col.get("default_value") is not None
+                                    else None
+                                ),
+                                numeric_scale=col.get("numeric_scale"),
+                                numeric_precision=col.get("numeric_precision"),
                             )
                         )
-
-                current_syncs = syncs_map[catalog_table.table_name]
-                sync_configs_response = [
-                    PipelineDestinationTableSyncResponse.from_orm(s)
-                    for s in current_syncs
-                ]
-
-                response_list.append(
-                    TableWithSyncInfoResponse(
-                        table_name=catalog_table.table_name,
-                        columns=columns,
-                        sync_configs=sync_configs_response,
-                        is_exists_table_landing=False,
-                        is_exists_stream=False,
-                        is_exists_task=False,
-                        is_exists_table_destination=False,
-                    )
-                )
-        else:
-            # 1b. For regular POSTGRES source, get tables from source metadata
-            tm_repo = TableMetadataRepository(self.db)
-            all_tables_meta = tm_repo.get_by_source_id(pipeline.source_id)
-
-            for table_meta in all_tables_meta:
-                # Parse schema
-                columns = []
-                if table_meta.schema_table:
-                    # Handle both list (older format) and dict (newer format) schemas
-                    schema_items = table_meta.schema_table
-                    if isinstance(schema_items, dict):
-                        schema_items = schema_items.values()
-
-                    for col in schema_items:
-                        if isinstance(col, dict):
-                            columns.append(
-                                ColumnSchemaResponse(
-                                    column_name=col.get("column_name", ""),
-                                    data_type=col.get("real_data_type")
-                                    or col.get("data_type", ""),
-                                    real_data_type=col.get("real_data_type"),
-                                    is_nullable=col.get("is_nullable") in [True, "YES"],
-                                    is_primary_key=col.get("is_primary_key", False),
-                                    has_default=col.get("has_default", False),
-                                    default_value=(
-                                        str(col.get("default_value"))
-                                        if col.get("default_value") is not None
-                                        else None
-                                    ),
-                                    numeric_scale=col.get("numeric_scale"),
-                                    numeric_precision=col.get("numeric_precision"),
-                                )
+                    elif isinstance(col, str):
+                        # Handle case where schema might be list of strings logic
+                        columns.append(
+                            ColumnSchemaResponse(
+                                column_name=col,
+                                data_type="UNKNOWN",
+                                is_nullable=True,
+                                is_primary_key=False,
                             )
-                        elif isinstance(col, str):
-                            # Handle case where schema might be list of strings logic
-                            columns.append(
-                                ColumnSchemaResponse(
-                                    column_name=col,
-                                    data_type="UNKNOWN",
-                                    is_nullable=True,
-                                    is_primary_key=False,
-                                )
-                            )
+                        )
 
                 # Convert sync configs (list)
                 current_syncs = syncs_map[table_meta.table_name]
@@ -2082,11 +1997,7 @@ class PipelineService:
     @staticmethod
     def _filter_sql_to_where_clause(filter_sql: str) -> str:
         """
-        Convert a filter_sql string (v2 JSON or legacy semicolon format) to a SQL WHERE clause.
-
-        Supports:
-        - V2 JSON: {"version": 2, "groups": [...], "interLogic": [...]}
-        - Legacy: "column operator value;column2 operator value2"
+        Convert a JSON v2 filter_sql string to a SQL WHERE clause.
 
         Returns:
             SQL WHERE clause string (without the WHERE keyword), or empty string.
@@ -2122,7 +2033,6 @@ class PipelineService:
             quoted_value = value if is_num else f"'{value}'"
             return f"{column} {c.get('operator', '=')} {quoted_value}"
 
-        # Try V2 JSON format
         try:
             parsed = json.loads(filter_sql)
             if isinstance(parsed, dict) and parsed.get("version") == 2:
@@ -2145,11 +2055,9 @@ class PipelineService:
                     result += f" {logic} {group_sqls[i]}"
                 return result
         except (json.JSONDecodeError, TypeError):
-            pass
+            raise ValueError("filter_sql must be valid JSON v2")
 
-        # Legacy semicolon format
-        parts = [s.strip() for s in filter_sql.split(";") if s.strip()]
-        return " AND ".join(parts)
+        raise ValueError("filter_sql must use version 2 JSON format")
 
     def preview_custom_sql(
         self, request: PipelinePreviewRequest

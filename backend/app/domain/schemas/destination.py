@@ -58,8 +58,7 @@ class DestinationCreate(DestinationBase):
             "SNOWFLAKE",
             "KAFKA",
             "POSTGRES",
-            "ROSETTA",
-        ]  # Extend as needed
+        ]
         if v.upper() not in allowed_types:
             # For now, we optionally allow other types if needed, but warning/error is better.
             # Let's just Upper it.
@@ -81,9 +80,20 @@ class DestinationCreate(DestinationBase):
     @classmethod
     def validate_config(cls, v: dict[str, Any], info: ValidationInfo) -> dict[str, Any]:
         """Validate config based on type."""
-        # Simple validation for now.
-        # Ideally we'd inspect 'type' from values, but validation order matters.
-        # If type is SNOWFLAKE, ensure required fields exist.
+        dest_type = str(info.data.get("type", "SNOWFLAKE")).upper() if info.data else "SNOWFLAKE"
+        if dest_type == "KAFKA":
+            required = ["bootstrap_servers", "topic_prefix"]
+            missing = [key for key in required if not v.get(key)]
+            if missing:
+                raise ValueError(
+                    f"KAFKA destination config is missing required fields: {', '.join(missing)}"
+                )
+            fmt = str(v.get("format") or "PLAIN_JSON").upper()
+            if fmt not in {"PLAIN_JSON", "DEBEZIUM_JSON"}:
+                raise ValueError(
+                    "KAFKA destination format must be one of ['PLAIN_JSON', 'DEBEZIUM_JSON']"
+                )
+            v["format"] = fmt
         return v
 
     model_config = ConfigDict(
@@ -164,11 +174,6 @@ class DestinationResponse(DestinationBase, TimestampSchema):
         default=None,
         description="ISO timestamp of the last table list check",
     )
-    chain_client_id: Optional[int] = Field(
-        default=None,
-        description="Chain client that owns this destination (ROSETTA type only)",
-    )
-
     @field_validator("config", mode="before")
     @classmethod
     def mask_sensitive_config(cls, v: dict[str, Any]) -> dict[str, Any]:

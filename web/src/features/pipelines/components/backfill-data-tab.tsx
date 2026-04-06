@@ -3,7 +3,6 @@ import { formatDistanceToNow, format } from 'date-fns'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { backfillApi, type BackfillFilter } from '@/repo/backfill'
 import { type Pipeline } from '@/repo/pipelines'
-import { filterV2ToSql } from '@/features/pipelines/components/table-filter-card'
 import { sourcesRepo } from '@/repo/sources'
 import {
   Plus,
@@ -18,6 +17,7 @@ import {
 } from 'lucide-react'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -67,6 +67,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { DatePicker } from '@/components/date-picker'
+import { filterV2ToSql } from '@/features/pipelines/components/table-filter-card'
 
 interface BackfillDataTabProps {
   pipelineId: number
@@ -170,9 +171,7 @@ function ColumnSelectWithSearch({
             disabled={disabled}
             className='h-8 w-full justify-between text-xs font-normal'
           >
-            <span className='truncate'>
-              {value || 'Select column'}
-            </span>
+            <span className='truncate'>{value || 'Select column'}</span>
             <ChevronsUpDown className='ml-1 h-3.5 w-3.5 shrink-0 opacity-50' />
           </Button>
         </PopoverTrigger>
@@ -233,10 +232,8 @@ function CreateBackfillDialog({ pipelineId, sourceId }: BackfillDataTabProps) {
       setOpen(false)
       resetForm()
     },
-    onError: (error: any) => {
-      toast.error(
-        `Failed to create backfill job: ${error.response?.data?.message || error.response?.data?.detail || error.message}`
-      )
+    onError: (error) => {
+      toast.error(`Failed to create backfill job: ${getApiErrorMessage(error)}`)
     },
   })
 
@@ -282,15 +279,17 @@ function CreateBackfillDialog({ pipelineId, sourceId }: BackfillDataTabProps) {
     value: string
   ) => {
     const newFilters = [...filters]
-    
+
     // If updating column, reset operator and value to ensure compatibility
     if (field === 'column') {
       const validOperators = getOperatorsForColumn(value)
       const currentOperator = newFilters[index].operator
-      
+
       // Check if current operator is valid for new column type
-      const isOperatorValid = validOperators.some(op => op.value === currentOperator)
-      
+      const isOperatorValid = validOperators.some(
+        (op) => op.value === currentOperator
+      )
+
       newFilters[index] = {
         column: value,
         operator: isOperatorValid ? currentOperator : '=',
@@ -299,7 +298,7 @@ function CreateBackfillDialog({ pipelineId, sourceId }: BackfillDataTabProps) {
     } else {
       newFilters[index] = { ...newFilters[index], [field]: value }
     }
-    
+
     setFilters(newFilters)
   }
 
@@ -323,19 +322,21 @@ function CreateBackfillDialog({ pipelineId, sourceId }: BackfillDataTabProps) {
   }
 
   // Helper to determine column type category
-  const getColumnTypeCategory = (columnName: string): 'boolean' | 'string' | 'number' | 'date' => {
+  const getColumnTypeCategory = (
+    columnName: string
+  ): 'boolean' | 'string' | 'number' | 'date' => {
     const type = getColumnType(columnName)
-    
+
     // Boolean types
     if (type.includes('bool')) {
       return 'boolean'
     }
-    
+
     // Date/datetime types
     if (type.includes('date') || type.includes('time')) {
       return 'date'
     }
-    
+
     // Numeric types
     if (
       type.includes('int') ||
@@ -348,7 +349,7 @@ function CreateBackfillDialog({ pipelineId, sourceId }: BackfillDataTabProps) {
     ) {
       return 'number'
     }
-    
+
     // Default to string
     return 'string'
   }
@@ -511,7 +512,9 @@ function CreateBackfillDialog({ pipelineId, sourceId }: BackfillDataTabProps) {
                   >
                     <ColumnSelectWithSearch
                       value={filter.column}
-                      onValueChange={(value) => updateFilter(index, 'column', value)}
+                      onValueChange={(value) =>
+                        updateFilter(index, 'column', value)
+                      }
                       columns={selectedTableColumns || []}
                       disabled={!tableName}
                     />
@@ -578,7 +581,11 @@ function CreateBackfillDialog({ pipelineId, sourceId }: BackfillDataTabProps) {
                       ) : filter.operator === 'IN' ? (
                         <Input
                           className='h-8'
-                          placeholder={isNumericColumn(filter.column) ? '1, 2, 3' : 'value1, value2, value3'}
+                          placeholder={
+                            isNumericColumn(filter.column)
+                              ? '1, 2, 3'
+                              : 'value1, value2, value3'
+                          }
                           value={filter.value}
                           onChange={(e) =>
                             updateFilter(index, 'value', e.target.value)
@@ -666,10 +673,8 @@ export function BackfillDataTab({
       queryClient.invalidateQueries({ queryKey: ['backfill-jobs', pipelineId] })
       toast.success('Backfill job cancelled')
     },
-    onError: (error: any) => {
-      toast.error(
-        `Failed to cancel job: ${error.response?.data?.message || error.response?.data?.detail || error.message}`
-      )
+    onError: (error) => {
+      toast.error(`Failed to cancel job: ${getApiErrorMessage(error)}`)
     },
   })
 
@@ -680,10 +685,8 @@ export function BackfillDataTab({
       queryClient.invalidateQueries({ queryKey: ['backfill-jobs', pipelineId] })
       toast.success('Backfill job deleted')
     },
-    onError: (error: any) => {
-      toast.error(
-        `Failed to delete job: ${error.response?.data?.message || error.response?.data?.detail || error.message}`
-      )
+    onError: (error) => {
+      toast.error(`Failed to delete job: ${getApiErrorMessage(error)}`)
     },
   })
 
@@ -819,11 +822,15 @@ export function BackfillDataTab({
                                   try {
                                     const parsed = JSON.parse(job.filter_sql)
                                     if (parsed.version === 2) {
-                                      const count = parsed.groups.reduce((acc: number, g: any) => acc + g.conditions.length, 0)
+                                      const count = parsed.groups.reduce(
+                                        (acc: number, g: any) =>
+                                          acc + g.conditions.length,
+                                        0
+                                      )
                                       return `${count} filter(s)`
                                     }
                                   } catch {}
-                                  return `${job.filter_sql.split(';').length} filter(s)`
+                                  return 'Invalid filter'
                                 })()}
                               </span>
                             </HoverCardTrigger>
@@ -833,7 +840,9 @@ export function BackfillDataTab({
                                   Applied Filters
                                 </h4>
                                 <div className='rounded border bg-muted p-2 font-mono text-xs break-all'>
-                                  WHERE {filterV2ToSql(job.filter_sql) || job.filter_sql}
+                                  WHERE{' '}
+                                  {filterV2ToSql(job.filter_sql) ||
+                                    'Invalid JSON v2 filter'}
                                 </div>
                               </div>
                             </HoverCardContent>

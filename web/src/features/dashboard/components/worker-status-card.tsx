@@ -1,28 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
-import { DashboardPanel } from './dashboard-panel'
+import { dashboardRepo, type WorkerStatusResponse } from '@/repo/dashboard'
 import { Cog, CircleCheck, CircleX, CircleDashed, Loader2 } from 'lucide-react'
-import { api } from '@/repo/client'
 import { useRefreshInterval } from '../context/refresh-interval-context'
-
-interface WorkerStatus {
-  enabled: boolean
-  healthy: boolean
-  active_workers: number
-  active_tasks: number
-  reserved_tasks: number
-  error?: string
-}
-
-const getWorkerStatus = async (): Promise<WorkerStatus> => {
-  const { data } = await api.get<WorkerStatus>('/health/worker')
-  return data
-}
+import { DashboardPanel } from './dashboard-panel'
 
 export function WorkerStatusCard() {
   const { refreshInterval } = useRefreshInterval()
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery<WorkerStatusResponse>({
     queryKey: ['worker-status'],
-    queryFn: getWorkerStatus,
+    queryFn: dashboardRepo.getWorkerStatus,
     refetchInterval: refreshInterval,
   })
 
@@ -44,7 +30,9 @@ export function WorkerStatusCard() {
           Loading worker status...
         </div>
       ) : isError || !data ? (
-        <div className='text-xs text-rose-500'>Failed to fetch worker status</div>
+        <div className='text-xs text-rose-500'>
+          Failed to fetch worker status
+        </div>
       ) : !data.enabled ? (
         <div className='space-y-3'>
           <div className='flex items-center gap-2'>
@@ -79,7 +67,7 @@ export function WorkerStatusCard() {
           {/* Stats */}
           <div className='grid grid-cols-3 gap-2'>
             <div className='rounded bg-muted/20 p-2 text-center'>
-              <div className='text-lg font-bold font-mono leading-none'>
+              <div className='font-mono text-lg leading-none font-bold'>
                 {data.active_workers}
               </div>
               <div className='mt-1 text-[10px] text-muted-foreground'>
@@ -87,7 +75,7 @@ export function WorkerStatusCard() {
               </div>
             </div>
             <div className='rounded bg-muted/20 p-2 text-center'>
-              <div className='text-lg font-bold font-mono leading-none'>
+              <div className='font-mono text-lg leading-none font-bold'>
                 {data.active_tasks}
               </div>
               <div className='mt-1 text-[10px] text-muted-foreground'>
@@ -95,7 +83,7 @@ export function WorkerStatusCard() {
               </div>
             </div>
             <div className='rounded bg-muted/20 p-2 text-center'>
-              <div className='text-lg font-bold font-mono leading-none'>
+              <div className='font-mono text-lg leading-none font-bold'>
                 {data.reserved_tasks}
               </div>
               <div className='mt-1 text-[10px] text-muted-foreground'>
@@ -107,7 +95,7 @@ export function WorkerStatusCard() {
           {/* Error message if any */}
           {data.error && (
             <div className='rounded border border-rose-500/20 bg-rose-500/5 px-2 py-1.5'>
-              <p className='text-[10px] text-rose-400 line-clamp-2'>
+              <p className='line-clamp-2 text-[10px] text-rose-400'>
                 {data.error}
               </p>
             </div>

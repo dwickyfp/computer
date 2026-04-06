@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link, useLocation, useRouter } from '@tanstack/react-router'
-import { pipelinesRepo } from '@/repo/pipelines'
+import { pipelinesRepo, type TableSyncDetails } from '@/repo/pipelines'
+import { pipelineKeys } from '@/repo/query-keys'
 import { sourcesRepo } from '@/repo/sources'
 import {
   GitBranch,
@@ -21,6 +22,7 @@ import {
   Layers,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import { Badge } from '@/components/ui/badge'
 import {
   Breadcrumb,
@@ -65,39 +67,6 @@ interface PipelineNavigationState {
   highlightTable?: string
 }
 
-interface TableSyncDetails {
-  id: number
-  pipeline: { id: number; name: string; status: string }
-  source: { id: number; name: string; database: string }
-  destination: { id: number; name: string; type: string }
-  table_name: string
-  table_name_target: string
-  custom_sql: string | null
-  filter_sql: string | null
-  primary_key_column_target: string | null
-  tags: string[]
-  record_count: number
-  is_error: boolean
-  error_message: string | null
-  lineage_metadata: LineageMetadata | null
-  lineage_status: string
-  lineage_error: string | null
-  lineage_generated_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-interface LineageMetadata {
-  version: number
-  source_tables: { table: string; type: string }[]
-  source_columns: string[]
-  output_columns: string[]
-  column_lineage: Record<string, { sources: string[]; transform: string }>
-  referenced_tables: string[]
-  parsed_at: string
-  error?: string
-}
-
 export default function PipelineDetailsPage() {
   const { pipelineId } = useParams({
     from: '/_authenticated/pipelines/$pipelineId',
@@ -138,7 +107,7 @@ export default function PipelineDetailsPage() {
     isLoading: isPipelineLoading,
     error: pipelineError,
   } = useQuery({
-    queryKey: ['pipeline', id],
+    queryKey: pipelineKeys.detail(id),
     queryFn: () => pipelinesRepo.get(id),
     retry: false,
     refetchInterval: 5000,
@@ -158,7 +127,11 @@ export default function PipelineDetailsPage() {
     isLoading: isTableSyncLoading,
     error: tableSyncError,
   } = useQuery<TableSyncDetails>({
-    queryKey: ['table-sync-details', id, selectedDestId, selectedSyncId],
+    queryKey: pipelineKeys.tableSyncDetails(
+      id,
+      selectedDestId!,
+      selectedSyncId!
+    ),
     queryFn: () =>
       pipelinesRepo.getTableSyncDetail(id, selectedDestId!, selectedSyncId!),
     enabled: !!selectedDestId && !!selectedSyncId && !isNaN(id),
@@ -176,7 +149,11 @@ export default function PipelineDetailsPage() {
       toast.success('Lineage generation started')
       setTimeout(() => {
         queryClient.invalidateQueries({
-          queryKey: ['table-sync-details', id, selectedDestId, selectedSyncId],
+          queryKey: pipelineKeys.tableSyncDetails(
+            id,
+            selectedDestId!,
+            selectedSyncId!
+          ),
         })
       }, 300)
     },
@@ -193,8 +170,8 @@ export default function PipelineDetailsPage() {
         await sourcesRepo.refreshSource(pipeline.source_id)
       }
       toast.success('Pipeline and Source restarted successfully')
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to restart pipeline')
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Failed to restart pipeline'))
     }
   }
 
@@ -675,7 +652,11 @@ export default function PipelineDetailsPage() {
                   <div className='inline-flex items-center gap-2 rounded-sm bg-secondary/50 px-3 py-1.5 text-xs font-medium text-[#7b828f] ring-1 ring-gray-500/10 ring-inset dark:bg-[#0f161d] dark:text-[#7b828f]'>
                     <div className='flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100'>
                       <Database className='h-3.5 w-3.5' />
-                      <span>{pipeline?.source ? pipeline.source.name : 'Rosetta Chain'}</span>
+                      <span>
+                        {pipeline?.source
+                          ? pipeline.source.name
+                          : 'Unknown Source'}
+                      </span>
                     </div>
                     <ArrowRight className='h-3 w-3 opacity-40' />
                     <div className='flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100'>

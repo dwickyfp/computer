@@ -55,6 +55,7 @@ export default function SourceDetailsPage() {
         enabled: !!id,
         retry: false, // Don't retry if it fails (e.g. 404)
     })
+    const isKafkaSource = data?.source.type === 'KAFKA'
 
     useEffect(() => {
         if (isError) {
@@ -177,7 +178,9 @@ export default function SourceDetailsPage() {
                                 {isLoading ? <Skeleton className="h-8 w-48" /> : data?.source.name}
                             </h2>
                             <p className="text-muted-foreground text-sm">
-                                Manage your source configuration, replication, and monitored tables.
+                                {isKafkaSource
+                                    ? 'Manage your Kafka source registration and tracked topics.'
+                                    : 'Manage your source configuration, replication, and monitored tables.'}
                             </p>
                         </div>
                         {/* Action Buttons */}
@@ -222,11 +225,11 @@ export default function SourceDetailsPage() {
                                 <CustomTabsList className="w-full justify-start border-b mb-4">
                                     <CustomTabsTrigger value="monitored">
                                         <Activity className="h-4 w-4 mr-2" />
-                                        Monitored Tables
+                                        {isKafkaSource ? 'Registered Topics' : 'Monitored Tables'}
                                     </CustomTabsTrigger>
                                     <CustomTabsTrigger value="available">
                                         <Database className="h-4 w-4 mr-2" />
-                                        Available Tables
+                                        {isKafkaSource ? 'Available Topics' : 'Available Tables'}
                                     </CustomTabsTrigger>
                                     <CustomTabsTrigger value="presets">
                                         <Sliders className="h-4 w-4 mr-2" />
@@ -238,6 +241,7 @@ export default function SourceDetailsPage() {
                                     <SourceReplicationTable
                                         sourceId={id}
                                         tables={data?.tables || []}
+                                        sourceType={data?.source.type}
                                     />
                                 </CustomTabsContent>
                                 <CustomTabsContent value="available" className="mt-0">
@@ -245,6 +249,7 @@ export default function SourceDetailsPage() {
                                         sourceId={id}
                                         isPublicationEnabled={data?.source.is_publication_enabled || false}
                                         publishedTableNames={data?.tables.map(t => t.table_name) || []}
+                                        sourceType={data?.source.type}
                                     />
                                 </CustomTabsContent>
                                 <CustomTabsContent value="presets" className="mt-0">
@@ -253,47 +258,51 @@ export default function SourceDetailsPage() {
                             </CustomTabs>
                         </div>
 
-                        <SourceDetailsCreatePublicationDialog
-                            open={createPubDialogOpen}
-                            onOpenChange={setCreatePubDialogOpen}
-                            sourceId={id}
-                        />
+                        {!isKafkaSource && (
+                            <>
+                                <SourceDetailsCreatePublicationDialog
+                                    open={createPubDialogOpen}
+                                    onOpenChange={setCreatePubDialogOpen}
+                                    sourceId={id}
+                                />
 
-                        <AlertDialog open={dropPublicationDialogOpen} onOpenChange={setDropPublicationDialogOpen}>
-                            <AlertDialogContent>
-                                <AlertDialogHeader>
-                                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                        This action will drop the publication and stop Change Data Capture (CDC).
-                                        This action cannot be undone.
-                                    </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={handleDropPublication} className="bg-destructive text-white hover:bg-destructive/90">
-                                        Drop Publication
-                                    </AlertDialogAction>
-                                </AlertDialogFooter>
-                            </AlertDialogContent>
-                        </AlertDialog>
+                                <AlertDialog open={dropPublicationDialogOpen} onOpenChange={setDropPublicationDialogOpen}>
+                                    <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                                This action will drop the publication and stop Change Data Capture (CDC).
+                                                This action cannot be undone.
+                                            </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction onClick={handleDropPublication} className="bg-destructive text-white hover:bg-destructive/90">
+                                                Drop Publication
+                                            </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
 
-                        <AlertDialog open={dropReplicationDialogOpen} onOpenChange={setDropReplicationDialogOpen}>
-                            <AlertDialogContent>
-                                <AlertDialogHeader>
-                                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                        This action will drop the replication slot.
-                                        This action cannot be undone.
-                                    </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={handleDropReplication} className="bg-destructive text-white hover:bg-destructive/90">
-                                        Drop Replication
-                                    </AlertDialogAction>
-                                </AlertDialogFooter>
-                            </AlertDialogContent>
-                        </AlertDialog>
+                                <AlertDialog open={dropReplicationDialogOpen} onOpenChange={setDropReplicationDialogOpen}>
+                                    <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                                This action will drop the replication slot.
+                                                This action cannot be undone.
+                                            </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction onClick={handleDropReplication} className="bg-destructive text-white hover:bg-destructive/90">
+                                                Drop Replication
+                                            </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
+                            </>
+                        )}
                     </>
                 )}
             </Main>

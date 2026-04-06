@@ -19,6 +19,7 @@ dependencies = [
     "pyarrow>=15.0.0",
     "redis>=5.0.0",
     "pytz>=2025.2",
+    "confluent-kafka>=2.5.0",
 ]
 
 [project.optional-dependencies]
@@ -51,7 +52,7 @@ omit = [
 ]
 
 [project.scripts]
-rosetta-compute = "python -m compute.main"
+rosetta-compute = "compute.main:main"
 
 [tool.uv]
 native-tls = true

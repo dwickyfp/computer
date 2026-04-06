@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 
 from core.engine import PipelineEngine
-from core.chain_engine import ChainPipelineEngine
 from core.repository import PipelineRepository, PipelineMetadataRepository
 from core.database import init_connection_pool, close_connection_pool
 from core.timezone import now_in_target_tz
@@ -83,9 +82,6 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
     engine = None
     _engine_errored = False
     try:
-        # Determine engine type based on pipeline source_type
-        # Chain (ROSETTA) pipelines use ChainPipelineEngine which reads from Redis Streams
-        # Regular (POSTGRES) pipelines use PipelineEngine which reads from Debezium CDC
         pipeline_data = PipelineRepository.get_by_id(pipeline_id)
 
         if pipeline_data is None:
@@ -98,15 +94,7 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
             )
             return
 
-        source_type = getattr(pipeline_data, "source_type", "POSTGRES")
-
-        if source_type in ["ROSETTA", "CATALOG_TABLE"]:
-            subprocess_logger.info(
-                f"Starting chain pipeline engine for pipeline {pipeline_id}"
-            )
-            engine = ChainPipelineEngine(pipeline_id)
-        else:
-            engine = PipelineEngine(pipeline_id)
+        engine = PipelineEngine(pipeline_id)
 
         engine.initialize()
 

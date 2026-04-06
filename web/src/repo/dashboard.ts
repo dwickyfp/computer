@@ -69,6 +69,28 @@ export interface ActivityFeedItem {
   type: string // 'ERROR' | 'STATUS'
 }
 
+export interface SystemHealthResponse {
+  status: string
+  version: string
+  timestamp: string
+  checks: {
+    database: boolean
+    redis: boolean
+    wal_monitor: boolean
+    compute: boolean
+    worker: boolean
+  }
+}
+
+export interface WorkerStatusResponse {
+  enabled: boolean
+  healthy: boolean
+  active_workers: number
+  active_tasks: number
+  reserved_tasks: number
+  error?: string
+}
+
 export const dashboardRepo = {
   getSummary: async (): Promise<DashboardSummary> => {
     const response = await api.get<DashboardSummary>('/dashboard/summary')
@@ -76,32 +98,54 @@ export const dashboardRepo = {
   },
 
   getFlowChart: async (days: number = 7): Promise<FlowChartData> => {
-    const response = await api.get<FlowChartData>(`/dashboard/flow-chart?days=${days}`)
+    const response = await api.get<FlowChartData>(
+      `/dashboard/flow-chart?days=${days}`
+    )
     return response.data
   },
 
   getCreditChart: async (days: number = 30): Promise<CreditChartData> => {
-    const response = await api.get<CreditChartData>(`/dashboard/credit-chart?days=${days}`)
+    const response = await api.get<CreditChartData>(
+      `/dashboard/credit-chart?days=${days}`
+    )
     return response.data
   },
 
   getSourceHealth: async (): Promise<DashboardSourceHealth> => {
-    const response = await api.get<DashboardSourceHealth>('/dashboard/health/sources')
+    const response = await api.get<DashboardSourceHealth>(
+      '/dashboard/health/sources'
+    )
     return response.data
   },
 
   getReplicationLag: async (days: number = 1): Promise<ReplicationLagData> => {
-    const response = await api.get<ReplicationLagData>(`/dashboard/charts/replication-lag?days=${days}`)
+    const response = await api.get<ReplicationLagData>(
+      `/dashboard/charts/replication-lag?days=${days}`
+    )
     return response.data
   },
 
   getTopTables: async (limit: number = 5): Promise<TopTableData[]> => {
-    const response = await api.get<TopTableData[]>(`/dashboard/charts/top-tables?limit=${limit}`)
+    const response = await api.get<TopTableData[]>(
+      `/dashboard/charts/top-tables?limit=${limit}`
+    )
     return response.data
   },
 
   getActivityFeed: async (limit: number = 20): Promise<ActivityFeedItem[]> => {
-    const response = await api.get<ActivityFeedItem[]>(`/dashboard/activity-feed?limit=${limit}`)
+    const response = await api.get<ActivityFeedItem[]>(
+      `/dashboard/activity-feed?limit=${limit}`
+    )
+    return response.data
+  },
+
+  getSystemHealth: async (): Promise<SystemHealthResponse> => {
+    const response = await api.get<SystemHealthResponse>('/health')
+    return response.data
+  },
+
+  getWorkerStatus: async (): Promise<WorkerStatusResponse> => {
+    const response = await api.get<WorkerStatusResponse>('/health/worker')
     return response.data
   },
 }

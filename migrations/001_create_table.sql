@@ -144,7 +144,7 @@ ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS lineage_st
 ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS lineage_error TEXT NULL;
 ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS lineage_generated_at TIMESTAMPTZ NULL;
 
--- Rosetta Chain catalog database name for table sync (destination DB on remote Rosetta instance)
+-- Optional destination namespace override for table syncs
 ALTER TABLE pipelines_destination_table_sync ADD COLUMN IF NOT EXISTS catalog_database_name VARCHAR(255) NULL;
 
 CREATE INDEX IF NOT EXISTS idx_pipelines_destination_table_sync_lineage_status ON pipelines_destination_table_sync(lineage_status);
@@ -961,152 +961,42 @@ CREATE INDEX IF NOT EXISTS idx_queue_backfill_data_executing
 
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Rosetta Chain — Inter-instance streaming configuration
+-- Typed sources and Kafka cleanup
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Chain configuration for this Rosetta instance (single-row)
-CREATE TABLE IF NOT EXISTS rosetta_chain_config (
-    id SERIAL PRIMARY KEY,
-    chain_key TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS type VARCHAR(50) NOT NULL DEFAULT 'POSTGRES';
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb;
 
--- Remote Rosetta instance registrations
-CREATE TABLE IF NOT EXISTS rosetta_chain_clients (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    url VARCHAR(500) NOT NULL,
-    port INTEGER NOT NULL DEFAULT 8001,
-    chain_key TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    last_connected_at TIMESTAMPTZ NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+UPDATE sources
+SET config = jsonb_strip_nulls(
+    jsonb_build_object(
+        'host', pg_host,
+        'port', pg_port,
+        'database', pg_database,
+        'username', pg_username,
+        'publication_name', publication_name,
+        'replication_name', replication_name
+    )
+)
+WHERE type = 'POSTGRES'
+  AND (config = '{}'::jsonb OR config IS NULL);
 
--- Virtual tables from remote Rosetta instances
-CREATE TABLE IF NOT EXISTS rosetta_chain_tables (
-    id SERIAL PRIMARY KEY,
-    chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL,
-    table_name VARCHAR(255) NOT NULL,
-    schema_json JSONB NOT NULL DEFAULT '{}',
-    source_chain_id VARCHAR(255) NULL,
-    record_count BIGINT NOT NULL DEFAULT 0,
-    last_synced_at TIMESTAMPTZ NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+ALTER TABLE sources ALTER COLUMN pg_host DROP NOT NULL;
+ALTER TABLE sources ALTER COLUMN pg_port DROP NOT NULL;
+ALTER TABLE sources ALTER COLUMN pg_database DROP NOT NULL;
+ALTER TABLE sources ALTER COLUMN pg_username DROP NOT NULL;
+ALTER TABLE sources ALTER COLUMN publication_name DROP NOT NULL;
+ALTER TABLE sources ALTER COLUMN replication_name DROP NOT NULL;
 
--- Unique index for local pipelines that have a known chain_client_id
-CREATE UNIQUE INDEX IF NOT EXISTS uq_chain_tables_local
-    ON rosetta_chain_tables(chain_client_id, table_name)
-    WHERE chain_client_id IS NOT NULL;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS list_tables JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS total_tables INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS last_table_check_at TIMESTAMPTZ NULL;
 
--- Unique index for cross-instance registrations (no local chain_client_id)
-CREATE UNIQUE INDEX IF NOT EXISTS uq_chain_tables_remote
-    ON rosetta_chain_tables(source_chain_id, table_name)
-    WHERE chain_client_id IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_rosetta_chain_tables_client
-    ON rosetta_chain_tables(chain_client_id);
-
--- Add source_type and chain_client_id to pipelines
-ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS source_type VARCHAR(20) NOT NULL DEFAULT 'POSTGRES';
-ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL;
-ALTER TABLE pipelines ALTER COLUMN source_id DROP NOT NULL;
-
--- Link destinations to chain clients (auto-created ROSETTA destinations)
-ALTER TABLE destinations ADD COLUMN IF NOT EXISTS chain_client_id INTEGER NULL REFERENCES rosetta_chain_clients(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_destinations_chain_client ON destinations(chain_client_id) WHERE chain_client_id IS NOT NULL;
-
--- source_chain_id: the X-Chain-ID value a sender stamps on each ingest request
--- (= sender's destination.id).  Used by ChainPipelineEngine to build the correct
--- Redis stream scan pattern instead of the local chain_client.id.
-ALTER TABLE rosetta_chain_clients ADD COLUMN IF NOT EXISTS source_chain_id VARCHAR(255) NULL;
-CREATE INDEX IF NOT EXISTS idx_chain_clients_source_chain_id ON rosetta_chain_clients(source_chain_id) WHERE source_chain_id IS NOT NULL;
-
--- chain_key is deprecated; make it nullable so new clients can be created without it
-ALTER TABLE rosetta_chain_clients ALTER COLUMN chain_key DROP NOT NULL;
-
--- Migration 008: Catalog Architecture
-
--- Create catalog databases table
-CREATE TABLE IF NOT EXISTS catalog_databases (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    description VARCHAR(1000),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_catalog_databases_name ON catalog_databases(name);
-COMMENT ON TABLE catalog_databases IS 'Logical database containers in the catalog';
-
--- Create catalog tables table
-CREATE TABLE IF NOT EXISTS catalog_tables (
-    id SERIAL PRIMARY KEY,
-    database_id INTEGER NOT NULL REFERENCES catalog_databases(id) ON DELETE CASCADE,
-    table_name VARCHAR(255) NOT NULL,
-    schema_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    stream_name VARCHAR(500) NOT NULL,
-    source_chain_id VARCHAR(255),
-    status VARCHAR(50) NOT NULL DEFAULT 'UNKNOWN',
-    last_health_check_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_catalog_tables_db_name UNIQUE (database_id, table_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_catalog_tables_database_id ON catalog_tables(database_id);
-COMMENT ON TABLE catalog_tables IS 'Table definitions in the catalog';
-
--- Migration 009: Catalog Pipeline Source
-
--- Add catalog_table_id to pipelines table
-ALTER TABLE pipelines 
-ADD COLUMN IF NOT EXISTS catalog_table_id INTEGER REFERENCES catalog_tables(id) ON DELETE SET NULL;
-
-CREATE INDEX IF NOT EXISTS idx_pipelines_catalog_table_id ON pipelines(catalog_table_id);
-COMMENT ON COLUMN pipelines.catalog_table_id IS 'Reference to catalog table (only when source_type=CATALOG_TABLE)';
-
--- Add catalog_database_id to pipelines table (for ROSETTA source pipelines)
-ALTER TABLE pipelines
-ADD COLUMN IF NOT EXISTS catalog_database_id INTEGER REFERENCES catalog_databases(id) ON DELETE SET NULL;
-
-CREATE INDEX IF NOT EXISTS idx_pipelines_catalog_database_id ON pipelines(catalog_database_id);
-COMMENT ON COLUMN pipelines.catalog_database_id IS 'Reference to local catalog database (only when source_type=ROSETTA)';
-
--- Migration 010: Add rosetta_chain_databases table
--- Creates a table to cache virtual databases from remote Rosetta clients
-
-CREATE TABLE IF NOT EXISTS public.rosetta_chain_databases (
-    id SERIAL PRIMARY KEY,
-    chain_client_id INTEGER NOT NULL REFERENCES public.rosetta_chain_clients(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
-    CONSTRAINT uq_rosetta_chain_databases_client_name UNIQUE (chain_client_id, name)
-);
-
-COMMENT ON TABLE public.rosetta_chain_databases IS 'Virtual databases from remote Rosetta instances';
-COMMENT ON COLUMN public.rosetta_chain_databases.id IS 'Unique database identifier';
-COMMENT ON COLUMN public.rosetta_chain_databases.chain_client_id IS 'Reference to the chain client that owns this database';
-COMMENT ON COLUMN public.rosetta_chain_databases.name IS 'Name of the virtual database';
-COMMENT ON COLUMN public.rosetta_chain_databases.created_at IS 'Timestamp of creation';
-COMMENT ON COLUMN public.rosetta_chain_databases.updated_at IS 'Timestamp of last update';
-
-CREATE INDEX IF NOT EXISTS ix_rosetta_chain_databases_chain_client_id ON public.rosetta_chain_databases (chain_client_id);
-
--- Migration: Allow NULL source_id in data_flow_record_monitoring for chain pipelines
--- Chain pipelines (source_type = ROSETTA | CATALOG_TABLE) do not have a corresponding
--- row in the sources table, so source_id is NULL on the pipeline object.
--- Previously the code fell back to 0 which violated the FK constraint.
-ALTER TABLE data_flow_record_monitoring ALTER COLUMN source_id DROP NOT NULL;
-
-ALTER TABLE rosetta_chain_tables
-ADD COLUMN IF NOT EXISTS database_id INTEGER REFERENCES rosetta_chain_databases(id) ON DELETE SET NULL;
+ALTER TABLE pipelines DROP COLUMN IF EXISTS source_type CASCADE;
+ALTER TABLE pipelines DROP COLUMN IF EXISTS chain_client_id CASCADE;
+ALTER TABLE pipelines DROP COLUMN IF EXISTS catalog_table_id CASCADE;
+ALTER TABLE pipelines DROP COLUMN IF EXISTS catalog_database_id CASCADE;
+ALTER TABLE destinations DROP COLUMN IF EXISTS chain_client_id CASCADE;
 
 
 -- ============================================================

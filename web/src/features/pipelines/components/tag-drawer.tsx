@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { tagsRepo } from '@/repo/tags'
+import { X, Hash, Loader2, Plus } from 'lucide-react'
+import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { X, Hash, Loader2, Plus } from 'lucide-react'
-import { tagsRepo } from '@/repo/tags'
 import { TagBadge } from './tag-badge'
-import { toast } from 'sonner'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 
 interface TagDrawerProps {
   tableSyncId: number
@@ -14,7 +15,12 @@ interface TagDrawerProps {
   onClose: () => void
 }
 
-export function TagDrawer({ tableSyncId, tableName, open, onClose }: TagDrawerProps) {
+export function TagDrawer({
+  tableSyncId,
+  tableName,
+  open,
+  onClose,
+}: TagDrawerProps) {
   const [tagInput, setTagInput] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -44,11 +50,13 @@ export function TagDrawer({ tableSyncId, tableName, open, onClose }: TagDrawerPr
       setShowSuggestions(false)
       // Invalidate after 300ms to allow DB transaction to commit
       setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['table-sync-tags', tableSyncId] })
+        queryClient.invalidateQueries({
+          queryKey: ['table-sync-tags', tableSyncId],
+        })
       }, 300)
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.detail || 'Failed to add tag')
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Failed to add tag'))
     },
   })
 
@@ -60,11 +68,13 @@ export function TagDrawer({ tableSyncId, tableName, open, onClose }: TagDrawerPr
       toast.success('Tag removed successfully')
       // Invalidate after 300ms to allow DB transaction to commit
       setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['table-sync-tags', tableSyncId] })
+        queryClient.invalidateQueries({
+          queryKey: ['table-sync-tags', tableSyncId],
+        })
       }, 300)
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.detail || 'Failed to remove tag')
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Failed to remove tag'))
     },
   })
 
@@ -84,7 +94,9 @@ export function TagDrawer({ tableSyncId, tableName, open, onClose }: TagDrawerPr
     }
 
     // Check if tag already exists in current tags (case-insensitive check)
-    if (currentTags.some((t) => t.tag.toLowerCase() === trimmedTag.toLowerCase())) {
+    if (
+      currentTags.some((t) => t.tag.toLowerCase() === trimmedTag.toLowerCase())
+    ) {
       toast.error('Tag already added')
       return
     }
@@ -142,128 +154,134 @@ export function TagDrawer({ tableSyncId, tableName, open, onClose }: TagDrawerPr
 
   return (
     <div
-      className="fixed top-2 bottom-2 left-[520px] flex w-[600px] flex-col rounded-2xl border bg-background shadow-2xl animate-in duration-300 slide-in-from-left-4"
+      className='fixed top-2 bottom-2 left-[520px] flex w-[600px] animate-in flex-col rounded-2xl border bg-background shadow-2xl duration-300 slide-in-from-left-4'
       style={{ zIndex: 100 }}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
-      <div className="flex items-center justify-between border-b bg-muted/30 px-6 py-4">
+      <div className='flex items-center justify-between border-b bg-muted/30 px-6 py-4'>
         <div>
-          <div className="flex items-center gap-2">
-            <Hash className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-semibold">Manage Tags</h2>
+          <div className='flex items-center gap-2'>
+            <Hash className='h-5 w-5 text-primary' />
+            <h2 className='text-lg font-semibold'>Manage Tags</h2>
           </div>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className='mt-1 text-sm text-muted-foreground'>
             Add tags to organize and group{' '}
-            <span className="font-medium text-foreground">{tableName}</span>
+            <span className='font-medium text-foreground'>{tableName}</span>
           </p>
         </div>
         <Button
-          variant="ghost"
-          size="icon"
+          variant='ghost'
+          size='icon'
           onClick={onClose}
-          className="h-8 w-8"
+          className='h-8 w-8'
         >
-          <X className="h-4 w-4" />
+          <X className='h-4 w-4' />
         </Button>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-          <div className="space-y-6">
-            {/* Add Tag Input */}
-            <div className="tag-input-container relative">
-              <label className="text-sm font-medium mb-2 block">Add Tag</label>
-              <div className="relative">
-                <Input
-                  ref={inputRef}
-                  placeholder="Type tag name..."
-                  value={tagInput}
-                  onChange={(e) => handleInputChange(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onFocus={() => tagInput.length > 0 && setShowSuggestions(true)}
-                  className="pr-10"
-                  disabled={addTagMutation.isPending}
-                />
-                {addTagMutation.isPending ? (
-                  <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
-                ) : (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                    onClick={() => handleAddTag(tagInput)}
-                    disabled={!tagInput.trim()}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-
-              {/* Suggestions Dropdown */}
-              {showSuggestions && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg z-50 max-h-48 overflow-y-auto">
-                  {loadingSuggestions ? (
-                    <div className="p-3 text-center">
-                      <Loader2 className="h-4 w-4 animate-spin mx-auto text-muted-foreground" />
-                    </div>
-                  ) : filteredSuggestions.length > 0 ? (
-                    <div className="py-1">
-                      {filteredSuggestions.map((suggestion) => (
-                        <button
-                          key={suggestion.id}
-                          onClick={() => handleAddTag(suggestion.tag)}
-                          className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                        >
-                          <Hash className="h-3 w-3 text-muted-foreground" />
-                          {suggestion.tag}
-                        </button>
-                      ))}
-                    </div>
-                  ) : tagInput.trim() ? (
-                    <div className="p-3 text-sm text-muted-foreground">
-                      <div className="flex items-center gap-2">
-                        <Plus className="h-3 w-3" />
-                        <span>
-                          Press Enter to create "<span className="font-medium text-foreground">{tagInput}</span>"
-                        </span>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </div>
-
-            {/* Current Tags */}
-            <div>
-              <label className="text-sm font-medium mb-3 block">
-                Current Tags ({currentTags.length})
-              </label>
-              {loadingTags ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : currentTags.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {currentTags.map((tag) => (
-                    <TagBadge
-                      key={tag.id}
-                      tag={tag.tag}
-                      onRemove={() => handleRemoveTag(tag.id)}
-                    />
-                  ))}
-                </div>
+      <div className='flex-1 overflow-y-auto p-6'>
+        <div className='space-y-6'>
+          {/* Add Tag Input */}
+          <div className='tag-input-container relative'>
+            <label className='mb-2 block text-sm font-medium'>Add Tag</label>
+            <div className='relative'>
+              <Input
+                ref={inputRef}
+                placeholder='Type tag name...'
+                value={tagInput}
+                onChange={(e) => handleInputChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onFocus={() => tagInput.length > 0 && setShowSuggestions(true)}
+                className='pr-10'
+                disabled={addTagMutation.isPending}
+              />
+              {addTagMutation.isPending ? (
+                <Loader2 className='absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground' />
               ) : (
-                <div className="text-center py-8 text-sm text-muted-foreground border-2 border-dashed rounded-lg">
-                  <Hash className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No tags added yet</p>
-                  <p className="text-xs mt-1">Start typing to add your first tag</p>
-                </div>
+                <Button
+                  size='icon'
+                  variant='ghost'
+                  className='absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2'
+                  onClick={() => handleAddTag(tagInput)}
+                  disabled={!tagInput.trim()}
+                >
+                  <Plus className='h-4 w-4' />
+                </Button>
               )}
             </div>
+
+            {/* Suggestions Dropdown */}
+            {showSuggestions && (
+              <div className='absolute top-full right-0 left-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-lg'>
+                {loadingSuggestions ? (
+                  <div className='p-3 text-center'>
+                    <Loader2 className='mx-auto h-4 w-4 animate-spin text-muted-foreground' />
+                  </div>
+                ) : filteredSuggestions.length > 0 ? (
+                  <div className='py-1'>
+                    {filteredSuggestions.map((suggestion) => (
+                      <button
+                        key={suggestion.id}
+                        onClick={() => handleAddTag(suggestion.tag)}
+                        className='flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted'
+                      >
+                        <Hash className='h-3 w-3 text-muted-foreground' />
+                        {suggestion.tag}
+                      </button>
+                    ))}
+                  </div>
+                ) : tagInput.trim() ? (
+                  <div className='p-3 text-sm text-muted-foreground'>
+                    <div className='flex items-center gap-2'>
+                      <Plus className='h-3 w-3' />
+                      <span>
+                        Press Enter to create "
+                        <span className='font-medium text-foreground'>
+                          {tagInput}
+                        </span>
+                        "
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          {/* Current Tags */}
+          <div>
+            <label className='mb-3 block text-sm font-medium'>
+              Current Tags ({currentTags.length})
+            </label>
+            {loadingTags ? (
+              <div className='flex items-center justify-center py-8'>
+                <Loader2 className='h-6 w-6 animate-spin text-muted-foreground' />
+              </div>
+            ) : currentTags.length > 0 ? (
+              <div className='flex flex-wrap gap-2'>
+                {currentTags.map((tag) => (
+                  <TagBadge
+                    key={tag.id}
+                    tag={tag.tag}
+                    onRemove={() => handleRemoveTag(tag.id)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className='rounded-lg border-2 border-dashed py-8 text-center text-sm text-muted-foreground'>
+                <Hash className='mx-auto mb-2 h-8 w-8 opacity-50' />
+                <p>No tags added yet</p>
+                <p className='mt-1 text-xs'>
+                  Start typing to add your first tag
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
+    </div>
   )
 }

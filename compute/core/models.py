@@ -23,7 +23,14 @@ class DestinationType(str, Enum):
 
     SNOWFLAKE = "SNOWFLAKE"
     POSTGRES = "POSTGRES"
-    ROSETTA = "ROSETTA"
+    KAFKA = "KAFKA"
+
+
+class SourceType(str, Enum):
+    """Source type enum."""
+
+    POSTGRES = "POSTGRES"
+    KAFKA = "KAFKA"
 
 
 class MetadataStatus(str, Enum):
@@ -50,13 +57,15 @@ class Source:
 
     id: int
     name: str
-    pg_host: str
-    pg_port: int
-    pg_database: str
-    pg_username: str
-    pg_password: Optional[str]
-    publication_name: str
-    replication_name: str
+    type: str = SourceType.POSTGRES.value
+    config: dict[str, Any] = field(default_factory=dict)
+    pg_host: Optional[str] = None
+    pg_port: Optional[int] = None
+    pg_database: Optional[str] = None
+    pg_username: Optional[str] = None
+    pg_password: Optional[str] = None
+    publication_name: Optional[str] = None
+    replication_name: Optional[str] = None
     is_publication_enabled: bool = False
     is_replication_enabled: bool = False
     last_check_replication_publication: Optional[datetime] = None
@@ -70,13 +79,15 @@ class Source:
         return cls(
             id=data["id"],
             name=data["name"],
-            pg_host=data["pg_host"],
-            pg_port=data["pg_port"],
-            pg_database=data["pg_database"],
-            pg_username=data["pg_username"],
+            type=data.get("type", SourceType.POSTGRES.value),
+            config=data.get("config", {}) or {},
+            pg_host=data.get("pg_host"),
+            pg_port=data.get("pg_port"),
+            pg_database=data.get("pg_database"),
+            pg_username=data.get("pg_username"),
             pg_password=data.get("pg_password"),
-            publication_name=data["publication_name"],
-            replication_name=data["replication_name"],
+            publication_name=data.get("publication_name"),
+            replication_name=data.get("replication_name"),
             is_publication_enabled=data.get("is_publication_enabled", False),
             is_replication_enabled=data.get("is_replication_enabled", False),
             last_check_replication_publication=data.get(
@@ -87,6 +98,18 @@ class Source:
             updated_at=data.get("updated_at"),
         )
 
+    @property
+    def source_type(self) -> str:
+        return str(self.type or SourceType.POSTGRES.value).upper()
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.source_type == SourceType.POSTGRES.value
+
+    @property
+    def is_kafka(self) -> bool:
+        return self.source_type == SourceType.KAFKA.value
+
 
 @dataclass
 class Destination:
@@ -96,7 +119,6 @@ class Destination:
     name: str
     type: str
     config: dict[str, Any] = field(default_factory=dict)
-    chain_client_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -108,7 +130,6 @@ class Destination:
             name=data["name"],
             type=data["type"],
             config=data.get("config", {}),
-            chain_client_id=data.get("chain_client_id"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -124,9 +145,9 @@ class Destination:
         return self.type.upper() == DestinationType.POSTGRES.value
 
     @property
-    def is_rosetta(self) -> bool:
-        """Check if destination is Rosetta chain."""
-        return self.type.upper() == DestinationType.ROSETTA.value
+    def is_kafka(self) -> bool:
+        """Check if destination is Kafka."""
+        return self.type.upper() == DestinationType.KAFKA.value
 
 
 @dataclass
@@ -137,8 +158,6 @@ class Pipeline:
     name: str
     source_id: Optional[int] = None
     status: str = PipelineStatus.PAUSE.value
-    source_type: str = "POSTGRES"
-    chain_client_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -154,8 +173,6 @@ class Pipeline:
             name=data["name"],
             source_id=data.get("source_id"),
             status=data.get("status", PipelineStatus.PAUSE.value),
-            source_type=data.get("source_type", "POSTGRES"),
-            chain_client_id=data.get("chain_client_id"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )

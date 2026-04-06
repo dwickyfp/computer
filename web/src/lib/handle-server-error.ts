@@ -1,6 +1,7 @@
-import { AxiosError } from 'axios'
+import { ApiError, getApiErrorMessage } from '@/repo/client'
 import { toast } from 'sonner'
 
+export { ApiError, getApiErrorMessage }
 export function handleServerError(error: unknown) {
   // eslint-disable-next-line no-console
   console.log(error)
@@ -16,14 +17,10 @@ export function handleServerError(error: unknown) {
     errMsg = 'Content not found.'
   }
 
-  if (error instanceof AxiosError) {
-    const data = error.response?.data
-    errMsg =
-      data?.detail ||
-      data?.title ||
-      data?.message ||
-      error.message ||
-      'Something went wrong!'
+  if (error instanceof ApiError) {
+    errMsg = getApiErrorMessage(error, errMsg)
+  } else if (error instanceof Error) {
+    errMsg = error.message || errMsg
   }
 
   toast.error(errMsg)

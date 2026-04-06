@@ -40,9 +40,14 @@ export const destinationFormSchema = z
         host: z.string().optional(),
         port: z.number().optional(),
         password: z.string().optional(),
-        // Rosetta Chain
-        url: z.string().optional(),
-        chain_key: z.string().optional(),
+        // Kafka
+        bootstrap_servers: z.string().optional(),
+        topic_prefix: z.string().optional(),
+        sasl_mechanism: z.string().optional(),
+        sasl_username: z.string().optional(),
+        sasl_password: z.string().optional(),
+        security_protocol: z.string().optional(),
+        format: z.string().optional(),
       })
       .optional(),
   })
@@ -84,19 +89,19 @@ export const destinationFormSchema = z
         })
       }
     }
-    if (data.type === 'ROSETTA') {
-      if (!data.config?.url) {
+    if (data.type === 'KAFKA') {
+      if (!data.config?.bootstrap_servers) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Remote Rosetta URL is required',
-          path: ['config', 'url'],
+          message: 'Bootstrap servers are required',
+          path: ['config', 'bootstrap_servers'],
         })
       }
-      if (!data.config?.chain_key) {
+      if (!data.config?.topic_prefix) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Chain key is required',
-          path: ['config', 'chain_key'],
+          message: 'Topic prefix is required',
+          path: ['config', 'topic_prefix'],
         })
       }
     }

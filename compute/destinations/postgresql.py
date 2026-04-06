@@ -315,7 +315,7 @@ class PostgreSQLDestination(BaseDestination):
         try:
             if pg_type == "date":
                 # Debezium sends DATE as days since epoch (int or numeric string
-                # when coming through Rosetta Chain where all values are str-ified)
+                # when values have already been coerced to strings upstream)
                 if isinstance(value, int):
                     return datetime.date(1970, 1, 1) + datetime.timedelta(days=value)
                 if isinstance(value, str):
@@ -498,45 +498,34 @@ class PostgreSQLDestination(BaseDestination):
 
     def _parse_filter_sql(self, filter_sql: str) -> list[str]:
         """
-        Parse filter_sql into list of WHERE clauses.
-
-        Supports two formats:
-        1. Legacy: "column_1 = '11';column_2>1" (semicolon-separated, all AND)
-        2. JSON v2: {"version": 2, "groups": [...], "interLogic": [...]}
+        Parse filter_sql into a list of WHERE clauses.
 
         Args:
-            filter_sql: Semicolon-separated filter conditions or JSON v2 string
+            filter_sql: Filter JSON v2 string
 
         Returns:
-            List of individual filter conditions (for legacy format)
+            Empty list for JSON v2 filters
         """
         if not filter_sql:
             return []
 
-        # Try JSON v2 format first
         try:
             import json
 
             parsed = json.loads(filter_sql)
             if isinstance(parsed, dict) and parsed.get("version") == 2:
-                # V2 format - return empty list (use _build_where_clause_v2 instead)
                 return []
         except (json.JSONDecodeError, TypeError):
-            pass
+            raise DestinationException("filter_sql must be valid JSON v2")
 
-        # Legacy format: Split by semicolon and strip whitespace
-        filters = [f.strip() for f in filter_sql.split(";") if f.strip()]
-        return filters
+        raise DestinationException("filter_sql must use version 2 JSON format")
 
     def _build_where_clause_from_filter_sql(self, filter_sql: str) -> str:
         """
         Build a complete WHERE clause string from filter_sql.
 
-        Supports both legacy semicolon format and JSON v2 format with
-        AND/OR logic, grouping, and IN operator.
-
         Args:
-            filter_sql: Filter SQL string (legacy or JSON v2)
+            filter_sql: Filter SQL string in JSON v2 format
 
         Returns:
             Complete WHERE clause (without the WHERE keyword), or empty string
@@ -544,7 +533,6 @@ class PostgreSQLDestination(BaseDestination):
         if not filter_sql:
             return ""
 
-        # Try JSON v2 format first
         try:
             import json
 
@@ -552,13 +540,9 @@ class PostgreSQLDestination(BaseDestination):
             if isinstance(parsed, dict) and parsed.get("version") == 2:
                 return self._build_where_clause_v2(parsed)
         except (json.JSONDecodeError, TypeError):
-            pass
+            raise DestinationException("filter_sql must be valid JSON v2")
 
-        # Legacy format: semicolon-separated, all AND
-        filters = [f.strip() for f in filter_sql.split(";") if f.strip()]
-        if not filters:
-            return ""
-        return " AND ".join([f"({condition})" for condition in filters])
+        raise DestinationException("filter_sql must use version 2 JSON format")
 
     def _build_where_clause_v2(self, parsed: dict) -> str:
         """
@@ -1097,13 +1081,11 @@ class PostgreSQLDestination(BaseDestination):
         filter_sql: Optional[str],
     ) -> list[CDCRecord]:
         """
-        Apply filter conditions to records (legacy Python-based filtering).
-
-        DEPRECATED: Use _apply_filters_in_duckdb instead.
+        Apply filter conditions to records.
 
         Args:
             records: CDC records to filter
-            filter_sql: Filter conditions (semicolon-separated or JSON v2)
+            filter_sql: Filter conditions in JSON v2 format
 
         Returns:
             Filtered records
@@ -1111,32 +1093,19 @@ class PostgreSQLDestination(BaseDestination):
         if not filter_sql:
             return records
 
-        # For v2 format, try to use DuckDB filtering
         try:
             import json
 
             parsed = json.loads(filter_sql)
             if isinstance(parsed, dict) and parsed.get("version") == 2:
-                # V2 format - fall through to DuckDB-based filtering
-                # This legacy method doesn't support v2, return all records
                 self._logger.warning(
-                    "V2 filter format not supported in legacy Python filtering, "
-                    "use DuckDB-based filtering instead"
+                    "Use DuckDB-based filtering for JSON v2 filters"
                 )
                 return records
         except (json.JSONDecodeError, TypeError):
-            pass
+            raise DestinationException("filter_sql must be valid JSON v2")
 
-        filters = self._parse_filter_sql(filter_sql)
-        if not filters:
-            return records
-
-        filtered = []
-        for record in records:
-            if self._record_matches_filters(record.value, filters):
-                filtered.append(record)
-
-        return filtered
+        raise DestinationException("filter_sql must use version 2 JSON format")
 
     def _record_matches_filters(self, record: dict, filters: list[str]) -> bool:
         """

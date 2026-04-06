@@ -21,7 +21,7 @@ Users interact with the frontend to configure sources, destinations, and pipelin
 | UI components   | shadcn/ui + Radix UI primitives   | —       |
 | Styling         | Tailwind CSS v4                   | latest  |
 | Form management | react-hook-form + Zod             | —       |
-| HTTP client     | axios (via `@/repo/client.ts`)    | —       |
+| HTTP client     | fetch-based `api` client (`@/repo/client.ts`) | —       |
 | Charts          | Recharts                          | —       |
 | Flow diagrams   | @xyflow/react                     | —       |
 | Notifications   | Sonner                            | —       |
@@ -58,7 +58,7 @@ Users interact with the frontend to configure sources, destinations, and pipelin
 │  API Layer (src/repo/)                                         │
 │     └─ 19 repo files + client.ts                              │
 └──────────────────────────────────────────────────────────────┘
-         │  axios  │
+         │  fetch  │
          ▼         ▼
    Backend API  :8000/api/v1
 ```
@@ -92,7 +92,7 @@ web/src/
 │   ├── settings/         # Runtime configuration
 │   └── errors/           # 404, 500, general error pages
 ├── repo/
-│   ├── client.ts         # Axios instance with base URL resolution
+│   ├── client.ts         # Fetch-based client with base URL resolution
 │   ├── pipelines.ts      # Pipeline API calls + TypeScript interfaces
 │   ├── sources.ts
 │   ├── destinations.ts
@@ -165,14 +165,14 @@ Key routes:
 
 ## 7. API Layer
 
-All API calls must go through `src/repo/client.ts`:
+All repo HTTP calls must go through `src/repo/client.ts`:
 
 ```typescript
-// client.ts — single axios instance
-export const api = axios.create({
-  baseURL: getBaseUrl(), // VITE_API_URL || localhost:8000/api/v1 (dev) || origin/api (prod)
-  headers: { "Content-Type": "application/json" },
-});
+// client.ts — single fetch-based client
+export const api = {
+  get: <T>(path: string, options?: ApiRequestOptions) => request<T>('GET', path, undefined, options),
+  post: <T>(path: string, body?: unknown, options?: ApiRequestOptions) => request<T>('POST', path, body, options),
+}
 ```
 
 Repo files wrap `api` calls with typed return values:
@@ -180,16 +180,18 @@ Repo files wrap `api` calls with typed return values:
 ```typescript
 // repo/pipelines.ts
 export const pipelinesRepo = {
-  list: () => api.get<Pipeline[]>("/pipelines"),
-  get: (id: number) => api.get<Pipeline>(`/pipelines/${id}`),
-  create: (data: CreatePipelineRequest) =>
-    api.post<Pipeline>("/pipelines", data),
-  start: (id: number) => api.patch(`/pipelines/${id}/start`),
-  pause: (id: number) => api.patch(`/pipelines/${id}/pause`),
+  getAll: async () => {
+    const { data } = await api.get<Pipeline[]>('/pipelines')
+    return { pipelines: data, total: data.length }
+  },
+  get: async (id: number) => {
+    const { data } = await api.get<Pipeline>(`/pipelines/${id}`)
+    return data
+  },
 };
 ```
 
-**Rule:** Never import axios directly in components. Always use `api` from `@/repo/client`.
+**Rule:** Components never import `axios` or `@/repo/client`. Only repo files talk to the shared client.
 
 ---
 

@@ -77,7 +77,7 @@ function conditionToSql(c: { column: string; operator: string; value: string; va
     return `${c.column} ${c.operator} ${isNum ? c.value : `'${c.value}'`}`
 }
 
-/** Convert a filter_sql string (v2 JSON or legacy) to readable SQL WHERE clause */
+/** Convert a JSON v2 filter_sql string to readable SQL WHERE clause */
 export function filterV2ToSql(filterSql: string | null | undefined): string {
     if (!filterSql) return ''
     try {
@@ -101,10 +101,10 @@ export function filterV2ToSql(filterSql: string | null | undefined): string {
             }
             return result
         }
-    } catch { /* legacy format */ }
-    // Legacy semicolon format
-    const parts = filterSql.split(';').map(s => s.trim()).filter(Boolean)
-    return parts.join(' AND ')
+    } catch {
+        return ''
+    }
+    return ''
 }
 
 // ─── Operators ───────────────────────────────────────────────
@@ -164,19 +164,6 @@ export function TableFilterCard({
 
     // ── Parse helpers ──
 
-    const parseLegacySql = (sql: string): Omit<FilterCondition, 'id'>[] => {
-        const result: Omit<FilterCondition, 'id'>[] = []
-        const pattern = /(?:(\w+)\s+(IS\s+(?:NOT\s+)?NULL))|(?:(\w+)\s+BETWEEN\s+'([^']*)'\s+AND\s+'([^']*)')|(?:(\w+)\s+(LIKE|ILIKE)\s+'%([^%]*)%')|(?:(\w+)\s+IN\s*\(([^)]*)\))|(?:(\w+)\s*(=|!=|>|>=|<=|<)\s*(?:'([^']*)'|(\d+(?:\.\d+)?)|(?:true|false)))/gi
-        for (const m of sql.matchAll(pattern)) {
-            if (m[1]) result.push({ column: m[1], operator: m[2], value: '' })
-            else if (m[3]) result.push({ column: m[3], operator: 'BETWEEN', value: m[4], value2: m[5] })
-            else if (m[6]) result.push({ column: m[6], operator: m[7], value: m[8] })
-            else if (m[9]) result.push({ column: m[9], operator: 'IN', value: m[10].replace(/'/g, '').trim() })
-            else if (m[11]) result.push({ column: m[11], operator: m[12], value: m[13] ?? m[14] })
-        }
-        return result
-    }
-
     const parseFilterSql = (sql: string): FilterState => {
         if (!sql) return { groups: [], interLogic: [] }
         try {
@@ -193,16 +180,10 @@ export function TableFilterCard({
                     interLogic: parsed.interLogic
                 }
             }
-        } catch { /* not JSON */ }
-        const clauses = parseLegacySql(sql)
-        return {
-            groups: clauses.map(c => ({
-                id: uid(),
-                conditions: [{ id: uid(), ...c }],
-                intraLogic: 'AND' as const
-            })),
-            interLogic: clauses.length > 1 ? Array(clauses.length - 1).fill('AND') : []
+        } catch {
+            return { groups: [], interLogic: [] }
         }
+        return { groups: [], interLogic: [] }
     }
 
     // ── Load on open/table change ──

@@ -13,6 +13,7 @@ from app.domain.models.destination import Destination
 from app.domain.repositories.destination import DestinationRepository
 from app.domain.schemas.destination import DestinationCreate, DestinationUpdate
 from app.core.security import encrypt_value, decrypt_value
+from app.infrastructure.kafka import create_admin_client
 from app.infrastructure.redis import RedisClient
 
 logger = get_logger(__name__)
@@ -58,12 +59,16 @@ class DestinationService:
             )
 
         # Encrypt sensitive fields before storing
-        if (
-            "password" in destination_data.config
-            and destination_data.config["password"]
-        ):
+        if "password" in destination_data.config and destination_data.config["password"]:
             destination_data.config["password"] = encrypt_value(
                 destination_data.config["password"]
+            )
+        if (
+            "sasl_password" in destination_data.config
+            and destination_data.config["sasl_password"]
+        ):
+            destination_data.config["sasl_password"] = encrypt_value(
+                destination_data.config["sasl_password"]
             )
 
         if (
@@ -157,6 +162,8 @@ class DestinationService:
             # Encrypt new secrets if present
             if "password" in new_config and new_config["password"]:
                 new_config["password"] = encrypt_value(new_config["password"])
+            if "sasl_password" in new_config and new_config["sasl_password"]:
+                new_config["sasl_password"] = encrypt_value(new_config["sasl_password"])
             if (
                 "private_key_passphrase" in new_config
                 and new_config["private_key_passphrase"]
@@ -330,25 +337,6 @@ class DestinationService:
         Raises:
             Exception: If connection fails, with error details
         """
-        if config.type == "ROSETTA":
-            import httpx
-
-            url = config.config.get("url", "").rstrip("/")
-            if not url:
-                raise Exception("Remote Compute URL is required")
-            try:
-                resp = httpx.get(
-                    f"{url}/chain/health",
-                    timeout=10.0,
-                )
-                if resp.status_code == 200:
-                    return True
-                raise Exception(
-                    f"Remote Rosetta returned {resp.status_code}: {resp.text}"
-                )
-            except httpx.ConnectError as e:
-                raise Exception(f"Cannot connect to {url}: {e}")
-
         if config.type == "POSTGRES":
             import psycopg2
 
@@ -368,6 +356,26 @@ class DestinationService:
                     "Postgres connection test failed",
                     extra={"error": str(e)},
                 )
+                raise Exception(f"Connection failed: {str(e)}")
+
+        if config.type == "KAFKA":
+            try:
+                client_config = {
+                    "bootstrap.servers": config.config.get("bootstrap_servers"),
+                }
+                if config.config.get("security_protocol"):
+                    client_config["security.protocol"] = config.config["security_protocol"]
+                if config.config.get("sasl_mechanism"):
+                    client_config["sasl.mechanism"] = config.config["sasl_mechanism"]
+                if config.config.get("sasl_username"):
+                    client_config["sasl.username"] = config.config["sasl_username"]
+                if config.config.get("sasl_password"):
+                    client_config["sasl.password"] = config.config["sasl_password"]
+                admin = create_admin_client(client_config)
+                admin.list_topics(timeout=10)
+                return True
+            except Exception as e:
+                logger.error("Kafka connection test failed", extra={"error": str(e)})
                 raise Exception(f"Connection failed: {str(e)}")
 
         # Default to SNOWFLAKE

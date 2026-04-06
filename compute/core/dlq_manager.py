@@ -940,7 +940,7 @@ class DLQManager:
         Uses MD5 (truncated to 16 hex chars) of the sorted JSON serialisation;
         collisions are extremely unlikely within the short TTL window.
         """
-        raw = json.dumps(record_key, sort_keys=True, default=str)
+        raw = json.dumps(record_key, sort_keys=True)
         return hashlib.md5(raw.encode()).hexdigest()[:16]
 
     def _version_key(self, destination_id: int, table_name: str, pk_hash: str) -> str:

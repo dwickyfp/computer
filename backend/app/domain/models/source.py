@@ -1,14 +1,16 @@
 """
-Source model - PostgreSQL data source configurations.
+Source model.
 
-Represents PostgreSQL database connection configurations for CDC replication.
+Represents typed source configurations. PostgreSQL source rows continue to
+store denormalized connection fields for existing operational paths, while the
+public API contract uses ``type`` + ``config``.
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Integer, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.models.base import Base, TimestampMixin
@@ -24,16 +26,16 @@ if TYPE_CHECKING:
 
 class Source(Base, TimestampMixin):
     """
-    PostgreSQL source configuration.
+    Typed source configuration.
 
-    Stores connection details for PostgreSQL databases that serve
-    as data sources for ETL pipelines with CDC replication.
+    PostgreSQL sources retain legacy columns so existing runtime logic can
+    continue to operate during the refactor. Kafka sources use ``config``.
     """
 
     __tablename__ = "sources"
     __table_args__ = (
         UniqueConstraint("name", name="uq_sources_name"),
-        {"comment": "PostgreSQL data source configurations"},
+        {"comment": "Typed source configurations"},
     )
 
     # Primary Key
@@ -53,21 +55,36 @@ class Source(Base, TimestampMixin):
         comment="Unique source name",
     )
 
-    # PostgreSQL Connection Details
-    pg_host: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="PostgreSQL host address"
+    type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="POSTGRES",
+        server_default="POSTGRES",
+        comment="Source type (POSTGRES, KAFKA)",
     )
 
-    pg_port: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=5432, comment="PostgreSQL port number"
+    config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        comment="Typed source configuration (JSON)",
     )
 
-    pg_database: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="PostgreSQL database name"
+    # PostgreSQL Connection Details (legacy storage used by the runtime)
+    pg_host: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="PostgreSQL host address"
     )
 
-    pg_username: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="PostgreSQL username"
+    pg_port: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=5432, comment="PostgreSQL port number"
+    )
+
+    pg_database: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="PostgreSQL database name"
+    )
+
+    pg_username: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="PostgreSQL username"
     )
 
     pg_password: Mapped[str | None] = mapped_column(
@@ -75,12 +92,12 @@ class Source(Base, TimestampMixin):
     )
 
     # Replication Configuration
-    publication_name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="PostgreSQL publication name for CDC"
+    publication_name: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="PostgreSQL publication name for CDC"
     )
 
-    replication_name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="Replication slot name"
+    replication_name: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="Replication slot name"
     )
 
     is_publication_enabled: Mapped[bool] = mapped_column(
@@ -152,7 +169,7 @@ class Source(Base, TimestampMixin):
         """String representation."""
         return (
             f"Source(id={self.id}, name={self.name!r}, "
-            f"host={self.pg_host!r}, database={self.pg_database!r})"
+            f"type={self.type!r})"
         )
 
     @property
@@ -163,6 +180,8 @@ class Source(Base, TimestampMixin):
         Returns asyncpg-compatible connection string.
         Note: In production, use secrets management for passwords.
         """
+        if self.type != "POSTGRES":
+            raise ValueError("Connection string is only available for POSTGRES sources")
         password_part = f":{self.pg_password}" if self.pg_password else ""
         return (
             f"postgresql://{self.pg_username}{password_part}"
@@ -176,6 +195,10 @@ class Source(Base, TimestampMixin):
 
         Returns asyncpg driver connection string.
         """
+        if self.type != "POSTGRES":
+            raise ValueError(
+                "Async connection string is only available for POSTGRES sources"
+            )
         password_part = f":{self.pg_password}" if self.pg_password else ""
         return (
             f"postgresql+asyncpg://{self.pg_username}{password_part}"

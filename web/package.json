@@ -40,7 +40,6 @@
     "@tanstack/react-table": "^8.21.3",
     "@xyflow/react": "^12.10.0",
     "ace-builds": "^1.43.6",
-    "axios": "^1.13.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "1.1.1",

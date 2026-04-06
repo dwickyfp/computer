@@ -1,6 +1,17 @@
 import { useState, useEffect } from 'react'
-import { api } from '@/repo/client'
-import { type TableWithSyncInfo, type TableSyncConfig } from '@/repo/pipelines'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  destinationsRepo,
+  type DestinationSchemaLookupParams,
+} from '@/repo/destinations'
+import {
+  pipelinesRepo,
+  type PipelinePreviewData,
+  type TableWithSyncInfo,
+  type TableSyncConfig,
+} from '@/repo/pipelines'
+import { pipelineKeys } from '@/repo/query-keys'
+import { sourcesRepo, type SourceSchemaLookupParams } from '@/repo/sources'
 import ace from 'ace-builds'
 import 'ace-builds/src-noconflict/ext-language_tools'
 import 'ace-builds/src-noconflict/mode-mysql'
@@ -20,6 +31,7 @@ import {
 } from 'lucide-react'
 import AceEditor from 'react-ace'
 import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -44,13 +56,6 @@ interface TableCustomSqlCardProps {
   pipelineId: number
 }
 
-interface PreviewData {
-  columns: string[]
-  column_types: string[]
-  data: Record<string, any>[]
-  error?: string
-}
-
 export function TableCustomSqlCard({
   table,
   open,
@@ -63,6 +68,7 @@ export function TableCustomSqlCard({
   sourceId,
   pipelineId,
 }: TableCustomSqlCardProps) {
+  const queryClient = useQueryClient()
   const [sql, setSql] = useState('')
   const [editorInstance, setEditorInstance] = useState<any>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -73,8 +79,91 @@ export function TableCustomSqlCard({
 
   // Preview State
   const [isPreviewLoading, setIsPreviewLoading] = useState(false)
-  const [previewData, setPreviewData] = useState<PreviewData | null>(null)
+  const [previewData, setPreviewData] = useState<PipelinePreviewData | null>(
+    null
+  )
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+  const [previewTaskId, setPreviewTaskId] = useState<string | null>(null)
+
+  const previewStatusQuery = useQuery({
+    queryKey: pipelineKeys.previewStatus(pipelineId, previewTaskId),
+    queryFn: () => pipelinesRepo.getPreviewStatus(pipelineId, previewTaskId!),
+    enabled: !!previewTaskId,
+    refetchInterval: 1500,
+  })
+
+  useEffect(() => {
+    if (!previewStatusQuery.data) return
+
+    const { error, result, state } = previewStatusQuery.data
+    if (state === 'SUCCESS' && result) {
+      setPreviewTaskId(null)
+      setPreviewData(result)
+      setIsPreviewLoading(false)
+      return
+    }
+
+    if (state === 'FAILURE' || state === 'REVOKED') {
+      setPreviewTaskId(null)
+      setPreviewData({
+        columns: [],
+        column_types: [],
+        data: [],
+        error:
+          error ||
+          (state === 'REVOKED'
+            ? 'Preview task was cancelled'
+            : 'Preview task failed'),
+      })
+      setIsPreviewLoading(false)
+    }
+  }, [previewStatusQuery.data])
+
+  useEffect(() => {
+    if (!previewStatusQuery.error) return
+
+    setPreviewTaskId(null)
+    setPreviewData({
+      columns: [],
+      column_types: [],
+      data: [],
+      error: getApiErrorMessage(
+        previewStatusQuery.error,
+        'Failed to poll preview status'
+      ),
+    })
+    setIsPreviewLoading(false)
+  }, [previewStatusQuery.error])
+
+  const previewMutation = useMutation({
+    mutationFn: (payload: {
+      destination_id: number
+      filter_sql?: string | null
+      source_id: number
+      sql?: string
+      table_name: string
+    }) => pipelinesRepo.startPreview(pipelineId, payload),
+    onSuccess: (response) => {
+      if ('task_id' in response) {
+        setPreviewTaskId(response.task_id)
+        return
+      }
+
+      setPreviewTaskId(null)
+      setPreviewData(response)
+      setIsPreviewLoading(false)
+    },
+    onError: (error) => {
+      setPreviewTaskId(null)
+      setPreviewData({
+        columns: [],
+        column_types: [],
+        data: [],
+        error: getApiErrorMessage(error, 'Failed to preview data'),
+      })
+      setIsPreviewLoading(false)
+    },
+  })
 
   // Export preview data to CSV with semicolon delimiter
   const exportToCSV = () => {
@@ -173,6 +262,8 @@ export function TableCustomSqlCard({
     if (!open) return
     setPreviewData(null)
     setIsPreviewOpen(false)
+    setPreviewTaskId(null)
+    setIsPreviewLoading(false)
   }, [open, currentFilterSql])
 
   // --- Configure Completer with Lazy Fetching ---
@@ -191,16 +282,15 @@ export function TableCustomSqlCard({
     const fetchDestinationSchema = async (tableName: string) => {
       if (!destinationId) return []
       try {
-        // If tableName is empty, we just want list of tables
-        const params: any = { table: tableName }
-        if (!tableName) {
-          params.scope = 'tables'
-        }
+        const params: DestinationSchemaLookupParams = tableName
+          ? { table: tableName }
+          : { scope: 'tables', table: '' }
 
-        const res = await api.get(`/destinations/${destinationId}/schema`, {
-          params,
+        const data = await queryClient.fetchQuery({
+          queryKey: pipelineKeys.destinationSchema(destinationId, params),
+          queryFn: () => destinationsRepo.getSchema(destinationId, params),
+          staleTime: 60_000,
         })
-        const data = res.data
 
         if (!tableName) {
           // Return list of table names
@@ -222,16 +312,15 @@ export function TableCustomSqlCard({
     const fetchSourceSchema = async (tableName: string) => {
       if (!sourceId) return []
       try {
-        // If tableName is empty, we just want list of tables
-        const params: any = { table: tableName }
-        if (!tableName) {
-          params.scope = 'tables'
-        }
+        const params: SourceSchemaLookupParams = tableName
+          ? { table: tableName }
+          : { scope: 'tables', table: '' }
 
-        const res = await api.get(`/sources/${sourceId}/schema`, {
-          params,
+        const data = await queryClient.fetchQuery({
+          queryKey: pipelineKeys.sourceSchema(sourceId, params),
+          queryFn: () => sourcesRepo.getSchema(sourceId, params),
+          staleTime: 60_000,
         })
-        const data = res.data
 
         if (!tableName) {
           // Return list of table names
@@ -281,6 +370,7 @@ export function TableCustomSqlCard({
     sourceId,
     sourceName,
     editorInstance,
+    queryClient,
   ])
 
   const handleSave = async (e: React.MouseEvent) => {
@@ -336,106 +426,20 @@ export function TableCustomSqlCard({
 
     setIsPreviewLoading(true)
     setPreviewData(null)
+    setPreviewTaskId(null)
     setIsPreviewOpen(true) // Open popover immediately to show loading state
 
     // Get filter_sql from sync_config (single or first of array)
     const syncConfig = (table as any)?.sync_config ?? table?.sync_configs?.[0]
     const filterSql = syncConfig?.filter_sql || null
 
-    try {
-      const res = await api.post(`/pipelines/${pipelineId}/preview`, {
-        sql: sql || undefined,
-        source_id: sourceId,
-        destination_id: destinationId,
-        table_name: table.table_name,
-        filter_sql: filterSql,
-      })
-
-      // Check if async worker mode (returns task_id)
-      if (res.data?.task_id) {
-        await pollPreviewTask(res.data.task_id)
-      } else {
-        // Sync mode - result returned directly
-        setPreviewData(res.data)
-        setIsPreviewLoading(false)
-      }
-    } catch (e: any) {
-      setPreviewData({
-        columns: [],
-        column_types: [],
-        data: [],
-        error:
-          e.response?.data?.detail || e.message || 'Failed to preview data',
-      })
-      setIsPreviewLoading(false)
-    }
-  }
-
-  /**
-   * Poll a preview task until it completes or fails.
-   * Uses exponential backoff: 500ms -> 1s -> 2s -> ... (max 5s)
-   */
-  const pollPreviewTask = async (taskId: string) => {
-    let delay = 500
-    const maxDelay = 5000
-    const maxAttempts = 60 // ~2 minutes max
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const res = await api.get(`/pipelines/${pipelineId}/preview/${taskId}`)
-        const { state, result, error } = res.data
-
-        if (state === 'SUCCESS' && result) {
-          setPreviewData(result)
-          setIsPreviewLoading(false)
-          return
-        }
-
-        if (state === 'FAILURE') {
-          setPreviewData({
-            columns: [],
-            column_types: [],
-            data: [],
-            error: error || 'Preview task failed',
-          })
-          setIsPreviewLoading(false)
-          return
-        }
-
-        if (state === 'REVOKED') {
-          setPreviewData({
-            columns: [],
-            column_types: [],
-            data: [],
-            error: 'Preview task was cancelled',
-          })
-          setIsPreviewLoading(false)
-          return
-        }
-
-        // Still running (PENDING, STARTED, PROGRESS) — wait and retry
-        await new Promise((resolve) => setTimeout(resolve, delay))
-        delay = Math.min(delay * 1.5, maxDelay)
-      } catch (e: any) {
-        setPreviewData({
-          columns: [],
-          column_types: [],
-          data: [],
-          error: e.response?.data?.detail || 'Failed to poll preview status',
-        })
-        setIsPreviewLoading(false)
-        return
-      }
-    }
-
-    // Timed out
-    setPreviewData({
-      columns: [],
-      column_types: [],
-      data: [],
-      error: 'Preview timed out. Please try again.',
+    previewMutation.mutate({
+      sql: sql || undefined,
+      source_id: sourceId,
+      destination_id: destinationId,
+      table_name: table.table_name,
+      filter_sql: filterSql,
     })
-    setIsPreviewLoading(false)
   }
 
   const handleClose = (e: React.MouseEvent) => {

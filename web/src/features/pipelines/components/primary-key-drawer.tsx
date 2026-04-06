@@ -1,9 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
+import { type TableSyncConfig, type ColumnSchema } from '@/repo/pipelines'
+import {
+  X,
+  Key,
+  Loader2,
+  Plus,
+  Pencil,
+  Trash2,
+  CheckCircle2,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { X, Key, Loader2, Plus, Pencil, Trash2, CheckCircle2 } from 'lucide-react'
-import { toast } from 'sonner'
-import { type TableSyncConfig, type ColumnSchema } from '@/repo/pipelines'
 
 interface PrimaryKeyDrawerProps {
   syncConfig: TableSyncConfig
@@ -79,14 +88,18 @@ export function PrimaryKeyDrawer({
 
   const handleSaveEdit = (index: number) => {
     const trimmedValue = editingValue.trim()
-    
+
     if (!trimmedValue) {
       toast.error('Key name cannot be empty')
       return
     }
 
     // Check if key already exists in other positions (case-insensitive)
-    if (keys.some((k, i) => i !== index && k.toLowerCase() === trimmedValue.toLowerCase())) {
+    if (
+      keys.some(
+        (k, i) => i !== index && k.toLowerCase() === trimmedValue.toLowerCase()
+      )
+    ) {
       toast.error('Key already exists')
       return
     }
@@ -110,8 +123,8 @@ export function PrimaryKeyDrawer({
       await onSave(keysString)
       toast.success('Primary keys updated successfully')
       onClose()
-    } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to update primary keys')
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Failed to update primary keys'))
     } finally {
       setSaving(false)
     }
@@ -130,7 +143,10 @@ export function PrimaryKeyDrawer({
     }
   }
 
-  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
+  const handleEditKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    index: number
+  ) => {
     if (e.key === 'Enter') {
       e.preventDefault()
       handleSaveEdit(index)
@@ -140,81 +156,86 @@ export function PrimaryKeyDrawer({
   }
 
   // Filter columns based on input for suggestions
-  const filteredColumns = columns.filter(
-    (col) =>
-      col.column_name.toLowerCase().includes(keyInput.toLowerCase()) &&
-      !keys.includes(col.column_name)
-  ).slice(0, 5)
+  const filteredColumns = columns
+    .filter(
+      (col) =>
+        col.column_name.toLowerCase().includes(keyInput.toLowerCase()) &&
+        !keys.includes(col.column_name)
+    )
+    .slice(0, 5)
 
   if (!open) return null
 
   return (
     <div
-      className="fixed top-2 bottom-2 left-[520px] flex w-[600px] flex-col rounded-2xl border bg-background shadow-2xl animate-in duration-300 slide-in-from-left-4"
+      className='fixed top-2 bottom-2 left-[520px] flex w-[600px] animate-in flex-col rounded-2xl border bg-background shadow-2xl duration-300 slide-in-from-left-4'
       style={{ zIndex: 100 }}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
-      <div className="flex items-center justify-between border-b px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-950/50">
-            <Key className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+      <div className='flex items-center justify-between border-b px-6 py-4'>
+        <div className='flex items-center gap-3'>
+          <div className='flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-950/50'>
+            <Key className='h-5 w-5 text-amber-600 dark:text-amber-400' />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">Primary Key Configuration</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className='text-lg font-semibold'>Primary Key Configuration</h2>
+            <p className='text-sm text-muted-foreground'>
               {syncConfig.table_name} → {syncConfig.table_name_target}
             </p>
           </div>
         </div>
         <Button
-          variant="ghost"
-          size="icon"
+          variant='ghost'
+          size='icon'
           onClick={onClose}
-          className="h-8 w-8 rounded-lg"
+          className='h-8 w-8 rounded-lg'
         >
-          <X className="h-4 w-4" />
+          <X className='h-4 w-4' />
         </Button>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className='flex-1 overflow-y-auto p-6'>
         {/* Info Box */}
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20 p-3">
-          <div className="flex gap-2 text-xs text-amber-800 dark:text-amber-200">
-            <Key className="h-4 w-4 flex-shrink-0 mt-0.5" />
+        <div className='mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20'>
+          <div className='flex gap-2 text-xs text-amber-800 dark:text-amber-200'>
+            <Key className='mt-0.5 h-4 w-4 flex-shrink-0' />
             <div>
-              <p className="font-medium mb-1">Custom Primary Keys</p>
-              <p className="text-amber-700 dark:text-amber-300">
-                Leave empty to use default primary key detection. 
-                Add column names manually to create a composite key for the MERGE INTO operation.
+              <p className='mb-1 font-medium'>Custom Primary Keys</p>
+              <p className='text-amber-700 dark:text-amber-300'>
+                Leave empty to use default primary key detection. Add column
+                names manually to create a composite key for the MERGE INTO
+                operation.
               </p>
             </div>
           </div>
         </div>
 
         {/* Input Section */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-medium">Add Primary Key Column</label>
+        <div className='mb-6'>
+          <div className='mb-2 flex items-center justify-between'>
+            <label className='text-sm font-medium'>
+              Add Primary Key Column
+            </label>
             {keys.length > 0 && (
               <Button
-                variant="ghost"
-                size="sm"
+                variant='ghost'
+                size='sm'
                 onClick={handleClear}
-                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                className='h-7 text-xs text-muted-foreground hover:text-foreground'
               >
                 Clear all
               </Button>
             )}
           </div>
-          
-          <div className="relative tag-input-container">
-            <div className="flex gap-2">
+
+          <div className='tag-input-container relative'>
+            <div className='flex gap-2'>
               <Input
                 ref={inputRef}
-                placeholder="Enter column name (e.g., id, user_id)"
+                placeholder='Enter column name (e.g., id, user_id)'
                 value={keyInput}
                 onChange={(e) => {
                   setKeyInput(e.target.value)
@@ -222,24 +243,24 @@ export function PrimaryKeyDrawer({
                 }}
                 onKeyDown={handleKeyDown}
                 onFocus={() => setShowSuggestions(keyInput.length > 0)}
-                className="flex-1"
+                className='flex-1'
               />
               <Button
                 onClick={handleAddKey}
                 disabled={!keyInput.trim()}
-                size="sm"
-                className="gap-1.5"
+                size='sm'
+                className='gap-1.5'
               >
-                <Plus className="h-4 w-4" />
+                <Plus className='h-4 w-4' />
                 Add
               </Button>
             </div>
 
             {/* Column Suggestions */}
             {showSuggestions && filteredColumns.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-md border bg-popover shadow-md">
-                <div className="p-1">
-                  <div className="text-xs text-muted-foreground px-2 py-1">
+              <div className='absolute top-full right-0 left-0 z-50 mt-1 rounded-md border bg-popover shadow-md'>
+                <div className='p-1'>
+                  <div className='px-2 py-1 text-xs text-muted-foreground'>
                     Suggestions from table columns:
                   </div>
                   {filteredColumns.map((col) => (
@@ -250,10 +271,12 @@ export function PrimaryKeyDrawer({
                         setShowSuggestions(false)
                         inputRef.current?.focus()
                       }}
-                      className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm"
+                      className='w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent'
                     >
-                      <div className="font-mono font-medium">{col.column_name}</div>
-                      <div className="text-xs text-muted-foreground">
+                      <div className='font-mono font-medium'>
+                        {col.column_name}
+                      </div>
+                      <div className='text-xs text-muted-foreground'>
                         {col.data_type}
                       </div>
                     </button>
@@ -266,17 +289,17 @@ export function PrimaryKeyDrawer({
 
         {/* Keys List */}
         {keys.length > 0 ? (
-          <div className="space-y-2">
-            <div className="text-sm font-medium text-muted-foreground mb-2">
+          <div className='space-y-2'>
+            <div className='mb-2 text-sm font-medium text-muted-foreground'>
               Primary Key Columns ({keys.length})
             </div>
             {keys.map((key, index) => (
               <div
                 key={index}
-                className="flex items-center gap-2 p-3 rounded-lg border bg-card hover:shadow-sm transition-all group"
+                className='group flex items-center gap-2 rounded-lg border bg-card p-3 transition-all hover:shadow-sm'
               >
-                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-100 dark:bg-amber-900/30 flex-shrink-0">
-                  <span className="text-xs font-semibold text-amber-800 dark:text-amber-400">
+                <div className='flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-amber-100 dark:bg-amber-900/30'>
+                  <span className='text-xs font-semibold text-amber-800 dark:text-amber-400'>
                     {index + 1}
                   </span>
                 </div>
@@ -288,49 +311,49 @@ export function PrimaryKeyDrawer({
                       value={editingValue}
                       onChange={(e) => setEditingValue(e.target.value)}
                       onKeyDown={(e) => handleEditKeyDown(e, index)}
-                      className="flex-1 h-8"
+                      className='h-8 flex-1'
                     />
                     <Button
-                      variant="ghost"
-                      size="icon"
+                      variant='ghost'
+                      size='icon'
                       onClick={() => handleSaveEdit(index)}
-                      className="h-8 w-8"
+                      className='h-8 w-8'
                     >
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      <CheckCircle2 className='h-4 w-4 text-green-600' />
                     </Button>
                     <Button
-                      variant="ghost"
-                      size="icon"
+                      variant='ghost'
+                      size='icon'
                       onClick={handleCancelEdit}
-                      className="h-8 w-8"
+                      className='h-8 w-8'
                     >
-                      <X className="h-4 w-4" />
+                      <X className='h-4 w-4' />
                     </Button>
                   </>
                 ) : (
                   <>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-mono text-sm font-medium truncate">
+                    <div className='min-w-0 flex-1'>
+                      <div className='truncate font-mono text-sm font-medium'>
                         {key}
                       </div>
                     </div>
                     <Button
-                      variant="ghost"
-                      size="icon"
+                      variant='ghost'
+                      size='icon'
                       onClick={() => handleStartEdit(index)}
-                      className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Edit"
+                      className='h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100'
+                      title='Edit'
                     >
-                      <Pencil className="h-3.5 w-3.5" />
+                      <Pencil className='h-3.5 w-3.5' />
                     </Button>
                     <Button
-                      variant="ghost"
-                      size="icon"
+                      variant='ghost'
+                      size='icon'
                       onClick={() => handleDeleteKey(index)}
-                      className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Delete"
+                      className='h-8 w-8 text-red-500 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-50 hover:text-red-600'
+                      title='Delete'
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className='h-3.5 w-3.5' />
                     </Button>
                   </>
                 )}
@@ -338,10 +361,10 @@ export function PrimaryKeyDrawer({
             ))}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center py-12 text-center border-2 border-dashed rounded-lg">
-            <Key className="h-8 w-8 text-muted-foreground mb-2" />
-            <p className="text-sm font-medium">No primary keys configured</p>
-            <p className="text-xs text-muted-foreground mt-1">
+          <div className='flex flex-col items-center justify-center rounded-lg border-2 border-dashed py-12 text-center'>
+            <Key className='mb-2 h-8 w-8 text-muted-foreground' />
+            <p className='text-sm font-medium'>No primary keys configured</p>
+            <p className='mt-1 text-xs text-muted-foreground'>
               Add column names above to create custom merge keys
             </p>
           </div>
@@ -349,8 +372,8 @@ export function PrimaryKeyDrawer({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between border-t px-6 py-4 bg-muted/30">
-        <div className="text-xs text-muted-foreground">
+      <div className='flex items-center justify-between border-t bg-muted/30 px-6 py-4'>
+        <div className='text-xs text-muted-foreground'>
           {keys.length === 0 ? (
             'Default key detection will be used'
           ) : (
@@ -360,12 +383,12 @@ export function PrimaryKeyDrawer({
             </>
           )}
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={onClose} disabled={saving}>
+        <div className='flex gap-2'>
+          <Button variant='outline' onClick={onClose} disabled={saving}>
             Cancel
           </Button>
           <Button onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {saving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             Save Keys
           </Button>
         </div>

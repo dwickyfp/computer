@@ -19,13 +19,11 @@ export function PipelineStatusSwitch({ pipeline }: PipelineStatusSwitchProps) {
   const queryClient = useQueryClient()
   const isRunning = pipeline.status === 'START' || pipeline.status === 'REFRESH'
 
-  // Check if source has required configurations
-  // ROSETTA source pipelines don't use PostgreSQL publication/replication slots
-  const isRosettaSource = pipeline.source_type === 'ROSETTA'
+  const sourceType = pipeline.source?.type || pipeline.source_type || 'POSTGRES'
   const isPublicationEnabled = pipeline.source?.is_publication_enabled ?? false
   const isReplicationEnabled = pipeline.source?.is_replication_enabled ?? false
   const canActivate =
-    isRosettaSource || (isPublicationEnabled && isReplicationEnabled)
+    sourceType === 'POSTGRES' ? isPublicationEnabled && isReplicationEnabled : true
 
   // Optimistic state for immediate UI feedback
   const [optimisticState, setOptimisticState] = useState<boolean | null>(null)

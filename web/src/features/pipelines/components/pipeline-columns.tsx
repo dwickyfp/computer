@@ -42,12 +42,7 @@ export const pipelineColumns: ColumnDef<Pipeline>[] = [
     id: 'pipelines',
     header: 'Pipelines',
     cell: ({ row }) => {
-      const isRosettaSource = row.original.source_type === 'ROSETTA'
-      const sourceName =
-        row.original.source?.name ||
-        (isRosettaSource
-          ? (row.original.chain_client?.name ?? 'Rosetta Chain')
-          : 'Unknown Source')
+      const sourceName = row.original.source?.name || 'Unknown Source'
       const destinations = row.original.destinations || []
       const destCount = destinations.length
       const firstDestName = destinations[0]?.destination?.name
@@ -198,13 +193,11 @@ function PipelineStatusSwitch({ pipeline }: { pipeline: Pipeline }) {
   const queryClient = useQueryClient()
   const isRunning = pipeline.status === 'START' || pipeline.status === 'REFRESH'
 
-  // Check if source has required configurations
-  // ROSETTA source pipelines don't use PostgreSQL publication/replication slots
-  const isRosettaSource = pipeline.source_type === 'ROSETTA'
+  const sourceType = pipeline.source?.type || pipeline.source_type || 'POSTGRES'
   const isPublicationEnabled = pipeline.source?.is_publication_enabled ?? false
   const isReplicationEnabled = pipeline.source?.is_replication_enabled ?? false
   const canActivate =
-    isRosettaSource || (isPublicationEnabled && isReplicationEnabled)
+    sourceType === 'POSTGRES' ? isPublicationEnabled && isReplicationEnabled : true
 
   const { mutate, isPending } = useMutation({
     mutationFn: async (checked: boolean) => {

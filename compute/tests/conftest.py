@@ -34,7 +34,6 @@ def pytest_configure(config):
     )
     os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
     os.environ.setdefault("ROSETTA_TIMEZONE", "Asia/Jakarta")
-    os.environ.setdefault("CHAIN_ENABLED", "true")
     os.environ.setdefault("PIPELINE_POOL_MAX_CONN", "5")
 
     # Stub heavy JVM/Java dependencies so importing engine/event_handler modules
@@ -107,6 +106,15 @@ def make_source(**overrides) -> dict:
     base = dict(
         id=1,
         name="test-source",
+        type="POSTGRES",
+        config={
+            "host": "localhost",
+            "port": 5434,
+            "database": "sourcedb",
+            "username": "replication_user",
+            "publication_name": "dbz_publication",
+            "replication_name": "dbz_slot",
+        },
         pg_host="localhost",
         pg_port=5434,
         pg_database="sourcedb",
@@ -149,8 +157,6 @@ def make_pipeline(**overrides) -> object:
         name="test-pipeline",
         source_id=1,
         status="START",
-        source_type="POSTGRES",
-        chain_client_id=None,
         source=None,
         destinations=[],
     )

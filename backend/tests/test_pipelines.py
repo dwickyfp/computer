@@ -27,7 +27,7 @@ from app.core.exceptions import (
     PipelineOperationError,
 )
 
-from tests.conftest import make_pipeline_ns, make_source_ns
+from conftest import make_pipeline_ns, make_source_ns
 
 
 # ─── Fixture ─────────────────────────────────────────────────────────────────
@@ -50,14 +50,7 @@ def client(mock_svc):
 
 POSTGRES_PAYLOAD = {
     "name": "prod-to-snowflake",
-    "source_type": "POSTGRES",
     "source_id": 1,
-}
-
-ROSETTA_PAYLOAD = {
-    "name": "rosetta-pipeline",
-    "source_type": "ROSETTA",
-    "chain_client_id": 2,
 }
 
 
@@ -76,14 +69,6 @@ class TestCreatePipeline:
         data = resp.json()
         assert data["name"] == "prod-to-snowflake"
         assert data["id"] == 1
-
-    def test_success_rosetta_source_type(self, client, mock_svc):
-        mock_svc.create_pipeline.return_value = make_pipeline_ns(
-            name="rosetta-pipeline", source_type="ROSETTA", source_id=None
-        )
-        resp = client.post("/api/v1/pipelines", json=ROSETTA_PAYLOAD)
-        assert resp.status_code == 201
-        assert resp.json()["source_type"] == "ROSETTA"
 
     def test_name_lowercased(self, client, mock_svc):
         mock_svc.create_pipeline.return_value = make_pipeline_ns(
@@ -112,37 +97,20 @@ class TestCreatePipeline:
         resp = client.post("/api/v1/pipelines", json=payload)
         assert resp.status_code == 422
 
-    def test_postgres_requires_source_id(self, client, mock_svc):
-        """source_type=POSTGRES without source_id must fail validation."""
-        payload = {"name": "bad-pipeline", "source_type": "POSTGRES"}
+    def test_pipeline_requires_source_id(self, client, mock_svc):
+        payload = {"name": "bad-pipeline"}
         resp = client.post("/api/v1/pipelines", json=payload)
         assert resp.status_code == 422
         body = resp.json()
-        # Validation detail should mention source_id
         assert any("source_id" in str(err) for err in body.get("details", []))
 
-    def test_rosetta_allows_null_source_id(self, client, mock_svc):
-        """source_type=ROSETTA source_id is nullable."""
-        mock_svc.create_pipeline.return_value = make_pipeline_ns(
-            name="rosetta-pipeline", source_type="ROSETTA", source_id=None
-        )
-        payload = {"name": "rosetta-pipeline", "source_type": "ROSETTA"}
-        resp = client.post("/api/v1/pipelines", json=payload)
-        assert resp.status_code == 201
-
-    def test_invalid_source_type_returns_422(self, client, mock_svc):
-        payload = {**POSTGRES_PAYLOAD, "source_type": "KAFKA"}
-        resp = client.post("/api/v1/pipelines", json=payload)
-        assert resp.status_code == 422
-
     def test_response_includes_nested_source(self, client, mock_svc):
-        mock_svc.create_pipeline.return_value = make_pipeline_ns(
-            source=make_source_ns(id=1, name="my-source")
-        )
+        mock_svc.create_pipeline.return_value = make_pipeline_ns(source=make_source_ns(id=1, name="my-source"))
         resp = client.post("/api/v1/pipelines", json=POSTGRES_PAYLOAD)
         assert resp.status_code == 201
         data = resp.json()
         assert data["source"]["name"] == "my-source"
+        assert data["source"]["type"] == "POSTGRES"
 
     def test_response_includes_pipeline_metadata(self, client, mock_svc):
         mock_svc.create_pipeline.return_value = make_pipeline_ns()
@@ -216,7 +184,7 @@ class TestGetPipeline:
             "id",
             "name",
             "status",
-            "source_type",
+            "source_id",
             "destinations",
             "created_at",
         ):

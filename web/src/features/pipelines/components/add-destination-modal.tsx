@@ -3,11 +3,11 @@ import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { chainRepo } from '@/repo/chains'
 import { destinationsRepo } from '@/repo/destinations'
 import { pipelinesRepo } from '@/repo/pipelines'
-import { Check, Database, Search, Snowflake, Unplug } from 'lucide-react'
+import { Check, Database, Search, Snowflake, RadioTower } from 'lucide-react'
 import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -65,8 +65,8 @@ export function AddDestinationModal({
       setSelectedDestId(null)
       toast.success('Destination added successfully')
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to add destination')
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Failed to add destination'))
     },
   })
 
@@ -76,27 +76,13 @@ export function AddDestinationModal({
     }
   }
 
-  // When the modal opens, ensure every chain client has a linked ROSETTA
-  // destination so it appears in the list without manual setup.
   useEffect(() => {
-    if (open) {
-      chainRepo
-        .syncDestinations()
-        .then(({ created }) => {
-          if (created > 0) {
-            // New destinations were created — refresh the list
-            queryClient.invalidateQueries({ queryKey: ['destinations'] })
-          }
-        })
-        .catch(() => {
-          // Non-fatal — destinations list will still show whatever exists
-        })
-    } else {
+    if (!open) {
       form.reset()
       setSearchQuery('')
       setSelectedDestId(null)
     }
-  }, [open, form, queryClient])
+  }, [open, form])
 
   // Filter out already added destinations and apply search
   const availableDestinations = destinations?.destinations
@@ -111,8 +97,8 @@ export function AddDestinationModal({
     if (type.toLowerCase().includes('snowflake')) {
       return <Snowflake className='h-5 w-5 text-blue-500' />
     }
-    if (type.toLowerCase().includes('rosetta')) {
-      return <Unplug className='h-5 w-5 text-purple-500' />
+    if (type.toLowerCase().includes('kafka')) {
+      return <RadioTower className='h-5 w-5 text-orange-500' />
     }
     return <Database className='h-5 w-5 text-muted-foreground' />
   }

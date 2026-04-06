@@ -1,12 +1,11 @@
-import { useEffect } from 'react'
 import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
-import { catalogRepo } from '@/repo/catalog'
 import { pipelinesRepo } from '@/repo/pipelines'
 import { sourcesRepo } from '@/repo/sources'
 import { toast } from 'sonner'
+import { getApiErrorMessage } from '@/lib/handle-server-error'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -34,36 +33,13 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 
-const formSchema = z
-  .object({
-    name: z
-      .string()
-      .min(1, 'Name is required')
-      .regex(
-        /^[a-z0-9-_]+$/,
-        'Name must be alphanumeric, hyphen, or underscore'
-      ),
-    source_type: z.enum(['POSTGRES', 'ROSETTA', 'CATALOG_TABLE']),
-    source_id: z.string().optional(),
-    catalog_database_id: z.string().optional(),
-    catalog_table_id: z.string().optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.source_type === 'POSTGRES' && !data.source_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Source is required',
-        path: ['source_id'],
-      })
-    }
-    if (data.source_type === 'CATALOG_TABLE' && !data.catalog_table_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Catalog table is required',
-        path: ['catalog_table_id'],
-      })
-    }
-  })
+const formSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .regex(/^[a-z0-9-_]+$/, 'Name must be alphanumeric, hyphen, or underscore'),
+  source_id: z.string().min(1, 'Source is required'),
+})
 
 interface PipelineCreateDrawerProps {
   open: boolean
@@ -79,23 +55,10 @@ export function PipelineCreateDrawer({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: '',
-      source_type: 'POSTGRES',
       source_id: '',
-      catalog_database_id: '',
-      catalog_table_id: '',
     },
   })
 
-  const sourceType = form.watch('source_type')
-
-  // Reset dependent fields when source type changes
-  useEffect(() => {
-    form.setValue('source_id', '')
-    form.setValue('catalog_database_id', '')
-    form.setValue('catalog_table_id', '')
-  }, [sourceType, form])
-
-  // Fetch sources and existing pipelines
   const { data: sources } = useQuery({
     queryKey: ['sources'],
     queryFn: sourcesRepo.getAll,
@@ -104,47 +67,27 @@ export function PipelineCreateDrawer({
     queryKey: ['pipelines'],
     queryFn: pipelinesRepo.getAll,
   })
+
   const usedSourceIds = new Set(
     pipelines?.pipelines.map((p) => p.source_id).filter(Boolean)
   )
 
   const { mutate, isPending } = useMutation({
-    mutationFn: (values: z.infer<typeof formSchema>) => {
-      const payload: any = {
+    mutationFn: (values: z.infer<typeof formSchema>) =>
+      pipelinesRepo.create({
         name: values.name,
-        source_type: values.source_type,
-      }
-      if (values.source_type === 'POSTGRES') {
-        payload.source_id = parseInt(values.source_id!)
-      } else if (values.source_type === 'CATALOG_TABLE') {
-        payload.catalog_table_id = parseInt(values.catalog_table_id!)
-      } else if (values.source_type === 'ROSETTA') {
-        if (values.catalog_database_id) {
-          payload.catalog_database_id = parseInt(values.catalog_database_id)
-        }
-      }
-      return pipelinesRepo.create(payload)
-    },
+        source_id: parseInt(values.source_id),
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['pipelines'] })
       setOpen(false)
       form.reset()
       toast.success('Pipeline created successfully')
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to create pipeline')
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Failed to create pipeline'))
     },
   })
-
-  function onSubmit(values: z.infer<typeof formSchema>) {
-    mutate(values)
-  }
-
-  useEffect(() => {
-    if (!open) {
-      form.reset()
-    }
-  }, [open, form])
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -153,12 +96,13 @@ export function PipelineCreateDrawer({
           <SheetHeader>
             <SheetTitle>Create Pipeline</SheetTitle>
             <SheetDescription>
-              Create a new pipeline to move data from source to destination.
+              Create a new pipeline from a registered PostgreSQL or Kafka
+              source.
             </SheetDescription>
           </SheetHeader>
           <Form {...form}>
             <form
-              onSubmit={form.handleSubmit(onSubmit)}
+              onSubmit={form.handleSubmit((values) => mutate(values))}
               className='space-y-4 p-4'
             >
               <FormField
@@ -177,24 +121,30 @@ export function PipelineCreateDrawer({
 
               <FormField
                 control={form.control}
-                name='source_type'
+                name='source_id'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Source Type</FormLabel>
+                    <FormLabel>Source</FormLabel>
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
                     >
                       <FormControl>
                         <SelectTrigger className='w-full'>
-                          <SelectValue placeholder='Select source type' />
+                          <SelectValue placeholder='Select a source' />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value='POSTGRES'>
-                          PostgreSQL (CDC)
-                        </SelectItem>
-                        <SelectItem value='ROSETTA'>Rosetta Chain</SelectItem>
+                        {sources?.sources.map((source) => (
+                          <SelectItem
+                            key={source.id}
+                            value={source.id.toString()}
+                            disabled={usedSourceIds.has(source.id)}
+                          >
+                            {source.name} [{source.type}]
+                            {usedSourceIds.has(source.id) && ' (Already Used)'}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -202,203 +152,18 @@ export function PipelineCreateDrawer({
                 )}
               />
 
-              {sourceType === 'POSTGRES' && (
-                <FormField
-                  control={form.control}
-                  name='source_id'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Source</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger className='w-full'>
-                            <SelectValue placeholder='Select a source' />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {sources?.sources.map((source) => (
-                            <SelectItem
-                              key={source.id}
-                              value={source.id.toString()}
-                              disabled={usedSourceIds.has(source.id)}
-                            >
-                              {source.name}{' '}
-                              {usedSourceIds.has(source.id) && '(Already Used)'}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              {sourceType === 'ROSETTA' && (
-                <>
-                  <FormField
-                    control={form.control}
-                    name='catalog_database_id'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>My Database</FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger className='w-full'>
-                              <SelectValue placeholder='Select a database' />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <CatalogDatabaseSelectOptions />
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              )}
-
-              {sourceType === 'CATALOG_TABLE' && (
-                <>
-                  <FormField
-                    control={form.control}
-                    name='catalog_database_id'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Catalog Database</FormLabel>
-                        <Select
-                          onValueChange={(val) => {
-                            field.onChange(val)
-                            form.setValue('catalog_table_id', '') // Reset table when DB changes
-                          }}
-                          defaultValue={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger className='w-full'>
-                              <SelectValue placeholder='Select a database' />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <CatalogDatabaseSelectOptions />
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {form.watch('catalog_database_id') && (
-                    <FormField
-                      control={form.control}
-                      name='catalog_table_id'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Catalog Table</FormLabel>
-                          <Select
-                            onValueChange={field.onChange}
-                            defaultValue={field.value}
-                          >
-                            <FormControl>
-                              <SelectTrigger className='w-full'>
-                                <SelectValue placeholder='Select a table' />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <CatalogTableSelectOptions
-                                dbId={parseInt(
-                                  form.watch('catalog_database_id')!
-                                )}
-                              />
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
-                </>
-              )}
-
               <SheetFooter>
-                <Button type='submit' disabled={isPending}>
-                  {isPending ? 'Creating...' : 'Create'}
-                </Button>
                 <SheetClose asChild>
                   <Button variant='outline'>Cancel</Button>
                 </SheetClose>
+                <Button type='submit' disabled={isPending}>
+                  {isPending ? 'Creating...' : 'Create'}
+                </Button>
               </SheetFooter>
             </form>
           </Form>
         </div>
       </SheetContent>
     </Sheet>
-  )
-}
-
-function CatalogDatabaseSelectOptions() {
-  const { data: databases, isLoading } = useQuery({
-    queryKey: ['catalog-databases'],
-    queryFn: catalogRepo.getDatabases,
-  })
-
-  if (isLoading)
-    return (
-      <SelectItem value='loading' disabled>
-        Loading...
-      </SelectItem>
-    )
-  if (!databases?.length)
-    return (
-      <SelectItem value='empty' disabled>
-        No databases found
-      </SelectItem>
-    )
-
-  return (
-    <>
-      {databases.map((db: any) => (
-        <SelectItem key={db.id} value={db.id.toString()}>
-          {db.name}
-        </SelectItem>
-      ))}
-    </>
-  )
-}
-
-function CatalogTableSelectOptions({ dbId }: { dbId: number }) {
-  const { data: tables, isLoading } = useQuery({
-    queryKey: ['catalog-tables', dbId],
-    queryFn: () => catalogRepo.getTables(dbId),
-    enabled: !!dbId,
-  })
-
-  if (isLoading)
-    return (
-      <SelectItem value='loading' disabled>
-        Loading...
-      </SelectItem>
-    )
-  if (!tables?.length)
-    return (
-      <SelectItem value='empty' disabled>
-        No tables found
-      </SelectItem>
-    )
-
-  return (
-    <>
-      {tables.map((tbl: any) => (
-        <SelectItem key={tbl.id} value={tbl.id.toString()}>
-          {tbl.table_name}
-        </SelectItem>
-      ))}
-    </>
   )
 }

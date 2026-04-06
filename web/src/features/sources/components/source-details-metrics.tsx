@@ -40,6 +40,7 @@ export function SourceDetailsMetrics({
     isPublicationLoading,
     isReplicationLoading
 }: SourceDetailsMetricsProps) {
+    const isKafka = source.type === 'KAFKA'
     const isHealthy = data?.status?.toLowerCase() === 'active' || data?.status?.toLowerCase() === 'streaming'
     const lagBytes = data?.replication_lag_bytes || 0
 
@@ -97,6 +98,45 @@ export function SourceDetailsMetrics({
                 </div>
                 {label && <span className="text-[11px] text-muted-foreground leading-tight">{label}</span>}
                 {trend && <span className="text-[11px] text-muted-foreground mt-0.5 leading-tight">{trend}</span>}
+            </div>
+        )
+    }
+
+    if (isKafka) {
+        return (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+                <Panel title="Source Type" className="col-span-1">
+                    <Stat
+                        value="KAFKA"
+                        icon={Database}
+                        status="success"
+                        label="Plain JSON topics"
+                    />
+                </Panel>
+
+                <Panel title="Bootstrap Servers" className="col-span-1">
+                    <Stat
+                        value={source.bootstrap_servers || 'N/A'}
+                        icon={Server}
+                        label="Broker connection"
+                    />
+                </Panel>
+
+                <Panel title="Topic Prefix" className="col-span-1">
+                    <Stat
+                        value={source.topic_prefix || 'N/A'}
+                        icon={Layers}
+                        label="Registered namespace"
+                    />
+                </Panel>
+
+                <Panel title="Consumer Group" className="col-span-1">
+                    <Stat
+                        value={source.group_id || 'N/A'}
+                        icon={Activity}
+                        label={`System managed, offset reset: ${source.auto_offset_reset || 'earliest'}`}
+                    />
+                </Panel>
             </div>
         )
     }

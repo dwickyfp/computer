@@ -279,7 +279,7 @@ class BackfillManager:
                 # once we commit.
                 cursor.execute(
                     """
-                    SELECT qb.*, s.pg_host, s.pg_port, s.pg_database,
+                    SELECT qb.*, s.type AS source_type, s.pg_host, s.pg_port, s.pg_database,
                            s.pg_username, s.pg_password
                     FROM queue_backfill_data qb
                     JOIN sources s ON qb.source_id = s.id
@@ -393,6 +393,9 @@ class BackfillManager:
         job_id = job["id"]
         table_name = job["table_name"]
         filter_sql = job.get("filter_sql")
+
+        if str(job.get("source_type", "POSTGRES")).upper() != "POSTGRES":
+            raise ValueError("Backfill is only supported for POSTGRES sources")
 
         # Get checkpoint for resume
         start_count = job.get("count_record", 0) or 0
@@ -722,7 +725,7 @@ class BackfillManager:
         from core.models import DestinationType
         from destinations.snowflake import SnowflakeDestination
         from destinations.postgresql import PostgreSQLDestination
-        from destinations.rosetta import RosettaDestination
+        from destinations.kafka import KafkaDestination
 
         cache = {}
         try:
@@ -776,10 +779,8 @@ class BackfillManager:
                         dest = PostgreSQLDestination(
                             destination_config, source_config=source_config
                         )
-                    elif (
-                        destination_config.type.upper() == DestinationType.ROSETTA.value
-                    ):
-                        dest = RosettaDestination(destination_config)
+                    elif destination_config.type.upper() == DestinationType.KAFKA.value:
+                        dest = KafkaDestination(destination_config)
                     else:
                         logger.warning(
                             f"Unsupported destination type: {destination_config.type}"
@@ -872,7 +873,7 @@ class BackfillManager:
         from destinations.base import CDCRecord
         from destinations.snowflake import SnowflakeDestination
         from destinations.postgresql import PostgreSQLDestination
-        from destinations.rosetta import RosettaDestination
+        from destinations.kafka import KafkaDestination
         from decimal import Decimal
         from datetime import date, datetime
         import json
@@ -926,13 +927,19 @@ class BackfillManager:
                         written = dest.write_batch(cdc_records, table_sync)
 
                         if written > 0:
+                            monitoring_table_name = (
+                                f"LANDING_{table_name.upper()}"
+                                if dest._config.type.upper()
+                                == DestinationType.SNOWFLAKE.value
+                                else table_sync.table_name_target
+                            )
                             try:
                                 DataFlowRepository.increment_count(
                                     pipeline_id=pipeline_id,
                                     pipeline_destination_id=pd_id,
                                     source_id=source_id,
                                     table_sync_id=table_sync.id,
-                                    table_name=f"LANDING_{table_name.upper()}",
+                                    table_name=monitoring_table_name,
                                     count=written,
                                 )
                             except Exception as monitoring_error:
@@ -1013,10 +1020,8 @@ class BackfillManager:
                         destination = PostgreSQLDestination(
                             destination_config, source_config=source_config
                         )
-                    elif (
-                        destination_config.type.upper() == DestinationType.ROSETTA.value
-                    ):
-                        destination = RosettaDestination(destination_config)
+                    elif destination_config.type.upper() == DestinationType.KAFKA.value:
+                        destination = KafkaDestination(destination_config)
                     else:
                         logger.warning(
                             f"Unsupported destination type: {destination_config.type}"
@@ -1031,13 +1036,19 @@ class BackfillManager:
 
                     # Track data flow monitoring (same as CDC)
                     if written > 0:
+                        monitoring_table_name = (
+                            f"LANDING_{table_name.upper()}"
+                            if destination_config.type.upper()
+                            == DestinationType.SNOWFLAKE.value
+                            else table_sync.table_name_target
+                        )
                         try:
                             DataFlowRepository.increment_count(
                                 pipeline_id=pipeline_id,
                                 pipeline_destination_id=pd.id,
                                 source_id=job["source_id"],
                                 table_sync_id=table_sync.id,
-                                table_name=f"LANDING_{table_name.upper()}",
+                                table_name=monitoring_table_name,
                                 count=written,
                             )
                         except Exception as monitoring_error:
@@ -1297,11 +1308,8 @@ class BackfillManager:
         """
         Build WHERE clause from filter_sql for backfill queries.
 
-        Supports both legacy semicolon format and JSON v2 format with
-        AND/OR grouping and IN operator.
-
         Args:
-            filter_sql: Filter SQL string (legacy or JSON v2)
+            filter_sql: Filter SQL string in JSON v2 format
 
         Returns:
             WHERE clause string (without WHERE keyword), or empty string
@@ -1309,7 +1317,6 @@ class BackfillManager:
         if not filter_sql:
             return ""
 
-        # Try JSON v2 format first
         try:
             import json
 
@@ -1317,13 +1324,9 @@ class BackfillManager:
             if isinstance(parsed, dict) and parsed.get("version") == 2:
                 return self._build_where_clause_v2(parsed)
         except (json.JSONDecodeError, TypeError):
-            pass
+            raise ValueError("filter_sql must be valid JSON v2")
 
-        # Legacy format: semicolon-separated, all AND
-        where_clauses = filter_sql.split(";")
-        return " AND ".join(
-            f"({clause.strip()})" for clause in where_clauses if clause.strip()
-        )
+        raise ValueError("filter_sql must use version 2 JSON format")
 
     def _build_where_clause_v2(self, parsed: dict) -> str:
         """

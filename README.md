@@ -306,7 +306,7 @@ src/
 │   ├── destinations/     # Destination management
 │   ├── sources/          # Source management
 │   └── dashboard/        # Metrics & monitoring
-├── repo/                 # API client layer (axios)
+├── repo/                 # API client layer (fetch-based)
 │   ├── pipelines.ts
 │   ├── backfill.ts
 │   └── client.ts

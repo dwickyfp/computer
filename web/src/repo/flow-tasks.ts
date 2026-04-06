@@ -302,122 +302,160 @@ export interface FlowTaskTriggerResponse {
 
 export const flowTasksRepo = {
   // CRUD
-  list(page = 1, pageSize = 20) {
-    return api.get<FlowTaskListResponse>('/flow-tasks', {
+  async list(page = 1, pageSize = 20) {
+    const { data } = await api.get<FlowTaskListResponse>('/flow-tasks', {
       params: { page, page_size: pageSize },
     })
+    return data
   },
 
-  get(id: number) {
-    return api.get<FlowTask>(`/flow-tasks/${id}`)
+  async get(id: number) {
+    const { data } = await api.get<FlowTask>(`/flow-tasks/${id}`)
+    return data
   },
 
-  create(payload: FlowTaskCreate) {
-    return api.post<FlowTask>('/flow-tasks', payload)
+  async create(payload: FlowTaskCreate) {
+    const { data } = await api.post<FlowTask>('/flow-tasks', payload)
+    return data
   },
 
-  update(id: number, payload: FlowTaskUpdate) {
-    return api.put<FlowTask>(`/flow-tasks/${id}`, payload)
+  async update(id: number, payload: FlowTaskUpdate) {
+    const { data } = await api.put<FlowTask>(`/flow-tasks/${id}`, payload)
+    return data
   },
 
-  remove(id: number) {
-    return api.delete<{ message: string }>(`/flow-tasks/${id}`)
+  async remove(id: number) {
+    const { data } = await api.delete<{ message: string }>(`/flow-tasks/${id}`)
+    return data
   },
 
-  duplicate(id: number) {
-    return api.post<FlowTask>(`/flow-tasks/${id}/duplicate`)
+  async duplicate(id: number) {
+    const { data } = await api.post<FlowTask>(`/flow-tasks/${id}/duplicate`)
+    return data
   },
 
   // Graph
-  getGraph(id: number) {
-    return api.get<FlowTaskGraphResponse>(`/flow-tasks/${id}/graph`)
+  async getGraph(id: number) {
+    const { data } = await api.get<FlowTaskGraphResponse>(
+      `/flow-tasks/${id}/graph`
+    )
+    return data
   },
 
-  saveGraph(id: number, graph: FlowGraph) {
-    return api.post<FlowTaskGraphResponse>(`/flow-tasks/${id}/graph`, graph)
+  async saveGraph(id: number, graph: FlowGraph) {
+    const { data } = await api.post<FlowTaskGraphResponse>(
+      `/flow-tasks/${id}/graph`,
+      graph
+    )
+    return data
   },
 
   // Run
-  run(id: number) {
-    return api.post<FlowTaskTriggerResponse>(`/flow-tasks/${id}/run`)
+  async run(id: number) {
+    const { data } = await api.post<FlowTaskTriggerResponse>(
+      `/flow-tasks/${id}/run`
+    )
+    return data
   },
 
-  cancelRun(id: number) {
-    return api.post<{ status: string; message: string }>(
+  async cancelRun(id: number) {
+    const { data } = await api.post<{ status: string; message: string }>(
       `/flow-tasks/${id}/cancel`
     )
+    return data
   },
 
   // Preview
-  previewNode(id: number, payload: NodePreviewRequest) {
-    return api.post<NodePreviewTaskResponse>(
+  async previewNode(id: number, payload: NodePreviewRequest) {
+    const { data } = await api.post<NodePreviewTaskResponse>(
       `/flow-tasks/${id}/preview`,
       payload
     )
+    return data
   },
 
   // Task status polling
-  getTaskStatus(celeryTaskId: string) {
-    return api.get<TaskStatusResponse>(
+  async getTaskStatus(celeryTaskId: string) {
+    const { data } = await api.get<TaskStatusResponse>(
       `/flow-tasks/task-status/${celeryTaskId}`
     )
+    return data
   },
 
   // Run history
-  getRuns(id: number, page = 1, pageSize = 20) {
-    return api.get<FlowTaskRunHistoryListResponse>(`/flow-tasks/${id}/runs`, {
-      params: { page, page_size: pageSize },
-    })
+  async getRuns(id: number, page = 1, pageSize = 20) {
+    const { data } = await api.get<FlowTaskRunHistoryListResponse>(
+      `/flow-tasks/${id}/runs`,
+      {
+        params: { page, page_size: pageSize },
+      }
+    )
+    return data
   },
 
-  getRunDetail(runId: number) {
-    return api.get<FlowTaskRunHistory>(`/flow-tasks/runs/${runId}`)
+  async getRunDetail(runId: number) {
+    const { data } = await api.get<FlowTaskRunHistory>(
+      `/flow-tasks/runs/${runId}`
+    )
+    return data
   },
 
   // Node schema — resolved via DuckDB LIMIT 0 in the worker
   // Sends the live graph snapshot; returns column names + DuckDB type strings
   // that reflect the *actual* output of the node (including transforms, aggregates, etc.)
-  getNodeSchema(flowTaskId: number, payload: NodePreviewRequest) {
-    return api.post<NodeColumnsResponse>(
+  async getNodeSchema(flowTaskId: number, payload: NodePreviewRequest) {
+    const { data } = await api.post<NodeColumnsResponse>(
       `/flow-tasks/${flowTaskId}/node-schema`,
       payload
     )
+    return data
   },
 
   // ─── Versioning (D4) ────────────────────────────────────────────────
 
-  listVersions(id: number, page = 1, pageSize = 20) {
-    return api.get<FlowTaskGraphVersionListResponse>(
+  async listVersions(id: number, page = 1, pageSize = 20) {
+    const { data } = await api.get<FlowTaskGraphVersionListResponse>(
       `/flow-tasks/${id}/versions`,
       { params: { page, page_size: pageSize } }
     )
+    return data
   },
 
-  getVersion(id: number, version: number) {
-    return api.get<FlowTaskGraphVersion>(
+  async getVersion(id: number, version: number) {
+    const { data } = await api.get<FlowTaskGraphVersion>(
       `/flow-tasks/${id}/versions/${version}`
     )
+    return data
   },
 
-  rollbackToVersion(id: number, version: number) {
-    return api.post<FlowTaskGraphResponse>(
+  async rollbackToVersion(id: number, version: number) {
+    const { data } = await api.post<FlowTaskGraphResponse>(
       `/flow-tasks/${id}/rollback/${version}`
     )
+    return data
   },
 
   // ─── Watermarks (D8) ────────────────────────────────────────────────
 
-  getWatermarks(id: number) {
-    return api.get<FlowTaskWatermark[]>(`/flow-tasks/${id}/watermarks`)
+  async getWatermarks(id: number) {
+    const { data } = await api.get<FlowTaskWatermark[]>(
+      `/flow-tasks/${id}/watermarks`
+    )
+    return data
   },
 
-  setWatermark(id: number, config: FlowTaskWatermarkConfig) {
-    return api.post<FlowTaskWatermark>(`/flow-tasks/${id}/watermarks`, config)
+  async setWatermark(id: number, config: FlowTaskWatermarkConfig) {
+    const { data } = await api.post<FlowTaskWatermark>(
+      `/flow-tasks/${id}/watermarks`,
+      config
+    )
+    return data
   },
 
-  resetWatermark(id: number, nodeId: string) {
-    return api.delete<{ message: string }>(
+  async resetWatermark(id: number, nodeId: string) {
+    const { data } = await api.delete<{ message: string }>(
       `/flow-tasks/${id}/watermarks/${nodeId}`
     )
+    return data
   },
 }

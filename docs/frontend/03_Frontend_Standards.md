@@ -77,13 +77,13 @@ export function PipelineStatusBadge({ status }: { status: PipelineStatus }) {
 ## 3. API Call Conventions
 
 ```typescript
-// CORRECT — always use the `api` instance from repo/client
+// CORRECT — repo files use the shared `api` client
 import { api } from '@/repo/client'
-const response = await api.get<Pipeline[]>('/pipelines')
+const { data } = await api.get<Pipeline[]>('/pipelines')
 
-// WRONG — never import axios directly in components or repo files
-import axios from 'axios'
-const response = await axios.get(...)  // ❌ breaks base URL resolution
+// WRONG — components should not import the shared client directly
+import { api } from '@/repo/client'
+const { data } = await api.get('/pipelines') // ❌ bypasses repo module boundaries
 ```
 
 All HTTP calls are centralised in `src/repo/*.ts` files. Components never call `api` directly — they call repo functions imported from `@/repo/<resource>`.

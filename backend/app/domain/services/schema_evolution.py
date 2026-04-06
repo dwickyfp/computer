@@ -246,7 +246,7 @@ class SchemaEvolutionService:
             columns,
         )
 
-        task_name = f"ROSETTA_TASK_MERGE_{target_table}"
+        task_name = f"PIPELINE_TASK_MERGE_{target_table}"
 
         try:
             # Suspend task before recreation
@@ -342,7 +342,7 @@ class SchemaEvolutionService:
 
         # Use Snowflake scripting block to run MERGE then DELETE from landing table
         task_ddl = f"""
-        CREATE OR REPLACE TASK {l_db}.{l_schema}.ROSETTA_TASK_MERGE_{t_table}
+        CREATE OR REPLACE TASK {l_db}.{l_schema}.PIPELINE_TASK_MERGE_{t_table}
         WAREHOUSE = {pipeline.destination.snowflake_warehouse}
         SCHEDULE = '60 MINUTE'
         WHEN SYSTEM$STREAM_HAS_DATA('{l_db}.{l_schema}.{stream}')

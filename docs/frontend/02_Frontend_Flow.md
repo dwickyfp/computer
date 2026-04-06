@@ -136,7 +136,7 @@ PipelineDetailsPage mounts
 ## 6. Error Handling Flow
 
 ```
-API call fails (axios rejects)
+API call fails (request rejects)
     │
     ├─ TanStack Query:
     │     retry once (retry: 1 in defaultOptions)

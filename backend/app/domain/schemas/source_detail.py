@@ -48,11 +48,12 @@ class SourceDetailResponse(BaseModel):
     """
     Schema for detailed source response.
 
-    Includes source info, WAL monitor metrics, and table list.
+    Includes source info, source-specific runtime metrics, and table list.
     """
 
     source: SourceResponse
     wal_monitor: Optional[WALMonitorResponse] = None
+    runtime: dict = Field(default_factory=dict)
     tables: List[SourceTableInfo] = []
     destinations: List[str] = []
 

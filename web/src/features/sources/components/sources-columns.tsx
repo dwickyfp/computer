@@ -38,7 +38,9 @@ export const sourcesColumns: ColumnDef<Source>[] = [
         cell: ({ row }) => (
             <div className='flex flex-col'>
                 <span className='truncate font-medium'>{row.getValue('name')}</span>
-                <span className='truncate text-xs text-muted-foreground'>Postgres</span>
+                <span className='truncate text-xs text-muted-foreground'>
+                    {row.original.type === 'KAFKA' ? 'Kafka' : 'PostgreSQL'}
+                </span>
             </div>
         ),
         meta: { title: 'Name' },
@@ -49,9 +51,12 @@ export const sourcesColumns: ColumnDef<Source>[] = [
             <DataTableColumnHeader column={column} title='Status' />
         ),
         cell: ({ row }) => {
+            const isKafka = row.original.type === 'KAFKA'
             const isReplicationEnabled = row.original.is_replication_enabled
             const isPublicationEnabled = row.original.is_publication_enabled
-            const isActive = isReplicationEnabled && isPublicationEnabled
+            const isActive = isKafka
+                ? Boolean(row.original.bootstrap_servers)
+                : isReplicationEnabled && isPublicationEnabled
 
             return (
                 <div className='flex items-center gap-2'>
@@ -70,10 +75,13 @@ export const sourcesColumns: ColumnDef<Source>[] = [
             <DataTableColumnHeader column={column} title='Connection Details' />
         ),
         cell: ({ row }) => {
-            const host = row.original.pg_host
-            const port = row.original.pg_port
-            const database = row.original.pg_database
-            const mainInfo = `${host}:${port}`
+            const isKafka = row.original.type === 'KAFKA'
+            const mainInfo = isKafka
+                ? row.original.bootstrap_servers || 'Not configured'
+                : `${row.original.pg_host}:${row.original.pg_port}`
+            const secondaryInfo = isKafka
+                ? row.original.topic_prefix || 'No topic prefix'
+                : row.original.pg_database
 
             return (
                 <div className="flex flex-col gap-1 max-w-[300px]">
@@ -82,7 +90,9 @@ export const sourcesColumns: ColumnDef<Source>[] = [
                         <span className="truncate">{mainInfo}</span>
                         <CopyButton value={mainInfo} className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6" />
                     </div>
-                    <span className="text-xs text-muted-foreground truncate" title={database}>{database}</span>
+                    <span className="text-xs text-muted-foreground truncate" title={secondaryInfo}>
+                        {secondaryInfo}
+                    </span>
                 </div>
             )
         },
@@ -93,13 +103,14 @@ export const sourcesColumns: ColumnDef<Source>[] = [
         header: ({ column }) => (
             <DataTableColumnHeader column={column} title='Type' className="w-[150px]" />
         ),
-        cell: () => {
+        cell: ({ row }) => {
             return (
                 <div className='flex items-center gap-2 w-[150px]'>
-                    {/* Placeholder icon for Postgres since we don't have a specific one in lucide besides Database, or we could use a custom one if available, sticking to text/color for now or generic DB */}
                     <div className="flex items-center gap-2">
                         <span className='truncate font-medium capitalize'>
-                            Postgre<span style={{ color: '#316192' }}>SQL</span>
+                            {row.original.type === 'KAFKA'
+                                ? 'Kafka'
+                                : <>Postgre<span style={{ color: '#316192' }}>SQL</span></>}
                         </span>
                     </div>
                 </div>

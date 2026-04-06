@@ -16,13 +16,16 @@ from pydantic import ValidationError
 
 class TestSourceCreateValidator:
     _base = dict(
-        pg_host="localhost",
-        pg_port=5432,
-        pg_database="mydb",
-        pg_username="user",
-        pg_password="pass",
-        publication_name="dbz_pub",
-        replication_name="dbz_slot",
+        type="POSTGRES",
+        config={
+            "host": "localhost",
+            "port": 5432,
+            "database": "mydb",
+            "username": "user",
+            "password": "pass",
+            "publication_name": "dbz_pub",
+            "replication_name": "dbz_slot",
+        },
     )
 
     def _make(self, **kwargs):
@@ -50,25 +53,23 @@ class TestSourceCreateValidator:
         with pytest.raises(ValidationError, match="alphanumeric"):
             self._make(name="bad.name")
 
-    def test_publication_name_with_underscore_allowed(self):
-        obj = self._make(publication_name="dbz_publication")
-        assert obj.publication_name == "dbz_publication"
+    def test_postgres_config_defaults_port(self):
+        obj = self._make(name="postgres-source", config={**self._base["config"], "port": None})
+        assert obj.config["port"] == 5432
 
-    def test_publication_name_with_hyphen_rejected(self):
-        with pytest.raises(ValidationError, match="Publication name"):
-            self._make(publication_name="bad-pub")
+    def test_kafka_source_requires_bootstrap_group_and_prefix(self):
+        from app.domain.schemas.source import SourceCreate
 
-    def test_publication_name_with_space_rejected(self):
-        with pytest.raises(ValidationError, match="Publication name"):
-            self._make(publication_name="bad pub")
-
-    def test_pg_port_out_of_range_rejected(self):
-        with pytest.raises(ValidationError):
-            self._make(pg_port=99999)
-
-    def test_pg_port_zero_rejected(self):
-        with pytest.raises(ValidationError):
-            self._make(pg_port=0)
+        obj = SourceCreate(
+            name="kafka-source",
+            type="KAFKA",
+            config={
+                "bootstrap_servers": "kafka:9092",
+                "topic_prefix": "dbserver1.inventory",
+            },
+        )
+        assert obj.config["format"] == "PLAIN_JSON"
+        assert "group_id" not in obj.config
 
 
 # =============================================================================
@@ -77,7 +78,7 @@ class TestSourceCreateValidator:
 
 
 class TestPipelineCreateValidator:
-    _base = dict(name="my-pipeline", source_type="POSTGRES", source_id=1)
+    _base = dict(name="my-pipeline", source_id=1)
 
     def _make(self, **kwargs):
         from app.domain.schemas.pipeline import PipelineCreate
@@ -88,39 +89,9 @@ class TestPipelineCreateValidator:
         obj = self._make()
         assert obj.source_id == 1
 
-    def test_postgres_without_source_id_rejected(self):
-        with pytest.raises(ValidationError, match="source_id is required"):
+    def test_source_id_required(self):
+        with pytest.raises(ValidationError):
             self._make(source_id=None)
-
-    def test_rosetta_without_source_id_accepted(self):
-        from app.domain.schemas.pipeline import PipelineCreate
-
-        obj = PipelineCreate(name="rosetta-pipe", source_type="ROSETTA")
-        assert obj.source_id is None
-
-    def test_catalog_table_without_catalog_table_id_rejected(self):
-        with pytest.raises(ValidationError, match="catalog_table_id is required"):
-            self._make(
-                source_type="CATALOG_TABLE", source_id=None, catalog_table_id=None
-            )
-
-    def test_catalog_table_with_catalog_table_id_accepted(self):
-        obj = self._make(
-            source_type="CATALOG_TABLE",
-            source_id=None,
-            catalog_table_id=5,
-        )
-        assert obj.catalog_table_id == 5
-
-    def test_invalid_source_type_rejected(self):
-        with pytest.raises(ValidationError, match="source_type must be one of"):
-            self._make(source_type="KAFKA")
-
-    def test_source_type_uppercased(self):
-        from app.domain.schemas.pipeline import PipelineCreate
-
-        obj = PipelineCreate(name="test-pipe", source_type="postgres", source_id=1)
-        assert obj.source_type == "POSTGRES"
 
     def test_name_lowercased(self):
         obj = self._make(name="UPPER-CASE")
@@ -158,11 +129,11 @@ class TestBackfillJobCreateValidator:
         )
         sql = obj.get_filter_sql()
         assert sql is not None
-        assert "status" in sql
-        assert "active" in sql
+        assert '"version": 2' in sql
+        assert '"status"' in sql
+        assert '"active"' in sql
 
-    def test_multiple_filters_joined_with_semicolon(self):
-        """Clauses are joined with ';' (not AND)."""
+    def test_multiple_filters_generate_json_v2(self):
         obj = self._make(
             filters=[
                 {"column": "status", "operator": "=", "value": "active"},
@@ -170,7 +141,8 @@ class TestBackfillJobCreateValidator:
             ]
         )
         sql = obj.get_filter_sql()
-        assert ";" in sql
+        assert '"conditions"' in sql
+        assert '"amount"' in sql
 
     def test_six_filters_rejected(self):
         with pytest.raises(ValidationError):

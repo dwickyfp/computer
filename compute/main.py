@@ -11,7 +11,9 @@ Configuration via environment variables:
 """
 
 import logging
+import json
 import os
+import re
 import sys
 import threading
 import time
@@ -25,43 +27,9 @@ from core.database import (
     return_db_connection,
 )
 from core.manager import PipelineManager
-from core.engine import run_pipeline
 from core.backfill_manager import BackfillManager
+from core.runtime_health import mark_worker
 from server import run_server
-
-
-def run_chain_stream_cleanup(stop_event: threading.Event) -> None:
-    """
-    Background thread: periodically trim chain Redis Streams.
-
-    Removes entries older than CHAIN_STREAM_RETENTION_DAYS from every
-    rosetta:chain:* stream so unconsumed data does not accumulate forever.
-    """
-    logger = logging.getLogger("chain_cleanup")
-    try:
-        config = get_config()
-        if not config.chain.enabled:
-            return
-
-        from chain.ingest import ChainIngestManager
-
-        manager = ChainIngestManager()
-        interval = config.chain.trim_interval_seconds
-        logger.info(
-            f"Chain stream cleanup thread started "
-            f"(retention={config.chain.stream_retention_days}d, "
-            f"interval={interval}s)"
-        )
-
-        while not stop_event.is_set():
-            try:
-                manager.trim_all_streams()
-            except Exception as e:
-                logger.error(f"Chain cleanup iteration failed: {e}")
-            stop_event.wait(interval)
-
-    except Exception as e:
-        logger.error(f"Chain cleanup thread exiting: {e}")
 
 
 def run_migration(logger: logging.Logger) -> None:
@@ -104,6 +72,189 @@ def run_migration(logger: logging.Logger) -> None:
         if conn:
             conn.rollback()
         raise e
+    finally:
+        if conn:
+            return_db_connection(conn)
+
+
+_LEGACY_FILTER_MIGRATION_ERROR = (
+    "Legacy filter_sql could not be migrated to JSON v2. Edit the filter and save it again."
+)
+
+
+def _parse_legacy_filter_clause(clause: str) -> dict[str, str] | None:
+    clause = clause.strip()
+    if not clause:
+        return None
+
+    match = re.match(r"^([\w.]+)\s+(IS\s+(?:NOT\s+)?NULL)$", clause, re.IGNORECASE)
+    if match:
+        return {
+            "column": match.group(1),
+            "operator": match.group(2).upper(),
+            "value": "",
+        }
+
+    match = re.match(
+        r"^([\w.]+)\s+BETWEEN\s+'([^']*)'\s+AND\s+'([^']*)'$",
+        clause,
+        re.IGNORECASE,
+    )
+    if match:
+        return {
+            "column": match.group(1),
+            "operator": "BETWEEN",
+            "value": match.group(2),
+            "value2": match.group(3),
+        }
+
+    match = re.match(r"^([\w.]+)\s+(LIKE|ILIKE)\s+'%([^%]*)%'$", clause, re.IGNORECASE)
+    if match:
+        return {
+            "column": match.group(1),
+            "operator": match.group(2).upper(),
+            "value": match.group(3),
+        }
+
+    match = re.match(r"^([\w.]+)\s+IN\s*\((.*)\)$", clause, re.IGNORECASE)
+    if match:
+        raw_values = [value.strip() for value in match.group(2).split(",") if value.strip()]
+        cleaned = [value[1:-1] if value.startswith("'") and value.endswith("'") else value for value in raw_values]
+        return {
+            "column": match.group(1),
+            "operator": "IN",
+            "value": ",".join(cleaned),
+        }
+
+    match = re.match(r"^([\w.]+)\s*(=|!=|>|>=|<=|<)\s*(.+)$", clause)
+    if match:
+        raw_value = match.group(3).strip()
+        if raw_value.startswith("'") and raw_value.endswith("'"):
+            raw_value = raw_value[1:-1]
+        return {
+            "column": match.group(1),
+            "operator": match.group(2),
+            "value": raw_value,
+        }
+
+    return None
+
+
+def _legacy_filter_to_v2_json(filter_sql: str | None) -> str | None:
+    if not filter_sql:
+        return None
+
+    try:
+        parsed = json.loads(filter_sql)
+        if isinstance(parsed, dict) and parsed.get("version") == 2:
+            return filter_sql
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    conditions: list[dict[str, str]] = []
+    for clause in [part.strip() for part in filter_sql.split(";") if part.strip()]:
+        parsed_clause = _parse_legacy_filter_clause(clause)
+        if not parsed_clause:
+            return None
+        conditions.append(parsed_clause)
+
+    if not conditions:
+        return None
+
+    return json.dumps(
+        {
+            "version": 2,
+            "groups": [{"conditions": conditions, "intraLogic": "AND"}],
+            "interLogic": [],
+        }
+    )
+
+
+def migrate_filter_sql_formats(logger: logging.Logger) -> None:
+    """Best-effort one-time migration from legacy semicolon filters to JSON v2."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, filter_sql
+                FROM pipelines_destination_table_sync
+                WHERE filter_sql IS NOT NULL
+                """
+            )
+            for sync_id, filter_sql in cursor.fetchall():
+                converted = _legacy_filter_to_v2_json(filter_sql)
+                if converted and converted != filter_sql:
+                    cursor.execute(
+                        """
+                        UPDATE pipelines_destination_table_sync
+                        SET filter_sql = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (converted, sync_id),
+                    )
+                elif converted is None:
+                    cursor.execute(
+                        """
+                        UPDATE pipelines_destination_table_sync
+                        SET is_error = TRUE,
+                            error_message = %s,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (_LEGACY_FILTER_MIGRATION_ERROR, sync_id),
+                    )
+
+            cursor.execute(
+                """
+                SELECT id, status, filter_sql
+                FROM queue_backfill_data
+                WHERE filter_sql IS NOT NULL
+                """
+            )
+            for job_id, status, filter_sql in cursor.fetchall():
+                converted = _legacy_filter_to_v2_json(filter_sql)
+                if converted and converted != filter_sql:
+                    cursor.execute(
+                        """
+                        UPDATE queue_backfill_data
+                        SET filter_sql = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (converted, job_id),
+                    )
+                elif converted is None:
+                    if status in ("PENDING", "EXECUTING"):
+                        cursor.execute(
+                            """
+                            UPDATE queue_backfill_data
+                            SET status = 'FAILED',
+                                is_error = TRUE,
+                                error_message = %s,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (_LEGACY_FILTER_MIGRATION_ERROR, job_id),
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            UPDATE queue_backfill_data
+                            SET is_error = TRUE,
+                                error_message = %s,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (_LEGACY_FILTER_MIGRATION_ERROR, job_id),
+                        )
+
+            conn.commit()
+    except Exception as exc:
+        logger.error("Filter migration failed: %s", exc)
+        if conn:
+            conn.rollback()
+        raise
     finally:
         if conn:
             return_db_connection(conn)
@@ -171,52 +322,53 @@ def main() -> int:
 
     manager = None
     backfill_manager = None
-    chain_cleanup_stop = threading.Event()
+    shutdown_event = threading.Event()
+    worker_threads: dict[str, threading.Thread] = {}
+
+    def _start_worker(name: str, target, critical: bool = True) -> threading.Thread:
+        def runner():
+            mark_worker(name, "running", critical=critical)
+            try:
+                target()
+                status = "stopped" if shutdown_event.is_set() else "failed"
+                message = None if shutdown_event.is_set() else "worker exited unexpectedly"
+                mark_worker(name, status, critical=critical, message=message)
+            except Exception as exc:
+                mark_worker(name, "failed", critical=critical, message=str(exc))
+                raise
+
+        thread = threading.Thread(target=runner, daemon=False, name=name)
+        thread.start()
+        worker_threads[name] = thread
+        return thread
 
     try:
         # Running Migration SQL
         run_migration(logger)
+        migrate_filter_sql_formats(logger)
 
-        # Start API Server in a separate thread
-        server_thread = threading.Thread(
-            target=run_server,
-            args=(config.server.host, config.server.port),
-            daemon=True,
-        )
-        server_thread.start()
-
-        # Start Pipeline Manager in a separate thread
         manager = PipelineManager(register_signals=False)
-        manager_thread = threading.Thread(target=manager.run, daemon=True)
-        manager_thread.start()
-
-        # Start Backfill Manager in a separate thread
         backfill_manager = BackfillManager(check_interval=5, batch_size=10000)
-        backfill_manager.start()
 
-        # Start chain stream cleanup thread (only active when CHAIN_ENABLED=true)
-        chain_cleanup_thread = threading.Thread(
-            target=run_chain_stream_cleanup,
-            args=(chain_cleanup_stop,),
-            daemon=True,
-            name="chain_stream_cleanup",
+        _start_worker(
+            "api_server",
+            lambda: run_server(config.server.host, config.server.port),
         )
-        chain_cleanup_thread.start()
-
-        # Start Catalog Health Worker
-        from core.catalog_health_worker import CatalogHealthWorker
-
-        catalog_health_worker = CatalogHealthWorker(check_interval_seconds=60)
-        catalog_health_thread = threading.Thread(
-            target=catalog_health_worker.run,
-            args=(chain_cleanup_stop,),
-            daemon=True,
-            name="catalog_health_worker",
+        _start_worker("pipeline_manager", manager.run)
+        _start_worker(
+            "backfill_manager",
+            lambda: (
+                backfill_manager._recover_stale_jobs(),
+                backfill_manager._monitor_queue(),
+            ),
         )
-        catalog_health_thread.start()
 
-        # Keep main thread alive to handle signals and facilitate clean shutdown
-        while True:
+        while not shutdown_event.is_set():
+            for name, thread in worker_threads.items():
+                if not thread.is_alive():
+                    logger.error("Critical worker %s exited unexpectedly", name)
+                    shutdown_event.set()
+                    break
             time.sleep(1)
 
     except KeyboardInterrupt:
@@ -225,18 +377,17 @@ def main() -> int:
         logger.error(f"Fatal error: {e}", exc_info=True)
         return 1
     finally:
-        chain_cleanup_stop.set()
+        shutdown_event.set()
 
-        # If manager exists, try to shutdown gracefully (if not already handled by its own signals)
-        # Note: manager.run() handles signals, but if we are here via KeyboardInterrupt caught in main,
-        # we might want to ensure manager stops.
-        # Since threads are daemon, they will be killed when main exits,
-        # but manager.shutdown() is cleaner if possible.
         if manager:
             manager.shutdown()
 
         if backfill_manager:
             backfill_manager.stop()
+
+        for thread in worker_threads.values():
+            if thread.is_alive():
+                thread.join(timeout=5)
 
         close_connection_pool()
 

@@ -27,11 +27,11 @@ export default defineConfig({
           'tanstack-query': ['@tanstack/react-query'],
           'tanstack-router': ['@tanstack/react-router'],
           'tanstack-table': ['@tanstack/react-table'],
-          
+
           // Visualization libraries
-          'charts': ['recharts'],
+          charts: ['recharts'],
           'flow-diagram': ['@xyflow/react'],
-          
+
           // UI libraries
           'radix-ui': [
             '@radix-ui/react-accordion',
@@ -52,25 +52,24 @@ export default defineConfig({
             '@radix-ui/react-tabs',
             '@radix-ui/react-tooltip',
           ],
-          
+
           // Form libraries
-          'forms': ['react-hook-form', '@hookform/resolvers', 'zod'],
-          
+          forms: ['react-hook-form', '@hookform/resolvers', 'zod'],
+
           // Date utilities
           'date-utils': ['date-fns', 'react-day-picker'],
-          
+
           // Code editor
           'code-editor': ['ace-builds', 'react-ace'],
-          
+
           // Authentication
-          'auth': ['@clerk/clerk-react'],
-          
+          auth: ['@clerk/clerk-react'],
+
           // Icons
-          'icons': ['lucide-react', '@radix-ui/react-icons'],
-          
+          icons: ['lucide-react', '@radix-ui/react-icons'],
+
           // Other utilities
-          'utils': [
-            'axios',
+          utils: [
             'clsx',
             'tailwind-merge',
             'class-variance-authority',

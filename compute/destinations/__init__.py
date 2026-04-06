@@ -2,11 +2,11 @@
 from destinations.base import BaseDestination
 from destinations.snowflake import SnowflakeDestination
 from destinations.postgresql import PostgreSQLDestination
-from destinations.rosetta import RosettaDestination
+from destinations.kafka import KafkaDestination
 
 __all__ = [
     "BaseDestination",
     "SnowflakeDestination",
     "PostgreSQLDestination",
-    "RosettaDestination",
+    "KafkaDestination",
 ]

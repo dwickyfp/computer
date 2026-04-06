@@ -4,7 +4,7 @@ Source service containing business logic.
 Implements business rules and orchestrates repository operations for sources.
 """
 
-from typing import List
+from typing import Any, List
 from datetime import datetime, timezone, timedelta
 import asyncio
 
@@ -41,6 +41,7 @@ from app.domain.services.schema_monitor import SchemaMonitorService
 
 
 from app.infrastructure.redis import RedisClient
+from app.infrastructure.kafka import create_admin_client
 from app.core.security import encrypt_value, decrypt_value
 
 logger = get_logger(__name__)
@@ -58,6 +59,132 @@ class SourceService:
         self.db = db
         self.repository = SourceRepository(db)
 
+    @staticmethod
+    def _source_type(source: Source | SourceCreate | SourceUpdate | SourceConnectionTest) -> str:
+        return str(getattr(source, "type", "POSTGRES") or "POSTGRES").upper()
+
+    def _is_postgres_source(self, source: Source | SourceCreate | SourceUpdate | SourceConnectionTest) -> bool:
+        return self._source_type(source) == "POSTGRES"
+
+    def _require_postgres_source(self, source: Source) -> None:
+        if not self._is_postgres_source(source):
+            raise ValueError("This operation is only available for POSTGRES sources")
+
+    @staticmethod
+    def _system_kafka_group_id(source_id: int) -> str:
+        return f"rosetta-kafka-source-{source_id}"
+
+    def _ensure_kafka_group_id(self, source: Source) -> None:
+        if self._is_postgres_source(source):
+            return
+        config = dict(source.config or {})
+        if str(config.get("group_id") or "").strip():
+            return
+        config["group_id"] = self._system_kafka_group_id(source.id)
+        source.config = config
+        self.db.add(source)
+
+    def _encrypt_source_config(self, source_type: str, config: dict[str, Any]) -> dict[str, Any]:
+        config = dict(config or {})
+        if source_type == "POSTGRES" and config.get("password"):
+            config["password"] = encrypt_value(config["password"])
+        if source_type == "KAFKA" and config.get("sasl_password"):
+            config["sasl_password"] = encrypt_value(config["sasl_password"])
+        return config
+
+    def _flatten_source_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        source_type = str(payload.get("type") or "POSTGRES").upper()
+        config = self._encrypt_source_config(source_type, payload.get("config") or {})
+        payload["type"] = source_type
+        payload["config"] = config
+
+        if source_type == "POSTGRES":
+            payload.update(
+                pg_host=config.get("host"),
+                pg_port=config.get("port", 5432),
+                pg_database=config.get("database"),
+                pg_username=config.get("username"),
+                pg_password=config.get("password"),
+                publication_name=config.get("publication_name"),
+                replication_name=config.get("replication_name"),
+            )
+        else:
+            payload.update(
+                pg_host=None,
+                pg_port=None,
+                pg_database=None,
+                pg_username=None,
+                pg_password=None,
+                publication_name=None,
+                replication_name=None,
+                is_publication_enabled=False,
+                is_replication_enabled=False,
+                last_check_replication_publication=None,
+            )
+
+        return payload
+
+    def _build_kafka_client_config(self, source: Source, include_group: bool = True) -> dict[str, Any]:
+        config = dict(source.config or {})
+        client = {
+            "bootstrap.servers": config.get("bootstrap_servers", ""),
+        }
+        if include_group and config.get("group_id"):
+            client["group.id"] = config.get("group_id")
+        if config.get("auto_offset_reset"):
+            client["auto.offset.reset"] = config["auto_offset_reset"]
+        if config.get("security_protocol"):
+            client["security.protocol"] = config["security_protocol"]
+        if config.get("sasl_mechanism"):
+            client["sasl.mechanism"] = config["sasl_mechanism"]
+        if config.get("sasl_username"):
+            client["sasl.username"] = config["sasl_username"]
+        if config.get("sasl_password"):
+            client["sasl.password"] = decrypt_value(config["sasl_password"])
+        if config.get("ssl_ca_location"):
+            client["ssl.ca.location"] = config["ssl_ca_location"]
+        if config.get("ssl_certificate_location"):
+            client["ssl.certificate.location"] = config["ssl_certificate_location"]
+        if config.get("ssl_key_location"):
+            client["ssl.key.location"] = config["ssl_key_location"]
+        return client
+
+    def _discover_kafka_tables(self, source: Source) -> list[str]:
+        if self._is_postgres_source(source):
+            raise ValueError("Kafka topic discovery is only available for KAFKA sources")
+
+        config = dict(source.config or {})
+        admin = create_admin_client(self._build_kafka_client_config(source, include_group=False))
+        metadata = admin.list_topics(timeout=10)
+        prefix = config.get("topic_prefix", "")
+        prefix_with_dot = f"{prefix}." if prefix else ""
+        tables = []
+        for topic in metadata.topics.keys():
+            if topic.startswith("_"):
+                continue
+            if prefix_with_dot and topic.startswith(prefix_with_dot):
+                tables.append(topic.removeprefix(prefix_with_dot))
+            elif prefix and topic == prefix:
+                continue
+        return sorted(set(tables))
+
+    def _sync_kafka_tables(self, source: Source) -> list[str]:
+        tables = self._discover_kafka_tables(source)
+        table_repo = TableMetadataRepository(self.db)
+        existing = {table.table_name: table for table in table_repo.get_by_source_id(source.id)}
+
+        for table_name in tables:
+            if table_name not in existing:
+                table_repo.create(source_id=source.id, table_name=table_name, schema_table={})
+
+        for table_name, table in existing.items():
+            if table_name not in tables:
+                self.db.delete(table)
+
+        source.total_tables = len(tables)
+        self.db.flush()
+        return tables
+
     def create_source(self, source_data: SourceCreate) -> Source:
         """
         Create a new source.
@@ -70,39 +197,38 @@ class SourceService:
         """
         logger.info("Creating new source", extra={"name": source_data.name})
 
-        # Encrypt password before saving
-        if source_data.pg_password:
-            source_data.pg_password = encrypt_value(source_data.pg_password)
+        payload = self._flatten_source_payload(source_data.model_dump())
+        source = self.repository.create(**payload)
 
-        source = self.repository.create(**source_data.dict())
-
-        # Update table list
         try:
-            self._update_source_table_list(source)
-            # Commit again to save table list
-            self.db.commit()
-            self.db.refresh(source)
-        except Exception as e:
-            logger.error("Failed to fetch table list: %s", e)
+            if self._is_postgres_source(source):
+                self._update_source_table_list(source)
+                self.db.commit()
+                self.db.refresh(source)
 
-        # Initialize WAL monitor status immediately
-        try:
-            logger.info(
-                "Initializing WAL monitor status for new source",
-                extra={"source_id": source.id, "name": source.name},
-            )
-            wal_monitor_service = WALMonitorService()
-            wal_monitor_service.monitor_source_sync(source, self.db)
-            logger.info(
-                "WAL monitor status initialized successfully",
-                extra={"source_id": source.id},
-            )
+                try:
+                    logger.info(
+                        "Initializing WAL monitor status for new source",
+                        extra={"source_id": source.id, "name": source.name},
+                    )
+                    wal_monitor_service = WALMonitorService()
+                    wal_monitor_service.monitor_source_sync(source, self.db)
+                    logger.info(
+                        "WAL monitor status initialized successfully",
+                        extra={"source_id": source.id},
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to initialize WAL monitor status",
+                        extra={"source_id": source.id, "error": str(e)},
+                    )
+            else:
+                self._ensure_kafka_group_id(source)
+                self._sync_kafka_tables(source)
+                self.db.commit()
+                self.db.refresh(source)
         except Exception as e:
-            # Don't fail source creation if WAL monitoring fails
-            logger.warning(
-                "Failed to initialize WAL monitor status",
-                extra={"source_id": source.id, "error": str(e)},
-            )
+            logger.error("Failed to initialize source metadata: %s", e)
 
         logger.info(
             "Source created successfully",
@@ -171,31 +297,43 @@ class SourceService:
         logger.info("Updating source", extra={"source_id": source_id})
 
         # Filter out None values for partial updates
-        update_data = source_data.dict(exclude_unset=True)
+        update_data = source_data.model_dump(exclude_unset=True)
+        source = self.repository.get_by_id(source_id)
 
-        # Remove empty string password if present (treat as no update)
-        if "pg_password" in update_data and (
-            update_data["pg_password"] is None or update_data["pg_password"] == ""
-        ):
-            del update_data["pg_password"]
+        if "config" in update_data and update_data["config"] is not None:
+            merged_config = dict(source.config or {})
+            merged_config.update(update_data["config"])
 
-        # Encrypt password if provided
-        if "pg_password" in update_data:
-            update_data["pg_password"] = encrypt_value(update_data["pg_password"])
+            source_type = str(update_data.get("type") or source.type or "POSTGRES").upper()
+            if source_type == "POSTGRES":
+                current_password = merged_config.get("password")
+                if not current_password and source.pg_password:
+                    current_password = decrypt_value(source.pg_password)
+                    merged_config["password"] = current_password
+            elif source_type == "KAFKA":
+                current_password = merged_config.get("sasl_password")
+                if not current_password and source.config.get("sasl_password"):
+                    current_password = decrypt_value(source.config["sasl_password"])
+                    merged_config["sasl_password"] = current_password
 
+            update_data["config"] = merged_config
+
+        if "type" not in update_data:
+            update_data["type"] = source.type
+
+        update_data = self._flatten_source_payload(update_data)
         source = self.repository.update(source_id, **update_data)
 
-        # Update table list if connection details changed
-        if any(
-            k in update_data
-            for k in ["pg_host", "pg_port", "pg_database", "pg_username", "pg_password"]
-        ):
-            try:
+        try:
+            if self._is_postgres_source(source):
                 self._update_source_table_list(source)
-                self.db.commit()
-                self.db.refresh(source)
-            except Exception as e:
-                logger.error("Failed to refresh table list: %s", e)
+            else:
+                self._ensure_kafka_group_id(source)
+                self._sync_kafka_tables(source)
+            self.db.commit()
+            self.db.refresh(source)
+        except Exception as e:
+            logger.error("Failed to refresh source metadata: %s", e)
 
         logger.info("Source updated successfully", extra={"source_id": source.id})
 
@@ -229,30 +367,60 @@ class SourceService:
         Returns:
             True if connection successful, False otherwise
         """
-        import psycopg2
-
         try:
-            logger.info(
-                "Testing connection configuration",
-                extra={
-                    "host": config.pg_host,
-                    "port": config.pg_port,
-                    "db": config.pg_database,
-                },
-            )
+            if self._source_type(config) == "POSTGRES":
+                logger.info(
+                    "Testing PostgreSQL source connection",
+                    extra={
+                        "host": config.config.get("host"),
+                        "port": config.config.get("port"),
+                        "db": config.config.get("database"),
+                    },
+                )
+                conn = psycopg2.connect(
+                    host=config.config.get("host"),
+                    port=config.config.get("port"),
+                    dbname=config.config.get("database"),
+                    user=config.config.get("username"),
+                    password=config.config.get("password"),
+                    connect_timeout=5,
+                )
+                conn.close()
+                return True
 
-            conn = psycopg2.connect(
-                host=config.pg_host,
-                port=config.pg_port,
-                dbname=config.pg_database,
-                user=config.pg_username,
-                password=config.pg_password,
-                connect_timeout=5,
+            logger.info(
+                "Testing Kafka source connection",
+                extra={"bootstrap_servers": config.config.get("bootstrap_servers")},
             )
-            conn.close()
+            admin = create_admin_client(
+                {
+                    "bootstrap.servers": config.config.get("bootstrap_servers"),
+                    **(
+                        {"security.protocol": config.config["security_protocol"]}
+                        if config.config.get("security_protocol")
+                        else {}
+                    ),
+                    **(
+                        {"sasl.mechanism": config.config["sasl_mechanism"]}
+                        if config.config.get("sasl_mechanism")
+                        else {}
+                    ),
+                    **(
+                        {"sasl.username": config.config["sasl_username"]}
+                        if config.config.get("sasl_username")
+                        else {}
+                    ),
+                    **(
+                        {"sasl.password": config.config["sasl_password"]}
+                        if config.config.get("sasl_password")
+                        else {}
+                    ),
+                }
+            )
+            admin.list_topics(timeout=10)
             return True
         except ImportError:
-            logger.error("psycopg2 is not installed — cannot test connection")
+            logger.error("Required source client dependency is not installed")
             return False
         except Exception as e:
             logger.error(
@@ -273,14 +441,13 @@ class SourceService:
         """
         source = self.repository.get_by_id(source_id)
 
-        # Create config from source
-        config = SourceConnectionTest(
-            pg_host=source.pg_host,
-            pg_port=source.pg_port,
-            pg_database=source.pg_database,
-            pg_username=source.pg_username,
-            pg_password=decrypt_value(source.pg_password) if source.pg_password else "",
-        )
+        config_payload = dict(source.config or {})
+        if self._is_postgres_source(source) and source.pg_password:
+            config_payload["password"] = decrypt_value(source.pg_password)
+        if not self._is_postgres_source(source) and source.config.get("sasl_password"):
+            config_payload["sasl_password"] = decrypt_value(source.config["sasl_password"])
+
+        config = SourceConnectionTest(type=source.type, config=config_payload)
 
         return self.test_connection_config(config)
 
@@ -319,21 +486,32 @@ class SourceService:
         # 1. Get Source
         source = self.get_source(source_id)
 
-        # Conditional Realtime Fetch (only if force_refresh=True)
-        # This avoids slow network calls to source database on every page load
-        if force_refresh:
-            self._update_source_table_list(source)
-            registered_tables = self._sync_publication_tables(source)
-            self.db.add(source)
-            self.db.commit()
-            self.db.refresh(source)
-        else:
-            # Fast path: just get registered tables from publication query
-            registered_tables = self._get_publication_tables(source)
+        runtime: dict[str, Any] = {"type": source.type}
+        wal_monitor = None
+        if self._is_postgres_source(source):
+            if force_refresh:
+                self._update_source_table_list(source)
+                registered_tables = self._sync_publication_tables(source)
+                self.db.add(source)
+                self.db.commit()
+                self.db.refresh(source)
+            else:
+                registered_tables = self._get_publication_tables(source)
 
-        # 2. Get WAL Monitor
-        wal_monitor_repo = WALMonitorRepository(self.db)
-        wal_monitor = wal_monitor_repo.get_by_source(source_id)
+            wal_monitor_repo = WALMonitorRepository(self.db)
+            wal_monitor = wal_monitor_repo.get_by_source(source_id)
+        else:
+            registered_tables = set(self._sync_kafka_tables(source) if force_refresh else self.fetch_available_tables(source_id))
+            runtime.update(
+                {
+                    "bootstrap_servers": source.config.get("bootstrap_servers"),
+                    "topic_prefix": source.config.get("topic_prefix"),
+                    "topic_count": len(registered_tables),
+                    "group_id": source.config.get("group_id")
+                    or self._system_kafka_group_id(source.id),
+                    "format": source.config.get("format", "PLAIN_JSON"),
+                }
+            )
 
         # 3. Get Tables with Version Count
         table_repo = TableMetadataRepository(self.db)
@@ -386,6 +564,7 @@ class SourceService:
             wal_monitor=(
                 WALMonitorResponse.from_orm(wal_monitor) if wal_monitor else None
             ),
+            runtime=runtime,
             tables=source_tables,
             destinations=destination_names,
         )
@@ -503,6 +682,7 @@ class SourceService:
 
     def _get_connection(self, source: Source):
         """Helper to get postgres connection"""
+        self._require_postgres_source(source)
         conn = psycopg2.connect(
             host=source.pg_host,
             port=source.pg_port,
@@ -517,6 +697,7 @@ class SourceService:
         """
         Fetch public tables from source database and upate list_tables.
         """
+        self._require_postgres_source(source)
         try:
             conn = self._get_connection(source)
             with conn.cursor() as cur:
@@ -821,6 +1002,17 @@ class SourceService:
         """Manually refresh source metadata."""
         source = self.get_source(source_id)
 
+        if not self._is_postgres_source(source):
+            self._sync_kafka_tables(source)
+            self.db.commit()
+            self.db.refresh(source)
+            try:
+                redis_client = RedisClient.get_instance()
+                redis_client.delete(f"source:{source_id}:tables")
+            except Exception as e:
+                logger.warning("Failed to invalidate cache for source %s: %s", source_id, e)
+            return
+
         # Store previous state to detect external drops
         previous_publication_enabled = source.is_publication_enabled
         previous_replication_enabled = source.is_replication_enabled
@@ -849,6 +1041,7 @@ class SourceService:
 
     def create_publication(self, source_id: int, tables: List[str]) -> None:
         source = self.get_source(source_id)
+        self._require_postgres_source(source)
         if not tables:
             raise ValueError("At least one table must be selected")
 
@@ -868,6 +1061,7 @@ class SourceService:
 
     def drop_publication(self, source_id: int) -> None:
         source = self.get_source(source_id)
+        self._require_postgres_source(source)
         try:
             # Pause running pipelines first
             logger.info(
@@ -982,6 +1176,7 @@ class SourceService:
 
     def create_replication_slot(self, source_id: int) -> None:
         source = self.get_source(source_id)
+        self._require_postgres_source(source)
         try:
             conn = self._get_connection(source)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
@@ -1000,6 +1195,7 @@ class SourceService:
 
     def drop_replication_slot(self, source_id: int) -> None:
         source = self.get_source(source_id)
+        self._require_postgres_source(source)
         try:
             # Pause running pipelines first
             logger.info(
@@ -1026,6 +1222,14 @@ class SourceService:
         Register a table to the creation publication.
         """
         source = self.get_source(source_id)
+        if not self._is_postgres_source(source):
+            table_repo = TableMetadataRepository(self.db)
+            existing = table_repo.get_by_source_and_name(source_id, table_name)
+            if not existing:
+                table_repo.create(source_id=source_id, table_name=table_name, schema_table={})
+            source.total_tables = len(table_repo.get_by_source_id(source_id))
+            self.db.commit()
+            return
         try:
             conn = self._get_connection(source)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
@@ -1108,6 +1312,12 @@ class SourceService:
         Unregister (drop) a table from the publication.
         """
         source = self.get_source(source_id)
+        if not self._is_postgres_source(source):
+            table_repo = TableMetadataRepository(self.db)
+            table_repo.delete_table(source_id, table_name)
+            source.total_tables = len(table_repo.get_by_source_id(source_id))
+            self.db.commit()
+            return
         try:
             conn = self._get_connection(source)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
@@ -1149,6 +1359,23 @@ class SourceService:
         except Exception as e:
             logger.warning("Redis cache error: %s", e)
 
+        if not self._is_postgres_source(source):
+            try:
+                tables = self._discover_kafka_tables(source)
+                try:
+                    import json
+
+                    redis_client = RedisClient.get_instance()
+                    redis_client.setex(cache_key, 300, json.dumps(tables))
+                except Exception as e:
+                    logger.warning("Failed to cache tables for source %s: %s", source_id, e)
+                return tables
+            except Exception as e:
+                logger.error(
+                    "Failed to fetch available Kafka topics for source %s: %s", source.name, e
+                )
+                raise ValueError(f"Failed to fetch topics: {str(e)}")
+
         # 2. Fetch from DB
         try:
             conn = self._get_connection(source)
@@ -1186,6 +1413,22 @@ class SourceService:
         """
         source = self.get_source(source_id)
         cache_key = f"source:{source_id}:tables"
+
+        if not self._is_postgres_source(source):
+            tables = self._sync_kafka_tables(source)
+            try:
+                import json
+
+                redis_client = RedisClient.get_instance()
+                redis_client.setex(cache_key, 300, json.dumps(tables))
+            except Exception as e:
+                logger.error(
+                    "Failed to update cache during refresh for source %s: %s",
+                    source_id,
+                    e,
+                )
+            self.db.commit()
+            return tables
 
         try:
             conn = self._get_connection(source)
@@ -1256,6 +1499,14 @@ class SourceService:
             logger.warning("Redis cache error: %s", e)
 
         schema_data = {}
+
+        if not self._is_postgres_source(source):
+            tables = self.fetch_available_tables(source_id)
+            if table_name:
+                tables = [table for table in tables if table_name.lower() in table.lower()]
+            for table in tables:
+                schema_data[table] = []
+            return schema_data
 
         try:
             conn = self._get_connection(source)
@@ -1336,8 +1587,8 @@ class SourceService:
 
         # Prepare base names for duplication
         base_name = original_source.name
-        base_rep_name = original_source.replication_name
-        base_pub_name = original_source.publication_name
+        base_rep_name = original_source.replication_name or "replication_slot"
+        base_pub_name = original_source.publication_name or "publication"
 
         # Generate new name with "-copy" prefix
         # Use a try-catch approach with retry logic in case of race conditions
@@ -1364,19 +1615,20 @@ class SourceService:
 
             try:
                 # 3. Create new source configuration
-                source_data = SourceCreate(
-                    name=new_name,
-                    pg_host=original_source.pg_host,
-                    pg_port=original_source.pg_port,
-                    pg_database=original_source.pg_database,
-                    pg_username=original_source.pg_username,
-                    pg_password=(
+                config = dict(original_source.config or {})
+                if self._is_postgres_source(original_source):
+                    config["password"] = (
                         decrypt_value(original_source.pg_password)
                         if original_source.pg_password
                         else None
-                    ),
-                    publication_name=attempt_pub_name,
-                    replication_name=attempt_rep_name,
+                    )
+                    config["publication_name"] = attempt_pub_name
+                    config["replication_name"] = attempt_rep_name
+
+                source_data = SourceCreate(
+                    name=new_name,
+                    type=original_source.type,
+                    config=config,
                 )
 
                 created_source = self.create_source(source_data)

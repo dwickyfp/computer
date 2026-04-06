@@ -13,6 +13,7 @@ Strategy
 
 import os
 import base64
+import sys
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -24,7 +25,7 @@ from fastapi.testclient import TestClient
 # ─── Inject env-vars before Settings / app are imported ──────────────────────
 
 
-def pytest_configure(config):
+def _bootstrap_test_env() -> None:
     """Set mandatory env-vars so Pydantic Settings validation passes."""
     # 32-byte key (ASCII) — deterministic so AES-256-GCM round-trips work
     _raw_key = b"rosetta_test_key_32bytes_xxxx!!!!"  # exactly 32 bytes
@@ -36,8 +37,17 @@ def pytest_configure(config):
     os.environ.setdefault("SECRET_KEY", "rosetta-unit-test-secret-key-minimum32!!")
     os.environ.setdefault("CREDENTIAL_ENCRYPTION_KEY", _b64_key)
     os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
-    os.environ.setdefault("APP_ENV", "test")
+    os.environ.setdefault("APP_ENV", "development")
     os.environ.setdefault("WORKER_ENABLED", "false")
+
+
+_bootstrap_test_env()
+sys.modules.setdefault("celery", MagicMock())
+
+
+def pytest_configure(config):
+    """Re-apply test env during pytest startup."""
+    _bootstrap_test_env()
 
 
 # ─── Late import of app (after env-vars are set) ─────────────────────────────
@@ -58,6 +68,15 @@ def make_source_ns(**overrides) -> SimpleNamespace:
     defaults: dict[str, Any] = dict(
         id=1,
         name="test-source",
+        type="POSTGRES",
+        config={
+            "host": "localhost",
+            "port": 5432,
+            "database": "testdb",
+            "username": "replication_user",
+            "publication_name": "dbz_publication",
+            "replication_name": "dbz_slot",
+        },
         pg_host="localhost",
         pg_port=5432,
         pg_database="testdb",
@@ -85,7 +104,6 @@ def make_destination_ns(**overrides) -> SimpleNamespace:
         config={"account": "xy12345", "user": "ETL_USER"},
         total_tables=0,
         last_table_check_at=None,
-        chain_client_id=None,
         # is_used_in_active_pipeline has default=False in DestinationResponse — omitted
         created_at=NOW,
         updated_at=NOW,
@@ -115,16 +133,11 @@ def make_pipeline_ns(**overrides) -> SimpleNamespace:
     defaults: dict[str, Any] = dict(
         id=1,
         name="test-pipeline",
-        source_type="POSTGRES",
         source_id=1,
-        chain_client_id=None,
-        catalog_database_id=None,
-        catalog_table_id=None,
         status="PAUSE",
         ready_refresh=False,
         last_refresh_at=None,
         source=make_source_ns(),
-        chain_client=None,
         destinations=[],
         pipeline_metadata=make_pipeline_metadata_ns(),
         pipeline_progress=None,

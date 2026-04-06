@@ -16,7 +16,6 @@ import {
 } from '@/components/ui/sheet'
 import { PostgresTableConfig } from '@/features/pipelines/components/postgres-table-config'
 import { PrimaryKeyDrawer } from '@/features/pipelines/components/primary-key-drawer'
-import { RosettaTableConfig } from '@/features/pipelines/components/rosetta-table-config'
 import { SnowflakeTableConfig } from '@/features/pipelines/components/snowflake-table-config'
 import { TableCustomSqlCard } from '@/features/pipelines/components/table-custom-sql-card'
 import { TableFilterCard } from '@/features/pipelines/components/table-filter-card'
@@ -273,7 +272,7 @@ export function SourceTableDrawer({
               <SheetDescription>
                 Configure table synchronization for{' '}
                 <span className='font-medium text-foreground'>
-                  {pipeline.source?.name ?? 'Rosetta Chain'}
+                  {pipeline.source?.name ?? 'Unknown Source'}
                 </span>
               </SheetDescription>
             </SheetHeader>
@@ -304,39 +303,6 @@ export function SourceTableDrawer({
                     pipelineId={pipeline.id}
                     pipelineDestinationId={selectedDestinationId!}
                     onRefresh={loadTables}
-                  />
-                ) : destinationType === 'ROSETTA' ? (
-                  <RosettaTableConfig
-                    tables={filteredTables}
-                    pipelineId={pipeline.id}
-                    pipelineDestinationId={selectedDestinationId!}
-                    destination={currentDestination?.destination as any}
-                    onRefresh={loadTables}
-                    onEditFilter={(table: TableWithSyncInfo, id: number) => {
-                      setActiveTable(table)
-                      setActiveSyncConfigId(id)
-                      setActiveMode('filter')
-                    }}
-                    onEditCustomSql={(table: TableWithSyncInfo, id: number) => {
-                      setActiveTable(table)
-                      setActiveSyncConfigId(id)
-                      setActiveMode('custom')
-                    }}
-                    onEditTargetName={(table: TableWithSyncInfo, id: number) => {
-                      setActiveTable(table)
-                      setActiveSyncConfigId(id)
-                      setActiveMode('target')
-                    }}
-                    onEditTags={(table: TableWithSyncInfo, id: number) => {
-                      setActiveTable(table)
-                      setActiveSyncConfigId(id)
-                      setActiveMode('tags')
-                    }}
-                    onEditPrimaryKeys={(table: TableWithSyncInfo, id: number) => {
-                      setActiveTable(table)
-                      setActiveSyncConfigId(id)
-                      setActiveMode('primary-keys')
-                    }}
                   />
                 ) : (
                   <PostgresTableConfig

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from '@tanstack/react-router'
-import { api } from '@/repo/client'
+import { pipelinesRepo, type TableSyncDetails } from '@/repo/pipelines'
+import { pipelineKeys } from '@/repo/query-keys'
 import {
   RefreshCw,
   Database,
@@ -45,39 +46,6 @@ import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { LineageFlowDiagram } from '../components/lineage-flow-diagram'
 
-interface TableSyncDetails {
-  id: number
-  pipeline: { id: number; name: string; status: string }
-  source: { id: number; name: string; database: string }
-  destination: { id: number; name: string; type: string }
-  table_name: string
-  table_name_target: string
-  custom_sql: string | null
-  filter_sql: string | null
-  primary_key_column_target: string | null
-  tags: string[]
-  record_count: number
-  is_error: boolean
-  error_message: string | null
-  lineage_metadata: LineageMetadata | null
-  lineage_status: string
-  lineage_error: string | null
-  lineage_generated_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-interface LineageMetadata {
-  version: number
-  source_tables: { table: string; type: string }[]
-  source_columns: string[]
-  output_columns: string[]
-  column_lineage: Record<string, { sources: string[]; transform: string }>
-  referenced_tables: string[]
-  parsed_at: string
-  error?: string
-}
-
 export default function TableSyncDetailsPage() {
   const params = useParams({
     from: '/_authenticated/pipelines/$pipelineId/destinations/$destId/tables/$syncId',
@@ -88,24 +56,18 @@ export default function TableSyncDetailsPage() {
   const queryClient = useQueryClient()
 
   const { data, isLoading, error } = useQuery<TableSyncDetails>({
-    queryKey: ['table-sync-details', pipelineId, destId, syncId],
-    queryFn: () =>
-      api
-        .get(`/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}`)
-        .then((r) => r.data),
+    queryKey: pipelineKeys.tableSyncDetails(pipelineId, destId, syncId),
+    queryFn: () => pipelinesRepo.getTableSyncDetail(pipelineId, destId, syncId),
     refetchInterval: 5000,
   })
 
   const generateLineage = useMutation({
-    mutationFn: () =>
-      api.post(
-        `/pipelines/${pipelineId}/destinations/${destId}/tables/${syncId}/lineage/generate`
-      ),
+    mutationFn: () => pipelinesRepo.generateLineage(pipelineId, destId, syncId),
     onSuccess: () => {
       toast.success('Lineage generation started')
       setTimeout(() => {
         queryClient.invalidateQueries({
-          queryKey: ['table-sync-details', pipelineId, destId, syncId],
+          queryKey: pipelineKeys.tableSyncDetails(pipelineId, destId, syncId),
         })
       }, 300)
     },

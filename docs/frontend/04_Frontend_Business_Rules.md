@@ -4,7 +4,7 @@
 
 | Rule                                      | Description                                                                                                                                            |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Always use `api` from `@/repo/client`** | Direct `axios` imports break base URL resolution. All HTTP calls must go through `import { api } from '@/repo/client'`.                                |
+| **Only repo files use `api` from `@/repo/client`** | All HTTP calls must go through the shared fetch-based client, but components/hooks/routes must consume repo modules instead of importing the client directly. |
 | **Base URL resolution**                   | `VITE_API_URL` env var takes priority. In dev mode, defaults to `http://localhost:8000/api/v1`. In production, uses `window.location.origin + '/api'`. |
 | **No hardcoded API paths**                | All API paths must be defined in `src/repo/*.ts` files. Never hardcode `/api/v1/...` strings in components.                                            |
 

@@ -45,7 +45,6 @@ export function DestinationsPage() {
     }, [])
 
     const destinations = (data?.destinations ?? [])
-        .filter((d) => d.type !== 'ROSETTA')
         .map((d) => ({
             ...d,
             total_tables: d.total_tables ?? 0,
@@ -66,7 +65,7 @@ export function DestinationsPage() {
                     <div>
                         <h2 className='text-2xl font-bold tracking-tight'>Destinations</h2>
                         <p className='text-muted-foreground'>
-                            Manage your Snowflake data destinations.
+                            Manage your Snowflake, PostgreSQL, and Kafka destinations.
                         </p>
                     </div>
                     <DestinationsPrimaryButtons

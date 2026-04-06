@@ -59,12 +59,14 @@ interface SourceDetailsListTableProps {
   sourceId: number
   isPublicationEnabled: boolean
   publishedTableNames: string[]
+  sourceType?: 'POSTGRES' | 'KAFKA'
 }
 
 export function SourceDetailsListTable({
   sourceId: propSourceId,
   isPublicationEnabled,
   publishedTableNames,
+  sourceType = 'POSTGRES',
 }: SourceDetailsListTableProps) {
   const id = propSourceId
   const queryClient = useQueryClient()
@@ -80,6 +82,7 @@ export function SourceDetailsListTable({
   const [isLoadPresetOpen, setIsLoadPresetOpen] = useState(false)
   const [saveMode, setSaveMode] = useState<'new' | 'replace'>('new')
   const [presetToReplace, setPresetToReplace] = useState<string>('')
+  const canManageSourceObjects = sourceType === 'KAFKA' || isPublicationEnabled
 
   const { data: tablesRaw, isLoading } = useQuery({
     queryKey: ['source-available-tables', id],
@@ -261,11 +264,11 @@ export function SourceDetailsListTable({
             size='sm'
             className='h-7 text-xs'
             onClick={() => registerTableMutation.mutate(tableName)}
-            disabled={isProcessing || !isPublicationEnabled}
+            disabled={isProcessing || !canManageSourceObjects}
           >
             {isProcessing ? (
               <Loader2 className='h-3 w-3 animate-spin' />
-            ) : !isPublicationEnabled ? (
+            ) : !canManageSourceObjects ? (
               <>
                 <Lock className='mr-1 h-3 w-3' />
                 Add

@@ -1,12 +1,12 @@
 import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
-import { AxiosError } from 'axios'
 import {
   QueryCache,
   QueryClient,
   QueryClientProvider,
 } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
+import { ApiError } from '@/repo/client'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -29,10 +29,7 @@ const queryClient = new QueryClient({
         if (import.meta.env.DEV) return false
         if (failureCount > 3) return false
 
-        return !(
-          error instanceof AxiosError &&
-          [401, 403].includes(error.response?.status ?? 0)
-        )
+        return !(error instanceof ApiError && [401, 403].includes(error.status))
       },
       refetchOnWindowFocus: import.meta.env.PROD,
       // Never poll in the background — paused when the tab is hidden
@@ -42,7 +39,7 @@ const queryClient = new QueryClient({
     mutations: {
       onError: (error) => {
         // Handle 304 specifically before falling through to generic handler
-        if (error instanceof AxiosError && error.response?.status === 304) {
+        if (error instanceof ApiError && error.status === 304) {
           toast.error('Content not modified!')
           return
         }
@@ -52,20 +49,20 @@ const queryClient = new QueryClient({
   },
   queryCache: new QueryCache({
     onError: (error) => {
-      if (error instanceof AxiosError) {
-        if (error.response?.status === 401) {
+      if (error instanceof ApiError) {
+        if (error.status === 401) {
           toast.error('Session expired!')
           useAuthStore.getState().auth.reset()
           router.navigate({ to: '/clerk/sign-in' })
         }
-        if (error.response?.status === 500) {
+        if (error.status === 500) {
           toast.error('Internal Server Error!')
           // Only navigate to error page in production to avoid disrupting HMR in development
           if (import.meta.env.PROD) {
             router.navigate({ to: '/500' })
           }
         }
-        if (error.response?.status === 403) {
+        if (error.status === 403) {
           // router.navigate("/forbidden", { replace: true });
         }
       }

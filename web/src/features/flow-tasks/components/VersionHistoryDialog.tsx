@@ -2,9 +2,15 @@
  * VersionHistoryDialog — lists graph versions for a flow task
  * and allows rollback to a previous version.
  */
-
 import { useState } from 'react'
+import { formatDistanceToNow } from 'date-fns'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { flowTasksRepo, type FlowTaskGraphVersion } from '@/repo/flow-tasks'
+import { flowTaskKeys } from '@/repo/query-keys'
+import { RotateCcw, GitBranch } from 'lucide-react'
+import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -12,14 +18,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { flowTasksRepo, type FlowTaskGraphVersion } from '@/repo/flow-tasks'
-import { toast } from 'sonner'
-import { formatDistanceToNow } from 'date-fns'
-import { RotateCcw, GitBranch } from 'lucide-react'
 
 interface VersionHistoryDialogProps {
   open: boolean
@@ -37,7 +37,7 @@ export function VersionHistoryDialog({
     useState<FlowTaskGraphVersion | null>(null)
 
   const { data } = useQuery({
-    queryKey: ['flow-task-versions', flowTaskId],
+    queryKey: flowTaskKeys.versions(flowTaskId),
     queryFn: () => flowTasksRepo.listVersions(flowTaskId),
     enabled: open,
   })
@@ -51,17 +51,16 @@ export function VersionHistoryDialog({
       onOpenChange(false)
       await new Promise((r) => setTimeout(r, 300))
       queryClient.invalidateQueries({
-        queryKey: ['flow-task-graph', flowTaskId],
+        queryKey: flowTaskKeys.graph(flowTaskId),
       })
       queryClient.invalidateQueries({
-        queryKey: ['flow-task-versions', flowTaskId],
+        queryKey: flowTaskKeys.versions(flowTaskId),
       })
     },
-    onError: (err: Error) =>
-      toast.error(err.message || 'Failed to rollback'),
+    onError: (err: Error) => toast.error(err.message || 'Failed to rollback'),
   })
 
-  const versions = data?.data?.items ?? []
+  const versions = data?.items ?? []
 
   return (
     <>
@@ -79,7 +78,7 @@ export function VersionHistoryDialog({
           </DialogHeader>
           <ScrollArea className='max-h-[400px]'>
             {versions.length === 0 ? (
-              <p className='text-muted-foreground py-8 text-center text-sm'>
+              <p className='py-8 text-center text-sm text-muted-foreground'>
                 No versions saved yet.
               </p>
             ) : (
@@ -92,9 +91,7 @@ export function VersionHistoryDialog({
                     <div className='space-y-1'>
                       <div className='flex items-center gap-2'>
                         <Badge variant='outline'>v{ver.version}</Badge>
-                        {idx === 0 && (
-                          <Badge variant='secondary'>Latest</Badge>
-                        )}
+                        {idx === 0 && <Badge variant='secondary'>Latest</Badge>}
                       </div>
                       {ver.change_summary && (
                         <p className='text-xs text-muted-foreground'>
@@ -102,8 +99,8 @@ export function VersionHistoryDialog({
                         </p>
                       )}
                       <p className='text-[10px] text-muted-foreground'>
-                        {ver.nodes_json.length} nodes ·{' '}
-                        {ver.edges_json.length} edges ·{' '}
+                        {ver.nodes_json.length} nodes · {ver.edges_json.length}{' '}
+                        edges ·{' '}
                         {formatDistanceToNow(new Date(ver.created_at), {
                           addSuffix: true,
                         })}
@@ -136,9 +133,7 @@ export function VersionHistoryDialog({
           title='Rollback Graph'
           desc={`Restore the graph to version ${rollbackTarget.version}? The current graph will be saved as a new version first.`}
           confirmText='Rollback'
-          handleConfirm={() =>
-            rollbackMutation.mutate(rollbackTarget.version)
-          }
+          handleConfirm={() => rollbackMutation.mutate(rollbackTarget.version)}
           isLoading={rollbackMutation.isPending}
         />
       )}
