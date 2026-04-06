@@ -270,17 +270,24 @@ class TestParseRecord:
         result = h._parse_record(event)
         assert result is None
 
-    def test_none_value_returns_empty_payload(self):
-        """event.value() returning None → defaults to empty dict."""
+    def test_none_value_returns_none_for_tombstone(self):
+        """Debezium tombstones must be dropped instead of routed downstream."""
         h = _make_handler()
         event = MagicMock()
         event.destination.return_value = "a.b.c"
         event.key.return_value = json.dumps({"id": 1})
         event.value.return_value = None
-        # Should not raise; may return None (no op) or a record with empty value
         result = h._parse_record(event)
-        # Either None (no recognizable op) or CDCRecord — both are valid
-        assert result is None or isinstance(result, CDCRecord)
+        assert result is None
+
+    def test_string_null_value_returns_none_for_tombstone(self):
+        h = _make_handler()
+        event = MagicMock()
+        event.destination.return_value = "a.b.c"
+        event.key.return_value = json.dumps({"id": 1})
+        event.value.return_value = "null"
+        result = h._parse_record(event)
+        assert result is None
 
 
 # ===========================================================================

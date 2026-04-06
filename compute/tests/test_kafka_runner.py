@@ -137,11 +137,13 @@ class _FakeConsumer:
         self.subscribed = []
         self.commits = 0
         self.closed = False
+        self.poll_timeouts = []
 
     def subscribe(self, topics):
         self.subscribed = list(topics)
 
     def poll(self, timeout):
+        self.poll_timeouts.append(timeout)
         if self._messages:
             return self._messages.pop(0)
         return None
@@ -189,7 +191,51 @@ def test_run_commits_offsets_after_successful_routing():
     consumer = fake_consumer_holder["consumer"]
     assert consumer.commits == 1
     assert consumer.last_commit_async is False
+    assert consumer.poll_timeouts == [1.0, 0.0]
     assert tracked[0][0] == "orders"
+
+
+def test_run_drains_available_messages_without_extra_blocking_poll():
+    runner = _make_runner()
+    runner._schema_tracker.track_record = lambda table_name, value, key: None
+    msg_1 = _FakeMessage(
+        topic="dbserver1.inventory.orders",
+        key=b'{"id": 1}',
+        value=b'{"id":1,"rosetta_timestamp":1700000000000,"rosetta_operation":"u"}',
+    )
+    msg_2 = _FakeMessage(
+        topic="dbserver1.inventory.orders",
+        key=b'{"id": 2}',
+        value=b'{"id":2,"rosetta_timestamp":1700000000001,"rosetta_operation":"u"}',
+    )
+    fake_consumer_holder = {}
+    captured = {}
+
+    def _consumer_factory(config):
+        consumer = _FakeConsumer(config, [msg_1, msg_2, None])
+        fake_consumer_holder["consumer"] = consumer
+        return consumer
+
+    stop_event = SimpleNamespace(
+        is_set=lambda: state["stopped"],
+        set=lambda: state.__setitem__("stopped", True),
+    )
+    state = {"stopped": False}
+
+    class _Router:
+        def route_batches(self, records_by_table):
+            captured.update(records_by_table)
+            state["stopped"] = True
+
+    with patch.dict(
+        "sys.modules",
+        {"confluent_kafka": SimpleNamespace(Consumer=_consumer_factory)},
+    ):
+        runner.run("pipe", ["orders"], _Router(), stop_event)
+
+    consumer = fake_consumer_holder["consumer"]
+    assert consumer.poll_timeouts == [1.0, 0.0, 0.0]
+    assert len(captured["orders"]) == 2
 
 
 def test_run_does_not_commit_offsets_when_routing_fails():

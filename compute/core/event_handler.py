@@ -57,8 +57,18 @@ class CDCEventHandler(BasePythonChangeHandler):
             key_data = record.key()
             value_data = record.value()
 
+            # Debezium emits a second tombstone message after deletes when
+            # tombstones.on.delete=true. That transport-level marker carries the
+            # key but no value and must not be routed as a normal CDC record.
+            if value_data is None:
+                return None
+
+            value_str = str(value_data).strip()
+            if value_str == "null":
+                return None
+
             key_obj = json.loads(str(key_data)) if key_data is not None else {}
-            value_obj = json.loads(str(value_data)) if value_data is not None else {}
+            value_obj = json.loads(value_str)
 
             payload = value_obj.get("payload", {})
             op = payload.get("op")
@@ -106,4 +116,3 @@ class CDCEventHandler(BasePythonChangeHandler):
             records_by_table.setdefault(cdc_record.table_name, []).append(cdc_record)
 
         self._router.route_batches(records_by_table)
-

@@ -110,6 +110,50 @@ class KafkaSourceRunner(BaseSourceRunner):
             return self._message_to_debezium_record(msg, value_obj)
         return self._message_to_plain_json_record(msg, value_obj)
 
+    def _add_message_to_batch(
+        self,
+        msg,
+        records_by_table: dict[str, list[CDCRecord]],
+    ) -> None:
+        if msg.error():
+            raise RuntimeError(str(msg.error()))
+
+        record = self._message_to_record(msg)
+        if record is None:
+            return
+
+        self._schema_tracker.track_record(
+            record.table_name,
+            record.value,
+            record.key,
+        )
+        records_by_table.setdefault(record.table_name, []).append(record)
+
+    def _collect_batch(self, max_batch: int) -> tuple[dict[str, list[CDCRecord]], int]:
+        """
+        Read one blocking message, then drain the currently available burst.
+
+        This avoids the extra 1-second wait that low-volume pipelines used to
+        incur after every message while still allowing the loop to batch bursts.
+        """
+        records_by_table: dict[str, list[CDCRecord]] = {}
+
+        msg = self._consumer.poll(1.0)
+        if msg is None:
+            return records_by_table, 0
+
+        polled_messages = 1
+        self._add_message_to_batch(msg, records_by_table)
+
+        for _ in range(max(0, max_batch - 1)):
+            msg = self._consumer.poll(0.0)
+            if msg is None:
+                break
+            polled_messages += 1
+            self._add_message_to_batch(msg, records_by_table)
+
+        return records_by_table, polled_messages
+
     def run(
         self,
         pipeline_name: str,
@@ -128,25 +172,7 @@ class KafkaSourceRunner(BaseSourceRunner):
         max_batch = cfg.pipeline.max_batch_size
         while not stop_event.is_set():
             poll_started = time.perf_counter()
-            records_by_table: dict[str, list[CDCRecord]] = {}
-            polled_messages = 0
-            for _ in range(max_batch):
-                msg = self._consumer.poll(1.0)
-                if msg is None:
-                    break
-                polled_messages += 1
-                if msg.error():
-                    raise RuntimeError(str(msg.error()))
-
-                record = self._message_to_record(msg)
-                if record is None:
-                    continue
-                self._schema_tracker.track_record(
-                    record.table_name,
-                    record.value,
-                    record.key,
-                )
-                records_by_table.setdefault(record.table_name, []).append(record)
+            records_by_table, polled_messages = self._collect_batch(max_batch)
 
             observe(
                 "kafka_source.poll_duration",

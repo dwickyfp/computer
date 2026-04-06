@@ -27,6 +27,32 @@ class _FakeDuckDBConnection:
         return self
 
 
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+        self.execute_calls = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, sql, params=None):
+        self.execute_calls += 1
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _FakePGConnection:
+    def __init__(self, rows):
+        self._cursor = _FakeCursor(rows)
+
+    def cursor(self):
+        return self._cursor
+
+
 def _make_destination() -> PostgreSQLDestination:
     destination = Destination.from_dict(
         {
@@ -238,3 +264,15 @@ def test_insert_batch_uses_record_key_when_delete_payload_is_empty():
         )
 
     assert captured["id"] == [7]
+
+
+def test_get_target_primary_key_uses_cache_after_first_lookup():
+    destination = _make_destination()
+    destination._pg_conn = _FakePGConnection(rows=[("id",)])
+
+    first = destination._get_target_primary_key("orders")
+    second = destination._get_target_primary_key("orders")
+
+    assert first == ["id"]
+    assert second == ["id"]
+    assert destination._pg_conn._cursor.execute_calls == 1

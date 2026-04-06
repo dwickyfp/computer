@@ -56,6 +56,7 @@ class PostgreSQLDestination(BaseDestination):
         self._duckdb_conn: Optional[duckdb.DuckDBPyConnection] = None
         self._pg_conn: Optional[psycopg2.extensions.connection] = None
         self._staging_tables: set[str] = set()  # Track created staging tables for reuse
+        self._target_pk_cache: dict[str, list[str]] = {}
         self._validate_config()
 
     def _validate_config(self) -> None:
@@ -194,6 +195,7 @@ class PostgreSQLDestination(BaseDestination):
 
             # Reset staging table tracker on new connection
             self._staging_tables.clear()
+            self._target_pk_cache.clear()
 
             # Install and load PostgreSQL extension
             self._duckdb_conn.execute("INSTALL postgres;")
@@ -1258,6 +1260,10 @@ class PostgreSQLDestination(BaseDestination):
         Returns:
             List of primary key column names, or empty list if no PK found
         """
+        cached = self._target_pk_cache.get(target_table)
+        if cached is not None:
+            return list(cached)
+
         try:
             with self._pg_conn.cursor() as cursor:
                 cursor.execute(
@@ -1278,6 +1284,7 @@ class PostgreSQLDestination(BaseDestination):
                     self._logger.debug(
                         f"Detected target PK for '{target_table}': {pk_cols}"
                     )
+                    self._target_pk_cache[target_table] = list(pk_cols)
                 return pk_cols
         except Exception as e:
             self._logger.warning(
@@ -1385,6 +1392,7 @@ class PostgreSQLDestination(BaseDestination):
         source_table: str,
         target_table: str,
         key_columns: list[str],
+        table_schema: dict[str, dict],
     ) -> int:
         """
         Apply a transformed DuckDB temp table into PostgreSQL atomically.
@@ -1393,7 +1401,6 @@ class PostgreSQLDestination(BaseDestination):
         if row_count == 0:
             return 0
 
-        table_schema = self._get_table_schema(target_table)
         columns = self._get_duckdb_columns(source_table)
         insert_cols = ", ".join([f'"{column}"' for column in columns])
         select_list = ", ".join(
@@ -1452,6 +1459,7 @@ class PostgreSQLDestination(BaseDestination):
             delete_table,
             target_table,
             key_columns,
+            target_schema or self._get_table_schema(target_table),
         )
 
     def _delete_duckdb_table_from_postgres(
@@ -1459,8 +1467,8 @@ class PostgreSQLDestination(BaseDestination):
         delete_table: str,
         target_table: str,
         key_columns: list[str],
+        table_schema: dict[str, dict],
     ) -> int:
-        table_schema = self._get_table_schema(target_table)
         self._dedupe_duckdb_table(delete_table, key_columns)
         try:
             self._duckdb_conn.execute("BEGIN TRANSACTION")
@@ -1631,6 +1639,7 @@ class PostgreSQLDestination(BaseDestination):
                     transformed_table,
                     target_table,
                     key_columns,
+                    target_schema,
                 )
             else:
                 if not key_columns and records:
@@ -1646,6 +1655,7 @@ class PostgreSQLDestination(BaseDestination):
                     delete_table,
                     target_table,
                     key_columns,
+                    target_schema,
                 )
 
             observe(
@@ -1866,6 +1876,7 @@ class PostgreSQLDestination(BaseDestination):
 
         # Clear staging table tracker
         self._staging_tables.clear()
+        self._target_pk_cache.clear()
 
     def close(self) -> None:
         """Close DuckDB and PostgreSQL connections."""
@@ -1885,6 +1896,7 @@ class PostgreSQLDestination(BaseDestination):
 
         # Clear staging table tracker
         self._staging_tables.clear()
+        self._target_pk_cache.clear()
 
         self._is_initialized = False
         self._logger.info(f"PostgreSQL destination closed: {self._config.name}")
