@@ -28,7 +28,7 @@ dependencies = [
     "redis>=5.0.0",
     "celery[redis]>=5.4.0,<6.0.0",
     "psutil>=7.2.2",
-    "duckdb>=1.4.4",
+    "duckdb==1.5.1",
     "pyarrow>=23.0.0",
     "sqlglot>=26.0.0",
 ]

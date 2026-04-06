@@ -1391,11 +1391,25 @@ class PostgreSQLDestination(BaseDestination):
 
         delete_table = f"_delete_{re.sub(r'[^a-zA-Z0-9_]', '_', source_table)}"
         self._insert_batch_to_duckdb(records, delete_table)
+        return self._delete_duckdb_table_from_postgres(
+            delete_table,
+            target_table,
+            key_columns,
+        )
+
+    def _delete_duckdb_table_from_postgres(
+        self,
+        delete_table: str,
+        target_table: str,
+        key_columns: list[str],
+    ) -> int:
         table_schema = self._get_table_schema(target_table)
         self._dedupe_duckdb_table(delete_table, key_columns)
         try:
             self._duckdb_conn.execute("BEGIN TRANSACTION")
-            self._delete_matching_rows(delete_table, target_table, key_columns, table_schema)
+            self._delete_matching_rows(
+                delete_table, target_table, key_columns, table_schema
+            )
             self._duckdb_conn.execute("COMMIT")
             return self._count_duckdb_rows(delete_table)
         except Exception as exc:
@@ -1477,6 +1491,7 @@ class PostgreSQLDestination(BaseDestination):
         target_table = table_sync.table_name_target
         safe_table_name = source_table.replace(".", "_").replace("-", "_")
         transformed_table = None
+        delete_table = None
 
         try:
             # Validate target table exists on destination before MERGE
@@ -1493,15 +1508,36 @@ class PostgreSQLDestination(BaseDestination):
 
             started = time.perf_counter()
 
-            # Delete events are applied directly by key on the base replication path.
-            delete_records: list[CDCRecord] = []
-            upsert_records = records
-            if not table_sync.filter_sql and not table_sync.custom_sql:
-                delete_records = [record for record in records if record.is_delete]
-                upsert_records = [record for record in records if not record.is_delete]
+            delete_records = [record for record in records if record.is_delete]
+            upsert_records = [record for record in records if not record.is_delete]
 
             output_columns: set[str] = set()
             written = 0
+            key_columns: list[str] = []
+
+            if delete_records:
+                delete_table = f"_delete_input_{safe_table_name}"
+                self._insert_batch_to_duckdb(delete_records, delete_table)
+
+                if table_sync.filter_sql:
+                    self._apply_filters_in_duckdb(delete_table, table_sync.filter_sql)
+
+                delete_output_columns = set(self._get_duckdb_columns(delete_table))
+                delete_count = self._count_duckdb_rows(delete_table)
+
+                if delete_count > 0:
+                    if table_sync.custom_sql:
+                        raise DestinationException(
+                            "DELETE events are not supported with custom_sql pipelines. "
+                            "Remove custom_sql or handle deletes upstream."
+                        )
+
+                    key_columns = self._resolve_key_columns(
+                        delete_records,
+                        table_sync,
+                        target_table,
+                        delete_output_columns,
+                    )
 
             if upsert_records:
                 self._insert_batch_to_duckdb(upsert_records, source_table)
@@ -1532,17 +1568,17 @@ class PostgreSQLDestination(BaseDestination):
                     key_columns,
                 )
             else:
-                key_columns = self._resolve_key_columns(
-                    records,
-                    table_sync,
-                    target_table,
-                    set(records[0].value.keys()) if records else set(),
-                )
+                if not key_columns and records:
+                    key_columns = self._resolve_key_columns(
+                        records,
+                        table_sync,
+                        target_table,
+                        set(records[0].value.keys()),
+                    )
 
-            if delete_records:
-                written += self._delete_records_from_postgres(
-                    delete_records,
-                    source_table,
+            if delete_records and delete_table and self._count_duckdb_rows(delete_table) > 0:
+                written += self._delete_duckdb_table_from_postgres(
+                    delete_table,
                     target_table,
                     key_columns,
                 )
@@ -1636,6 +1672,10 @@ class PostgreSQLDestination(BaseDestination):
                     if transformed_table:
                         self._duckdb_conn.execute(
                             f'DROP TABLE IF EXISTS "{transformed_table}"'
+                        )
+                    if delete_table:
+                        self._duckdb_conn.execute(
+                            f'DROP TABLE IF EXISTS "{delete_table}"'
                         )
             except Exception as e:
                 self._logger.warning(
