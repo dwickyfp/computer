@@ -480,16 +480,16 @@ const sidebarMenuMotionClassName =
 
 const sidebarMenuButtonVariants = cva(
   cn(
-    'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-start text-sm font-normal outline-hidden ring-sidebar-ring hover:bg-sidebar-accent hover:text-[#1f4ee7] dark:hover:text-[#8cc2fd] dark:hover:border-[#192e7a] focus-visible:ring-2 active:bg-sidebar-accent active:text-[#1f4ee7] dark:active:text-[#8cc2fd] dark:active:border-[#192e7a] disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-normal data-[active=true]:text-[#1f4ee7] dark:data-[active=true]:text-[#8cc2fd] dark:data-[active=true]:border-[#192e7a] data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-[#1f4ee7] dark:data-[state=open]:hover:text-[#8cc2fd] group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
+    'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-start text-sm font-normal outline-hidden ring-sidebar-ring hover:bg-sidebar-accent hover:text-white dark:hover:border-[#192e7a] focus-visible:ring-2 active:bg-sidebar-accent active:text-[#1f4ee7] dark:active:text-[#8cc2fd] dark:active:border-[#192e7a] disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-normal data-[active=true]:text-[#1f4ee7] dark:data-[active=true]:text-[#8cc2fd] dark:data-[active=true]:border-[#192e7a] data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-white group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
     sidebarMenuMotionClassName
   ),
   {
     variants: {
       variant: {
         default:
-          'hover:bg-sidebar-accent hover:text-[#1f4ee7] dark:hover:text-[#8cc2fd]',
+          'hover:bg-sidebar-accent hover:text-white',
         outline:
-          'bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-[#1f4ee7] dark:hover:text-[#8cc2fd] hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]',
+          'bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-white hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]',
       },
       size: {
         default: 'h-8 text-sm',
@@ -570,7 +570,7 @@ function SidebarMenuAction({
       data-slot='sidebar-menu-action'
       data-sidebar='menu-action'
       className={cn(
-        'absolute end-1 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground ring-sidebar-ring outline-hidden transition-colors peer-hover/menu-button:text-sidebar-accent-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0',
+        'absolute end-1 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground ring-sidebar-ring outline-hidden transition-colors peer-hover/menu-button:text-white hover:bg-sidebar-accent hover:text-white focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0',
         // Increases the hit area of the button on mobile.
         'after:absolute after:-inset-2 md:after:hidden',
         'peer-data-[size=sm]/menu-button:top-1',
@@ -596,7 +596,7 @@ function SidebarMenuBadge({
       data-sidebar='menu-badge'
       className={cn(
         'pointer-events-none absolute end-1 flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-xs font-medium text-sidebar-foreground tabular-nums select-none',
-        'peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground',
+        'peer-hover/menu-button:text-white peer-data-[active=true]/menu-button:text-sidebar-accent-foreground',
         'peer-data-[size=sm]/menu-button:top-1',
         'peer-data-[size=default]/menu-button:top-1.5',
         'peer-data-[size=lg]/menu-button:top-2.5',
@@ -695,7 +695,7 @@ function SidebarMenuSubButton({
       data-size={size}
       data-active={isActive}
       className={cn(
-        'flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 font-normal text-sidebar-foreground ring-sidebar-ring outline-hidden hover:border-[#192e7a] hover:bg-sidebar-accent hover:text-[#8cc2fd] focus-visible:ring-2 active:border-[#192e7a] active:bg-sidebar-accent active:text-[#8cc2fd] disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-inherit',
+        'flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 font-normal text-sidebar-foreground ring-sidebar-ring outline-hidden hover:border-[#192e7a] hover:bg-sidebar-accent hover:text-white focus-visible:ring-2 active:border-[#192e7a] active:bg-sidebar-accent active:text-[#8cc2fd] disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-inherit',
         'data-[active=true]:border-[#192e7a] data-[active=true]:bg-sidebar-accent data-[active=true]:font-normal data-[active=true]:text-[#8cc2fd]',
         sidebarMenuMotionClassName,
         size === 'sm' && 'text-xs',
