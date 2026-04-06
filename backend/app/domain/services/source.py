@@ -19,9 +19,6 @@ from app.domain.models.source import Source
 from app.domain.repositories.source import SourceRepository
 from app.domain.repositories.wal_monitor_repo import WALMonitorRepository
 from app.domain.repositories.table_metadata_repo import TableMetadataRepository
-from app.domain.repositories.history_schema_evolution_repo import (
-    HistorySchemaEvolutionRepository,
-)
 from app.domain.repositories.pipeline import PipelineRepository
 from app.domain.services.wal_monitor import WALMonitorService
 from app.domain.schemas.source import (
@@ -630,38 +627,33 @@ class SourceService:
             TableSchemaResponse containing columns and diff
         """
         table_repo = TableMetadataRepository(self.db)
-        history_repo = HistorySchemaEvolutionRepository(self.db)
-
         table = table_repo.get_by_id(table_id)
         if not table:
             raise EntityNotFoundError(entity_type="TableMetadata", entity_id=table_id)
 
-        current_version = (
+        histories = (
             self.db.query(HistorySchemaEvolution)
             .filter(HistorySchemaEvolution.table_metadata_list_id == table.id)
-            .count()
-        ) + 1
+            .order_by(HistorySchemaEvolution.version_schema.asc())
+            .all()
+        )
+        latest_version = self._latest_schema_version(table.schema_table, histories)
 
-        if version < 1 or version > current_version:
-            raise ValueError(f"Version must be between 1 and {current_version}")
+        if version < 1 or version > latest_version:
+            raise ValueError(f"Version must be between 1 and {latest_version}")
 
-        # 1. Fetch Schema Column Data
-        if version == current_version:
-            schema_data = table.schema_table
-        else:
-            history = history_repo.get_by_table_and_version(table.id, version)
-            if not history:
-                raise EntityNotFoundError(
-                    entity_type="HistorySchemaEvolution",
-                    entity_id=f"{table.id}-v{version}",
-                )
-
-            # CRITICAL FIX: For INITIAL_LOAD (version 1), schema is in schema_table_new
-            # For subsequent versions, schema is in schema_table_old
-            if history.changes_type == "INITIAL_LOAD":
-                schema_data = history.schema_table_new
-            else:
-                schema_data = history.schema_table_old
+        histories_by_version = {
+            int(history.version_schema): history
+            for history in histories
+            if history.version_schema is not None
+        }
+        schema_data = self._schema_snapshot_for_version(
+            table_id=table.id,
+            version=version,
+            latest_version=latest_version,
+            current_schema=table.schema_table,
+            histories_by_version=histories_by_version,
+        )
 
         # Validate schema data is not empty
         if not schema_data:
@@ -671,18 +663,12 @@ class SourceService:
             # Return empty columns list instead of failing
             schema_data = {}
 
-        columns = []
-        if isinstance(schema_data, dict):
-            columns = list(schema_data.values())
-        elif isinstance(schema_data, list):
-            columns = schema_data
+        columns = self._schema_columns(schema_data)
 
         # 2. Calculate Diff (Changes introduced IN this version)
         diff = None
         if version > 1:
-            # Fetch history for "creation of this version" (Transition V(N-1) -> V(N))
-            # History record with version_schema = N - 1
-            hist_diff = history_repo.get_by_table_and_version(table.id, version - 1)
+            hist_diff = histories_by_version.get(version)
             if hist_diff:
                 old = hist_diff.schema_table_old or {}
                 new = hist_diff.schema_table_new or {}
@@ -710,6 +696,49 @@ class SourceService:
                 )
 
         return TableSchemaResponse(columns=columns, diff=diff)
+
+    @staticmethod
+    def _latest_schema_version(
+        current_schema: Any, histories: List[HistorySchemaEvolution]
+    ) -> int:
+        versions = [
+            int(history.version_schema)
+            for history in histories
+            if history.version_schema is not None
+        ]
+        latest = max(versions, default=0)
+        if latest > 0:
+            return latest
+        return 1 if current_schema else 1
+
+    @staticmethod
+    def _schema_columns(schema_data: Any) -> list[dict]:
+        if isinstance(schema_data, dict):
+            return list(schema_data.values())
+        if isinstance(schema_data, list):
+            return schema_data
+        return []
+
+    def _schema_snapshot_for_version(
+        self,
+        *,
+        table_id: int,
+        version: int,
+        latest_version: int,
+        current_schema: Any,
+        histories_by_version: dict[int, HistorySchemaEvolution],
+    ) -> Any:
+        if version == latest_version:
+            return current_schema
+
+        history = histories_by_version.get(version)
+        if history:
+            return history.schema_table_new or history.schema_table_old or {}
+
+        raise EntityNotFoundError(
+            entity_type="HistorySchemaEvolution",
+            entity_id=f"{table_id}-v{version}",
+        )
 
     def _get_connection(self, source: Source):
         """Helper to get postgres connection"""

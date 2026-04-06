@@ -156,6 +156,10 @@ class _FakeConsumer:
 
 def test_run_commits_offsets_after_successful_routing():
     runner = _make_runner()
+    tracked = []
+    runner._schema_tracker.track_record = lambda table_name, value, key: tracked.append(
+        (table_name, value, key)
+    )
     msg = _FakeMessage(
         topic="dbserver1.inventory.orders",
         key=b'{"id": 1}',
@@ -185,10 +189,12 @@ def test_run_commits_offsets_after_successful_routing():
     consumer = fake_consumer_holder["consumer"]
     assert consumer.commits == 1
     assert consumer.last_commit_async is False
+    assert tracked[0][0] == "orders"
 
 
 def test_run_does_not_commit_offsets_when_routing_fails():
     runner = _make_runner()
+    runner._schema_tracker.track_record = lambda table_name, value, key: None
     msg = _FakeMessage(
         topic="dbserver1.inventory.orders",
         key=b'{"id": 1}',

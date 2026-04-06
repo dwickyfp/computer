@@ -34,6 +34,20 @@ def observe(name: str, value: float, *, unit: str = "ms", **labels: str) -> None
         state.maximum = max(state.maximum, float(value))
 
 
+def increment_counter(
+    name: str, amount: int = 1, *, unit: str = "count", **labels: str
+) -> None:
+    with _lock:
+        state = _metrics.get(name)
+        if state is None:
+            state = MetricState(unit=unit, labels={k: str(v) for k, v in labels.items()})
+            _metrics[name] = state
+        state.count += int(amount)
+        state.total += float(amount)
+        state.last = float(amount)
+        state.maximum = max(state.maximum, float(amount))
+
+
 def set_gauge(name: str, value: float, *, unit: str = "count", **labels: str) -> None:
     with _lock:
         _metrics[name] = MetricState(

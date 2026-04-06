@@ -26,3 +26,64 @@ def test_build_kafka_admin_client_config_excludes_consumer_only_fields():
         "bootstrap.servers": "localhost:9092",
         "security.protocol": "PLAINTEXT",
     }
+
+
+def test_latest_schema_version_uses_max_history_version():
+    service = SourceService(db=None)
+    histories = [
+        SimpleNamespace(version_schema=1),
+        SimpleNamespace(version_schema=2),
+    ]
+
+    latest = service._latest_schema_version({"id": {}}, histories)
+
+    assert latest == 2
+
+
+def test_schema_snapshot_for_historical_version_uses_history_new_schema():
+    service = SourceService(db=None)
+    history_v1 = SimpleNamespace(
+        version_schema=1,
+        schema_table_old={},
+        schema_table_new={"id": {"column_name": "id", "real_data_type": "BIGINT"}},
+    )
+    history_v2 = SimpleNamespace(
+        version_schema=2,
+        schema_table_old={"id": {"column_name": "id", "real_data_type": "BIGINT"}},
+        schema_table_new={
+            "id": {"column_name": "id", "real_data_type": "BIGINT"},
+            "name": {"column_name": "name", "real_data_type": "TEXT"},
+        },
+    )
+
+    schema = service._schema_snapshot_for_version(
+        table_id=3,
+        version=2,
+        latest_version=3,
+        current_schema={
+            "id": {"column_name": "id", "real_data_type": "BIGINT"},
+            "name": {"column_name": "name", "real_data_type": "TEXT"},
+            "active": {"column_name": "active", "real_data_type": "BOOLEAN"},
+        },
+        histories_by_version={1: history_v1, 2: history_v2},
+    )
+
+    assert schema == history_v2.schema_table_new
+
+
+def test_schema_snapshot_for_latest_version_uses_current_schema():
+    service = SourceService(db=None)
+    current_schema = {
+        "id": {"column_name": "id", "real_data_type": "BIGINT"},
+        "name": {"column_name": "name", "real_data_type": "TEXT"},
+    }
+
+    schema = service._schema_snapshot_for_version(
+        table_id=3,
+        version=2,
+        latest_version=2,
+        current_schema=current_schema,
+        histories_by_version={},
+    )
+
+    assert schema == current_schema

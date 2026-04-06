@@ -5,11 +5,14 @@ Provides data access layer for Rosetta Compute Engine.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
+
+from psycopg2.extras import Json
 
 from core.database import DatabaseSession
 from core.db_utils import retry_on_connection_error, is_connection_error
+from core.kafka_schema import classify_schema_change, normalize_schema_definition
 from core.models import (
     Source,
     Destination,
@@ -321,6 +324,197 @@ class TableMetadataRepository:
                 (source_id,),
             )
             return [row["table_name"] for row in session.fetchall()]
+
+    @staticmethod
+    def get_by_source_and_name(
+        source_id: int, table_name: str
+    ) -> Optional[TableMetadataList]:
+        """Get one table metadata row by source and table name."""
+        with DatabaseSession() as session:
+            session.execute(
+                """
+                SELECT * FROM table_metadata_list
+                WHERE source_id = %s AND table_name = %s
+                """,
+                (source_id, table_name),
+            )
+            row = session.fetchone()
+            return TableMetadataList.from_dict(row) if row else None
+
+    @staticmethod
+    def sync_inferred_schema(
+        source_id: int,
+        table_name: str,
+        schema_table: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist an inferred Kafka schema and create version history if it changed."""
+        normalized_schema = normalize_schema_definition(schema_table)
+        if not normalized_schema:
+            return {"updated": False, "schema_table": {}}
+
+        with DatabaseSession() as session:
+            session.execute(
+                """
+                SELECT * FROM table_metadata_list
+                WHERE source_id = %s AND table_name = %s
+                FOR UPDATE
+                """,
+                (source_id, table_name),
+            )
+            row = session.fetchone()
+            if not row:
+                return {
+                    "updated": False,
+                    "reason": "missing_table",
+                    "schema_table": normalized_schema,
+                }
+
+            table = TableMetadataList.from_dict(row)
+            current_schema = normalize_schema_definition(table.schema_table)
+
+            if current_schema == normalized_schema:
+                session.execute(
+                    """
+                    SELECT COALESCE(MAX(version_schema), 0) AS version
+                    FROM history_schema_evolution
+                    WHERE table_metadata_list_id = %s
+                    """,
+                    (table.id,),
+                )
+                version_row = session.fetchone() or {}
+                return {
+                    "updated": False,
+                    "version": int(version_row.get("version") or (1 if current_schema else 0)),
+                    "change_type": None,
+                    "schema_table": current_schema,
+                }
+
+            if not current_schema:
+                session.execute(
+                    """
+                    SELECT id
+                    FROM history_schema_evolution
+                    WHERE table_metadata_list_id = %s AND changes_type = 'INITIAL_LOAD'
+                    ORDER BY id
+                    LIMIT 1
+                    """,
+                    (table.id,),
+                )
+                existing_initial = session.fetchone()
+                if existing_initial:
+                    session.execute(
+                        """
+                        UPDATE history_schema_evolution
+                        SET schema_table_new = %s,
+                            updated_at = TIMEZONE('Asia/Jakarta', NOW())
+                        WHERE id = %s
+                        """,
+                        (Json(normalized_schema), existing_initial["id"]),
+                    )
+                else:
+                    session.execute(
+                        """
+                        INSERT INTO history_schema_evolution
+                        (
+                            table_metadata_list_id,
+                            schema_table_old,
+                            schema_table_new,
+                            changes_type,
+                            version_schema,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES
+                        (
+                            %s,
+                            %s,
+                            %s,
+                            'INITIAL_LOAD',
+                            1,
+                            TIMEZONE('Asia/Jakarta', NOW()),
+                            TIMEZONE('Asia/Jakarta', NOW())
+                        )
+                        """,
+                        (table.id, Json({}), Json(normalized_schema)),
+                    )
+
+                session.execute(
+                    """
+                    UPDATE table_metadata_list
+                    SET schema_table = %s,
+                        is_changes_schema = FALSE,
+                        updated_at = TIMEZONE('Asia/Jakarta', NOW())
+                    WHERE id = %s
+                    """,
+                    (Json(normalized_schema), table.id),
+                )
+                return {
+                    "updated": True,
+                    "version": 1,
+                    "change_type": "INITIAL_LOAD",
+                    "schema_table": normalized_schema,
+                }
+
+            session.execute(
+                """
+                SELECT COALESCE(MAX(version_schema), 0) AS version
+                FROM history_schema_evolution
+                WHERE table_metadata_list_id = %s
+                """,
+                (table.id,),
+            )
+            version_row = session.fetchone() or {}
+            latest_version = int(version_row.get("version") or 0)
+            next_version = latest_version + 1 if latest_version > 0 else 2
+            change_type = classify_schema_change(current_schema, normalized_schema)
+
+            session.execute(
+                """
+                INSERT INTO history_schema_evolution
+                (
+                    table_metadata_list_id,
+                    schema_table_old,
+                    schema_table_new,
+                    changes_type,
+                    version_schema,
+                    created_at,
+                    updated_at
+                )
+                VALUES
+                (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    TIMEZONE('Asia/Jakarta', NOW()),
+                    TIMEZONE('Asia/Jakarta', NOW())
+                )
+                """,
+                (
+                    table.id,
+                    Json(current_schema),
+                    Json(normalized_schema),
+                    change_type,
+                    next_version,
+                ),
+            )
+            session.execute(
+                """
+                UPDATE table_metadata_list
+                SET schema_table = %s,
+                    is_changes_schema = TRUE,
+                    updated_at = TIMEZONE('Asia/Jakarta', NOW())
+                WHERE id = %s
+                """,
+                (Json(normalized_schema), table.id),
+            )
+            return {
+                "updated": True,
+                "version": next_version,
+                "change_type": change_type,
+                "schema_table": normalized_schema,
+            }
 
 
 class PipelineMetadataRepository:

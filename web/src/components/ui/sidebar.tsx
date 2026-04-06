@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
-import { VariantProps, cva } from 'class-variance-authority'
+import { type VariantProps, cva } from 'class-variance-authority'
 import { PanelLeftIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -475,8 +475,14 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
   )
 }
 
+const sidebarMenuMotionClassName =
+  'border border-transparent transform-gpu transition-[transform,background-color,color,border-color,box-shadow] duration-150 ease-out motion-reduce:transition-none motion-safe:hover:scale-[1.01] motion-safe:active:scale-[0.99]'
+
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-start text-sm font-normal outline-hidden ring-sidebar-ring transition-colors hover:bg-sidebar-accent hover:text-[#1f4ee7] dark:hover:text-[#8cc2fd] dark:hover:border dark:hover:border-[#192e7a] focus-visible:ring-2 active:bg-sidebar-accent active:text-[#1f4ee7] dark:active:text-[#8cc2fd] disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-normal data-[active=true]:text-[#1f4ee7] dark:data-[active=true]:text-[#8cc2fd] dark:data-[active=true]:border dark:data-[active=true]:border-[#192e7a] data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-[#1f4ee7] dark:data-[state=open]:hover:text-[#8cc2fd] group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
+  cn(
+    'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-start text-sm font-normal outline-hidden ring-sidebar-ring hover:bg-sidebar-accent hover:text-[#1f4ee7] dark:hover:text-[#8cc2fd] dark:hover:border-[#192e7a] focus-visible:ring-2 active:bg-sidebar-accent active:text-[#1f4ee7] dark:active:text-[#8cc2fd] dark:active:border-[#192e7a] disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-normal data-[active=true]:text-[#1f4ee7] dark:data-[active=true]:text-[#8cc2fd] dark:data-[active=true]:border-[#192e7a] data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-[#1f4ee7] dark:data-[state=open]:hover:text-[#8cc2fd] group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
+    sidebarMenuMotionClassName
+  ),
   {
     variants: {
       variant: {
@@ -610,9 +616,9 @@ function SidebarMenuSkeleton({
   showIcon?: boolean
 }) {
   // Random width between 50 to 90%.
-  const width = React.useMemo(() => {
+  const [width] = React.useState(() => {
     return `${Math.floor(Math.random() * 40) + 50}%`
-  }, [])
+  })
 
   return (
     <div
@@ -689,8 +695,9 @@ function SidebarMenuSubButton({
       data-size={size}
       data-active={isActive}
       className={cn(
-        'flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 font-normal text-sidebar-foreground ring-sidebar-ring outline-hidden hover:border hover:border-[#192e7a] hover:bg-sidebar-accent hover:text-[#8cc2fd] focus-visible:ring-2 active:bg-sidebar-accent active:text-[#8cc2fd] disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-inherit',
-        'data-[active=true]:border data-[active=true]:border-[#192e7a] data-[active=true]:bg-sidebar-accent data-[active=true]:font-normal data-[active=true]:text-[#8cc2fd]',
+        'flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 font-normal text-sidebar-foreground ring-sidebar-ring outline-hidden hover:border-[#192e7a] hover:bg-sidebar-accent hover:text-[#8cc2fd] focus-visible:ring-2 active:border-[#192e7a] active:bg-sidebar-accent active:text-[#8cc2fd] disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-inherit',
+        'data-[active=true]:border-[#192e7a] data-[active=true]:bg-sidebar-accent data-[active=true]:font-normal data-[active=true]:text-[#8cc2fd]',
+        sidebarMenuMotionClassName,
         size === 'sm' && 'text-xs',
         size === 'md' && 'text-sm',
         'group-data-[collapsible=icon]:hidden',

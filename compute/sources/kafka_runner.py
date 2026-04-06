@@ -9,6 +9,7 @@ from threading import Event
 
 from config.config import get_config
 from core.kafka_config import build_kafka_client_config
+from core.kafka_schema_tracker import KafkaSchemaTracker
 from core.models import Source
 from core.record_router import RecordRouter
 from core.runtime_metrics import observe, set_gauge
@@ -24,6 +25,7 @@ class KafkaSourceRunner(BaseSourceRunner):
     def __init__(self, source: Source):
         self._source = source
         self._consumer = None
+        self._schema_tracker = KafkaSchemaTracker(source.id)
 
     def _consumer_config(self) -> dict:
         return build_kafka_client_config(
@@ -139,6 +141,11 @@ class KafkaSourceRunner(BaseSourceRunner):
                 record = self._message_to_record(msg)
                 if record is None:
                     continue
+                self._schema_tracker.track_record(
+                    record.table_name,
+                    record.value,
+                    record.key,
+                )
                 records_by_table.setdefault(record.table_name, []).append(record)
 
             observe(

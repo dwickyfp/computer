@@ -66,6 +66,15 @@ function HighlightedText({
   )
 }
 
+const explorerTreeTriggerClassName =
+  'justify-start gap-2 rounded-md py-1 pl-0 pr-2 text-sm font-normal hover:bg-muted/50 hover:no-underline dark:text-[#bec4d6]'
+
+const explorerTreeRootBranchClassName =
+  'relative ml-2 flex flex-col gap-1 before:absolute before:inset-y-0 before:left-2 before:w-px before:bg-border/40'
+
+const explorerTreeBranchClassName =
+  'relative ml-6 flex flex-col gap-1 before:absolute before:inset-y-0 before:left-2 before:w-px before:bg-border/50'
+
 // -- Sub-components for clean recursion
 
 function TableItem({
@@ -85,10 +94,10 @@ function TableItem({
   onClick?: () => void
 }) {
   return (
-    <div className='group/table relative' onClick={onClick}>
+    <div className='group/table relative pl-6' onClick={onClick}>
       <div
         className={cn(
-          'absolute top-1/2 -left-1 h-px w-4 -translate-y-1/2 bg-border'
+          'absolute top-1/2 left-2 h-px w-4 -translate-y-1/2 bg-border/50'
           // "group-hover/table:bg-accent-foreground/50 transition-colors"
         )}
       />
@@ -96,7 +105,7 @@ function TableItem({
         <HoverCardTrigger asChild>
           <div
             className={cn(
-              'ml-3 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground dark:text-[#bec4d6]',
+              'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground dark:text-[#bec4d6]',
               isActive && 'bg-accent font-medium text-accent-foreground'
             )}
           >
@@ -147,7 +156,7 @@ function SourceTables({
   tables,
   searchQuery,
 }: {
-  tables: any[]
+  tables: SourceDetailResponse['tables']
   searchQuery: string
 }) {
   // Filter tables here
@@ -168,7 +177,7 @@ function SourceTables({
   }
 
   return (
-    <div className='mt-1 ml-5.5 flex flex-col gap-0.5 border-l border-border pl-1'>
+    <div className={cn(explorerTreeBranchClassName, 'mt-1 gap-0.5')}>
       {filteredTables.map((table) => (
         <TableItem
           key={table.id}
@@ -261,7 +270,7 @@ function PipelineItem({
         <AccordionItem value='sources' className='border-none'>
           <AccordionTrigger
             chevronPosition='left'
-            className='justify-start gap-1.5 rounded-md px-2 py-1 text-sm font-normal hover:bg-muted/50 hover:no-underline dark:text-[#bec4d6]'
+            className={explorerTreeTriggerClassName}
           >
             <div className='flex items-center gap-2'>
               <FolderInput className='h-4 w-4' />
@@ -269,38 +278,40 @@ function PipelineItem({
             </div>
           </AccordionTrigger>
           <AccordionContent className='pt-0.5 pb-0'>
-            <Accordion
-              type='multiple'
-              className='ml-2 w-full border-l border-border/50 pl-2'
-              value={openItems}
-              onValueChange={setOpenItems}
-            >
-              <AccordionItem
-                value={`src-${pipeline.source_id}`}
-                className='border-none'
+            <div className={explorerTreeBranchClassName}>
+              <Accordion
+                type='multiple'
+                className='w-full'
+                value={openItems}
+                onValueChange={setOpenItems}
               >
-                <AccordionTrigger
-                  chevronPosition='left'
-                  className='justify-start gap-1.5 rounded-md px-2 py-1 text-sm font-normal hover:bg-muted/50 hover:no-underline dark:text-[#bec4d6]'
+                <AccordionItem
+                  value={`src-${pipeline.source_id}`}
+                  className='border-none'
                 >
-                  <div className='flex w-full items-center gap-2 overflow-hidden'>
-                    <Database className='h-3.5 w-3.5 shrink-0' />
-                    <div className='max-w-50 min-w-0 flex-1 truncate'>
-                      <HighlightedText
-                        text={sourceName}
-                        highlight={searchQuery}
-                      />
+                  <AccordionTrigger
+                    chevronPosition='left'
+                    className={explorerTreeTriggerClassName}
+                  >
+                    <div className='flex w-full items-center gap-2 overflow-hidden'>
+                      <Database className='h-3.5 w-3.5 shrink-0' />
+                      <div className='max-w-50 min-w-0 flex-1 truncate'>
+                        <HighlightedText
+                          text={sourceName}
+                          highlight={searchQuery}
+                        />
+                      </div>
                     </div>
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className='pb-0'>
-                  <SourceTables
-                    tables={sourceTables}
-                    searchQuery={searchQuery}
-                  />
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
+                  </AccordionTrigger>
+                  <AccordionContent className='pb-0'>
+                    <SourceTables
+                      tables={sourceTables}
+                      searchQuery={searchQuery}
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </div>
           </AccordionContent>
         </AccordionItem>
 
@@ -308,7 +319,7 @@ function PipelineItem({
         <AccordionItem value='destinations' className='border-none'>
           <AccordionTrigger
             chevronPosition='left'
-            className='justify-start gap-1.5 rounded-md px-2 py-1 text-sm font-normal hover:bg-muted/50 hover:no-underline dark:text-[#bec4d6]'
+            className={explorerTreeTriggerClassName}
           >
             <div className='flex items-center gap-2'>
               <FolderSync className='h-4 w-4' />
@@ -316,7 +327,7 @@ function PipelineItem({
             </div>
           </AccordionTrigger>
           <AccordionContent className='pt-0.5 pb-0'>
-            <div className='ml-2 flex flex-col gap-1 border-l border-border/50 pl-2'>
+            <div className={explorerTreeBranchClassName}>
               {filteredDestinations.length === 0 && (
                 <div className='px-2 py-1 text-xs text-muted-foreground'>
                   No destinations found
@@ -333,7 +344,7 @@ function PipelineItem({
                   <AccordionItem value={`dest-${d.id}`} className='border-none'>
                     <AccordionTrigger
                       chevronPosition='left'
-                      className='justify-start gap-1.5 rounded-md px-2 py-1 text-sm font-normal hover:bg-muted/50 hover:no-underline dark:text-[#bec4d6]'
+                      className={explorerTreeTriggerClassName}
                     >
                       <div className='flex w-full items-center gap-2 overflow-hidden'>
                         <Layers className='h-3.5 w-3.5 shrink-0' />
@@ -346,7 +357,9 @@ function PipelineItem({
                       </div>
                     </AccordionTrigger>
                     <AccordionContent className='pb-0'>
-                      <div className='mt-1 ml-5.5 flex flex-col gap-0.5 border-l border-border pl-1'>
+                      <div
+                        className={cn(explorerTreeBranchClassName, 'mt-1 gap-0.5')}
+                      >
                         {d.table_syncs
                           ?.filter(
                             (sync) =>
@@ -377,7 +390,7 @@ function PipelineItem({
                             />
                           ))}
                         {(!d.table_syncs || d.table_syncs.length === 0) && (
-                          <div className='ml-5 py-1 text-xs text-muted-foreground'>
+                          <div className='pl-6 py-1 text-xs text-muted-foreground'>
                             No synced tables
                           </div>
                         )}
@@ -717,8 +730,8 @@ export function PipelinesSidebar() {
                         <Workflow className='h-3 w-3' />
                       </Link>
                     </div>
-                    <AccordionContent className='pt-1 pb-0 pl-2'>
-                      <div className='border-l border-border/40 pl-2'>
+                    <AccordionContent className='pt-1 pb-0'>
+                      <div className={explorerTreeRootBranchClassName}>
                         <PipelineItem
                           pipeline={pipeline}
                           sourceDetails={
