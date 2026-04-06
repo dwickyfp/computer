@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional
 
 import duckdb
 import structlog
 
+from app.config.settings import get_settings
 from app.tasks.flow_task.compiler import GraphCompiler
 from app.tasks.flow_task.connection_factory import SourceConnectionFactory
 from app.tasks.flow_task.executor import (
@@ -24,6 +26,22 @@ from app.tasks.flow_task.executor import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _serialize_arrow_batches_to_rows(batches: Iterable[Any]) -> list[list[Any]]:
+    """Serialize Arrow record batches into row lists without full ``to_pylist()``."""
+    serialized_rows: list[list[Any]] = []
+    for batch in batches:
+        if batch is None or batch.num_rows == 0:
+            continue
+        arrays = [batch.column(i) for i in range(batch.num_columns)]
+        for row_index in range(batch.num_rows):
+            serialized_rows.append(
+                _serialize_row(
+                    tuple(array[row_index].as_py() for array in arrays)
+                )
+            )
+    return serialized_rows
 
 
 # ─── Upstream graph trimming ───────────────────────────────────────────────────
@@ -167,10 +185,20 @@ def execute_node_preview(
         preview_sql = f"{partial_prefix}\nSELECT * FROM {target_cte}"
         logger.debug(f"Preview SQL for node {node_id}:\n{preview_sql}")
 
-        # Execute — fetch as Arrow table to enable profiling and type extraction
-        arrow_result = conn.execute(preview_sql).fetch_arrow_table()
+        settings = get_settings()
 
-        if not arrow_result.column_names:
+        # Execute — stream Arrow record batches by default and only materialize
+        # the full table when profiling needs whole-column statistics.
+        if include_profiling:
+            arrow_result = conn.execute(preview_sql).fetch_arrow_table()
+            schema = arrow_result.schema
+        else:
+            arrow_result = conn.execute(preview_sql).fetch_record_batch(
+                settings.arrow_batch_size
+            )
+            schema = arrow_result.schema
+
+        if not schema.names:
             return {
                 "columns": [],
                 "column_types": {},
@@ -179,16 +207,15 @@ def execute_node_preview(
                 "elapsed_ms": int((time.time() - start_time) * 1000),
             }
 
-        columns = arrow_result.column_names
-        column_types = {
-            col: str(arrow_result.schema.field(col).type) for col in columns
-        }
-
-        # Serialize rows (handle non-JSON-serializable types)
-        serialized_rows = [
-            _serialize_row(tuple(row[col] for col in columns))
-            for row in arrow_result.to_pylist()
-        ]
+        columns = list(schema.names)
+        column_types = {col: str(schema.field(col).type) for col in columns}
+        serialized_rows = (
+            _serialize_arrow_batches_to_rows(
+                arrow_result.to_reader(max_chunksize=settings.arrow_batch_size)
+            )
+            if include_profiling
+            else _serialize_arrow_batches_to_rows(arrow_result)
+        )
 
         elapsed = int((time.time() - start_time) * 1000)
         logger.info(

@@ -69,6 +69,7 @@ class PipelineConfig:
 
     max_batch_size: int = 2048
     max_queue_size: int = 8192
+    max_queue_size_bytes: int = 134217728
     poll_interval_ms: int = 500
     slot_max_retries: int = 6
     slot_retry_delay_ms: int = 10000
@@ -99,6 +100,15 @@ class PipelineConfig:
                     result = cursor.fetchone()
                     if result:
                         self.max_queue_size = int(result[0])
+
+                    # Get queue size in bytes
+                    cursor.execute(
+                        "SELECT config_value FROM rosetta_setting_configuration WHERE config_key = %s",
+                        ("PIPELINE_MAX_QUEUE_SIZE_BYTES",),
+                    )
+                    result = cursor.fetchone()
+                    if result:
+                        self.max_queue_size_bytes = int(result[0])
 
             finally:
                 return_db_connection(conn)
@@ -161,8 +171,8 @@ class SnowflakeConfig:
 class RuntimeConfig:
     """Runtime resource guardrails and lightweight client tuning."""
 
-    jvm_max_heap: str = "4G"
-    duckdb_memory_limit: str = "2GB"
+    jvm_max_heap: str = "1G"
+    duckdb_memory_limit: str = "1GB"
     duckdb_threads: int = 2
     backfill_max_concurrent_jobs: int = 2
     kafka_flush_timeout_seconds: float = 10.0
@@ -207,6 +217,9 @@ class Config:
             pipeline=PipelineConfig(
                 max_batch_size=int(os.getenv("PIPELINE_MAX_BATCH_SIZE", "2048")),
                 max_queue_size=int(os.getenv("PIPELINE_MAX_QUEUE_SIZE", "8192")),
+                max_queue_size_bytes=int(
+                    os.getenv("PIPELINE_MAX_QUEUE_SIZE_BYTES", "134217728")
+                ),
                 poll_interval_ms=int(os.getenv("PIPELINE_POLL_INTERVAL_MS", "500")),
             ),
             logging=LoggingConfig(
@@ -241,8 +254,8 @@ class Config:
                 batch_timeout_max=int(os.getenv("SNOWFLAKE_BATCH_TIMEOUT_MAX", "600")),
             ),
             runtime=RuntimeConfig(
-                jvm_max_heap=os.getenv("JVM_MAX_HEAP", "4G"),
-                duckdb_memory_limit=os.getenv("DUCKDB_MEMORY_LIMIT", "2GB"),
+                jvm_max_heap=os.getenv("JVM_MAX_HEAP", "1G"),
+                duckdb_memory_limit=os.getenv("DUCKDB_MEMORY_LIMIT", "1GB"),
                 duckdb_threads=int(os.getenv("DUCKDB_THREADS", "2")),
                 backfill_max_concurrent_jobs=int(
                     os.getenv("BACKFILL_MAX_CONCURRENT_JOBS", "2")

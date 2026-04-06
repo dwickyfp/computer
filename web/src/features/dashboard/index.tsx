@@ -108,7 +108,7 @@ function DashboardContent() {
       <Main className="bg-background min-h-screen p-4 space-y-4">
         <div className='flex items-center justify-between'>
           <h1 className='text-3xl font-bold tracking-tight'>
-            Mission Control
+            Dashboard
           </h1>
           <div className="flex flex-col items-end gap-1">
             <div className="text-sm text-muted-foreground">

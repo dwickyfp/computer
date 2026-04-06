@@ -63,6 +63,7 @@ class BackfillManager:
         0  # Recover all EXECUTING jobs on startup (0 = immediate)
     )
     MAX_RESUME_ATTEMPTS = 3  # Fail job after 3 resume attempts
+    ARROW_STREAM_BATCH_ROWS = 1024
 
     def __init__(self, check_interval: int = 5, batch_size: int = 10000):
         """
@@ -547,7 +548,9 @@ class BackfillManager:
                     f"Job {job_id}: Processing batch, total_processed={total_processed}"
                 )
                 fetch_started = time.perf_counter()
-                result = conn.execute(batch_query, query_params).fetchall()
+                reader = conn.execute(batch_query, query_params).fetch_record_batch(
+                    self.ARROW_STREAM_BATCH_ROWS
+                )
                 observe(
                     "backfill.fetch_duration",
                     (time.perf_counter() - fetch_started) * 1000.0,
@@ -556,36 +559,49 @@ class BackfillManager:
                     table_name=table_name,
                 )
 
-                if not result:
+                fetched_rows = 0
+                last_pk_value_in_query = last_pk_value
+                for record_batch in reader:
+                    if record_batch is None or record_batch.num_rows == 0:
+                        continue
+
+                    columns = list(record_batch.schema.names)
+                    batch_records = record_batch.to_pylist()
+                    if not batch_records:
+                        continue
+
+                    write_started = time.perf_counter()
+                    self._process_batch_to_destinations(
+                        job, batch_records, destinations_cache
+                    )
+                    observe(
+                        "backfill.destination_write_duration",
+                        (time.perf_counter() - write_started) * 1000.0,
+                        unit="ms",
+                        job_id=str(job_id),
+                        table_name=table_name,
+                    )
+
+                    fetched_rows += len(batch_records)
+
+                    if use_keyset:
+                        pk_idx = columns.index(pk_column)
+                        last_pk_value_in_query = str(
+                            record_batch.column(pk_idx)[record_batch.num_rows - 1].as_py()
+                        )
+
+                if fetched_rows == 0:
                     break
 
-                # Get column names
-                columns = [desc[0] for desc in conn.description]
-
-                # Process batch - convert to CDC events and send to destinations
-                batch_records = [dict(zip(columns, row)) for row in result]
-                write_started = time.perf_counter()
-                self._process_batch_to_destinations(
-                    job, batch_records, destinations_cache
-                )
-                observe(
-                    "backfill.destination_write_duration",
-                    (time.perf_counter() - write_started) * 1000.0,
-                    unit="ms",
-                    job_id=str(job_id),
-                    table_name=table_name,
-                )
-
                 # Update progress and cursor position
-                total_processed += len(batch_records)
+                total_processed += fetched_rows
 
                 if use_keyset:
                     # Track the last PK value for cursor-based resume
-                    pk_idx = columns.index(pk_column)
-                    last_pk_value = str(result[-1][pk_idx])
+                    last_pk_value = last_pk_value_in_query
                     self._update_job_progress(job_id, total_processed, last_pk_value)
                 else:
-                    offset += len(batch_records)
+                    offset += fetched_rows
                     self._update_job_count(job_id, total_processed)
 
             return total_processed

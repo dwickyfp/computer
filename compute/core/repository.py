@@ -4,13 +4,15 @@ Repository classes for database CRUD operations.
 Provides data access layer for Rosetta Compute Engine.
 """
 
+import atexit
 import logging
+import threading
 from typing import Any, Optional
 from datetime import datetime
 
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
-from core.database import DatabaseSession
+from core.database import DatabaseSession, get_db_connection, return_db_connection
 from core.db_utils import retry_on_connection_error, is_connection_error
 from core.kafka_schema import classify_schema_change, normalize_schema_definition
 from core.models import (
@@ -591,6 +593,15 @@ class PipelineMetadataRepository:
 class DataFlowRepository:
     """Repository for DataFlowRecordMonitoring CRUD operations."""
 
+    _FLUSH_INTERVAL_SECONDS = 2.0
+    _MAX_PENDING_KEYS = 128
+    _buffer_lock = threading.Lock()
+    _flush_event = threading.Event()
+    _stop_event = threading.Event()
+    _writer_thread: threading.Thread | None = None
+    _atexit_registered = False
+    _pending_counts: dict[tuple[int, int, int, int, str], int] = {}
+
     @staticmethod
     def insert(record: DataFlowRecordMonitoring) -> int:
         """Insert a new data flow record."""
@@ -607,6 +618,119 @@ class DataFlowRepository:
             row = session.fetchone()
             return row["id"] if row else 0
 
+    @classmethod
+    def _ensure_writer_started(cls) -> None:
+        thread = cls._writer_thread
+        if thread is not None and thread.is_alive():
+            return
+
+        with cls._buffer_lock:
+            thread = cls._writer_thread
+            if thread is None or not thread.is_alive():
+                cls._stop_event = threading.Event()
+                cls._flush_event = threading.Event()
+                cls._writer_thread = threading.Thread(
+                    target=cls._writer_loop,
+                    daemon=True,
+                    name="data-flow-writer",
+                )
+                cls._writer_thread.start()
+                if not cls._atexit_registered:
+                    atexit.register(cls.shutdown)
+                    cls._atexit_registered = True
+
+    @classmethod
+    def _writer_loop(cls) -> None:
+        while not cls._stop_event.is_set():
+            cls._flush_event.wait(timeout=cls._FLUSH_INTERVAL_SECONDS)
+            cls._flush_event.clear()
+            cls.flush()
+        cls.flush()
+
+    @classmethod
+    def _drain_pending_counts(cls) -> dict[tuple[int, int, int, int, str], int]:
+        with cls._buffer_lock:
+            if not cls._pending_counts:
+                return {}
+            pending = cls._pending_counts
+            cls._pending_counts = {}
+            return pending
+
+    @classmethod
+    def _requeue_pending_counts(
+        cls, pending: dict[tuple[int, int, int, int, str], int]
+    ) -> None:
+        if not pending:
+            return
+        with cls._buffer_lock:
+            for key, count in pending.items():
+                cls._pending_counts[key] = cls._pending_counts.get(key, 0) + count
+
+    @classmethod
+    def flush(cls) -> None:
+        pending = cls._drain_pending_counts()
+        if not pending:
+            return
+
+        rows = [
+            (
+                pipeline_id,
+                pipeline_destination_id,
+                source_id,
+                table_sync_id,
+                table_name,
+                count,
+            )
+            for (
+                pipeline_id,
+                pipeline_destination_id,
+                source_id,
+                table_sync_id,
+                table_name,
+            ), count in pending.items()
+        ]
+
+        conn = None
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
+                execute_values(
+                    cursor,
+                    """
+                    INSERT INTO data_flow_record_monitoring
+                    (pipeline_id, pipeline_destination_id, source_id,
+                     pipeline_destination_table_sync_id, table_name, record_count)
+                    VALUES %s
+                    """,
+                    rows,
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("Failed to flush buffered data flow metrics: %s", exc)
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            cls._requeue_pending_counts(pending)
+        finally:
+            if conn:
+                try:
+                    return_db_connection(conn)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to return connection after data flow flush: %s", exc
+                    )
+
+    @classmethod
+    def shutdown(cls, timeout: float = 5.0) -> None:
+        cls._stop_event.set()
+        cls._flush_event.set()
+        thread = cls._writer_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout)
+        cls._writer_thread = None
+
     @staticmethod
     def increment_count(
         pipeline_id: int,
@@ -616,20 +740,29 @@ class DataFlowRepository:
         table_name: str,
         count: int = 1,
     ) -> None:
-        """Insert new record count entry (append-only for time series monitoring)."""
-        with DatabaseSession() as session:
-            session.execute(
-                """
-                INSERT INTO data_flow_record_monitoring 
-                (pipeline_id, pipeline_destination_id, source_id, pipeline_destination_table_sync_id, table_name, record_count)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    pipeline_id,
-                    pipeline_destination_id,
-                    source_id,
-                    table_sync_id,
-                    table_name,
-                    count,
-                ),
+        """
+        Buffer monitoring increments and flush them asynchronously.
+
+        The hot path only updates an in-memory aggregate keyed by the target
+        table sync, which keeps control-plane writes out of per-batch CDC work.
+        """
+        DataFlowRepository._ensure_writer_started()
+
+        key = (
+            pipeline_id,
+            pipeline_destination_id,
+            source_id,
+            table_sync_id,
+            table_name,
+        )
+        with DataFlowRepository._buffer_lock:
+            DataFlowRepository._pending_counts[key] = (
+                DataFlowRepository._pending_counts.get(key, 0) + count
             )
+            should_flush = (
+                len(DataFlowRepository._pending_counts)
+                >= DataFlowRepository._MAX_PENDING_KEYS
+            )
+
+        if should_flush:
+            DataFlowRepository._flush_event.set()

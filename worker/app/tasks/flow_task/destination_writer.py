@@ -549,7 +549,8 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
     Write to a Snowflake destination via snowflake-connector-python.
 
     DuckDB's Snowflake extension is read-only, so data is fetched from
-    the CTE as a pandas DataFrame and written via write_pandas().
+    the CTE as Arrow record batches and converted to pandas only one batch
+    at a time for ``write_pandas()``.
     """
 
     def get_row_count(
@@ -581,23 +582,16 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
         from cryptography.hazmat.primitives import serialization
         from snowflake.connector.pandas_tools import write_pandas
 
+        from app.config.settings import get_settings
         from app.core.database import get_db_session
         from app.core.security import decrypt_value
 
-        # Fetch data from DuckDB CTE as Arrow table (avoid premature Pandas conversion)
-        fetch_sql = f"{cte_prefix}\nSELECT * FROM {source_cte}"
-        arrow_table = conn.execute(fetch_sql).fetch_arrow_table()
-
-        if arrow_table.num_rows == 0:
-            return 0
-
-        # Convert to pandas only when needed for write_pandas()
-        # This defers the costly Arrow→Pandas conversion until the last moment
-        df = arrow_table.to_pandas(self_destruct=True)  # self_destruct frees Arrow buffers early
-        del arrow_table  # release Arrow memory immediately
-
         if destination_id is None:
             raise ValueError("SnowflakeDestinationWriter requires destination_id")
+
+        row_count = self.get_row_count(conn, cte_prefix, source_cte)
+        if row_count == 0:
+            return 0
 
         # Fetch destination config
         with get_db_session() as db:
@@ -655,6 +649,12 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
 
         sf_conn = snowflake.connector.connect(**conn_params)
         try:
+            settings = get_settings()
+            fetch_sql = f"{cte_prefix}\nSELECT * FROM {source_cte}"
+            batch_reader = conn.execute(fetch_sql).fetch_record_batch(
+                settings.arrow_batch_size
+            )
+
             if write_mode == "REPLACE":
                 cursor = sf_conn.cursor()
                 cursor.execute(
@@ -664,26 +664,33 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
 
             if write_mode == "UPSERT":
                 rows_written = self._upsert_snowflake(
-                    sf_conn, df, target_table, schema_name, upsert_keys
+                    sf_conn,
+                    batch_reader,
+                    target_table,
+                    schema_name,
+                    upsert_keys,
+                    row_count,
                 )
             else:
-                # APPEND or REPLACE (after truncate)
-                success, _num_chunks, num_rows, _ = write_pandas(
-                    sf_conn,
-                    df,
-                    target_table,
-                    schema=schema_name,
-                    auto_create_table=False,
-                )
-                # L-5 fix: write_pandas returns False when the table doesn't exist
-                # with auto_create_table=False.  Treat that as an error rather than
-                # silently reporting 0 rows written with no indication of failure.
-                if not success:
-                    raise RuntimeError(
-                        f"write_pandas returned failure for table '{target_table}'. "
-                        f"Ensure the table exists in schema '{schema_name}'."
+                rows_written = 0
+                for batch in batch_reader:
+                    if batch is None or batch.num_rows == 0:
+                        continue
+                    df = batch.to_pandas(self_destruct=True)
+                    success, _num_chunks, num_rows, _ = write_pandas(
+                        sf_conn,
+                        df,
+                        target_table,
+                        schema=schema_name,
+                        auto_create_table=False,
                     )
-                rows_written = num_rows
+                    del df
+                    if not success:
+                        raise RuntimeError(
+                            f"write_pandas returned failure for table '{target_table}'. "
+                            f"Ensure the table exists in schema '{schema_name}'."
+                        )
+                    rows_written += num_rows
 
             logger.info(
                 "Snowflake write complete",
@@ -699,10 +706,11 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
     def _upsert_snowflake(
         self,
         sf_conn: Any,
-        df: Any,
+        batch_reader: Any,
         target_table: str,
         schema_name: str,
         upsert_keys: List[str],
+        row_count: int,
     ) -> int:
         """Snowflake MERGE INTO via temporary staging table."""
         import random
@@ -717,14 +725,25 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
                 f"CREATE TEMPORARY TABLE {schema_name}.{stage_table} "
                 f"LIKE {schema_name}.{target_table}"
             )
-            write_pandas(sf_conn, df, stage_table, schema=schema_name)
 
-            cols = list(df.columns)
+            columns: list[str] | None = None
+            for batch in batch_reader:
+                if batch is None or batch.num_rows == 0:
+                    continue
+                if columns is None:
+                    columns = list(batch.schema.names)
+                df = batch.to_pandas(self_destruct=True)
+                write_pandas(sf_conn, df, stage_table, schema=schema_name)
+                del df
+
+            if columns is None:
+                return 0
+
             on_clause = " AND ".join(f"tgt.{k} = src.{k}" for k in upsert_keys)
-            non_key_cols = [c for c in cols if c not in upsert_keys]
+            non_key_cols = [c for c in columns if c not in upsert_keys]
             update_expr = ", ".join(f"tgt.{c} = src.{c}" for c in non_key_cols)
-            col_list = ", ".join(cols)
-            src_col_list = ", ".join(f"src.{c}" for c in cols)
+            col_list = ", ".join(columns)
+            src_col_list = ", ".join(f"src.{c}" for c in columns)
 
             merge_sql = (
                 f"MERGE INTO {schema_name}.{target_table} AS tgt "
@@ -739,7 +758,7 @@ class SnowflakeDestinationWriter(BaseDestinationWriter):
             )
 
             cursor.execute(merge_sql)
-            return len(df)
+            return row_count
         finally:
             try:
                 cursor.execute(

@@ -315,7 +315,7 @@ def main() -> int:
     logger = logging.getLogger(__name__)
 
     # Initialize connection pool with configurable size
-    main_pool_max_conn = int(os.getenv("MAIN_POOL_MAX_CONN", "8"))
+    main_pool_max_conn = int(os.getenv("MAIN_POOL_MAX_CONN", "4"))
     init_connection_pool(min_conn=1, max_conn=main_pool_max_conn)
 
     config = get_config()
@@ -388,6 +388,13 @@ def main() -> int:
         for thread in worker_threads.values():
             if thread.is_alive():
                 thread.join(timeout=5)
+
+        try:
+            from core.repository import DataFlowRepository
+
+            DataFlowRepository.shutdown()
+        except Exception:
+            pass
 
         close_connection_pool()
 

@@ -7,6 +7,7 @@ when used downstream — but we still normalize for the JSON dict layer.
 """
 
 import base64
+from collections.abc import Iterable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -43,6 +44,29 @@ def serialize_preview_result(
         "data": serialized_data,
         "error": None,
     }
+
+
+def serialize_arrow_batches(batches: Iterable[Any]) -> list[dict[str, Any]]:
+    """
+    Stream Arrow record batches into JSON-safe row dicts without materializing
+    the full result set as ``to_pylist()`` first.
+    """
+    serialized_rows: list[dict[str, Any]] = []
+    for batch in batches:
+        if batch is None or batch.num_rows == 0:
+            continue
+        columns = list(batch.schema.names)
+        arrays = [batch.column(i) for i in range(batch.num_columns)]
+        for row_index in range(batch.num_rows):
+            serialized_rows.append(
+                {
+                    columns[col_index]: _serialize_value(
+                        arrays[col_index][row_index].as_py()
+                    )
+                    for col_index in range(len(columns))
+                }
+            )
+    return serialized_rows
 
 
 def serialize_error(error: str) -> dict[str, Any]:

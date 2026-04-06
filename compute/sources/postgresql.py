@@ -271,6 +271,11 @@ class PostgreSQLSource(BaseSource):
             "tombstones.on.delete": "true",
         }
 
+        if config.pipeline.max_queue_size_bytes > 0:
+            props["max.queue.size.in.bytes"] = str(
+                config.pipeline.max_queue_size_bytes
+            )
+
         return props
 
     def build_heartbeat_query(self) -> str:

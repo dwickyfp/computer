@@ -71,6 +71,12 @@ class WorkerSettings(BaseSettings):
     preview_row_limit: int = Field(
         default=500, ge=1, le=50000, description="Max rows for preview queries"
     )
+    arrow_batch_size: int = Field(
+        default=1024,
+        ge=128,
+        le=20000,
+        description="Arrow record batch size for streaming result handling",
+    )
     duckdb_memory_limit: str = Field(
         default="2GB", description="DuckDB memory limit per query"
     )

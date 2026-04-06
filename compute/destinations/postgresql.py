@@ -7,11 +7,14 @@ Provides CDC data sync to PostgreSQL with filter and custom SQL support.
 import logging
 import re
 import time
+from itertools import chain
 from typing import Any, Optional
 
 import duckdb
 import psycopg2
 import pyarrow as pa
+from psycopg2 import sql as pg_sql
+from psycopg2.extras import execute_values
 
 from config.config import get_config
 from core.filter_sql import (
@@ -27,6 +30,10 @@ from core.error_sanitizer import sanitize_for_db
 from core.runtime_metrics import observe, set_gauge
 
 logger = logging.getLogger(__name__)
+
+
+def _record_batch_from_arrays(arrays: list[pa.Array], names: list[str]) -> pa.RecordBatch:
+    return pa.RecordBatch.from_arrays(arrays, names=names)
 
 
 class PostgreSQLDestination(BaseDestination):
@@ -276,6 +283,7 @@ class PostgreSQLDestination(BaseDestination):
                 SELECT column_name, data_type, numeric_scale, udt_name
                 FROM information_schema.columns
                 WHERE table_schema = %s AND table_name = %s
+                ORDER BY ordinal_position
             """,
                 (self.schema, table_name),
             )
@@ -435,6 +443,11 @@ class PostgreSQLDestination(BaseDestination):
                         self._logger.warning(
                             f"Failed to decode Base64 numeric for {column_name}: {e}"
                         )
+                        return value
+                elif isinstance(value, str):
+                    try:
+                        return Decimal(value)
+                    except Exception:
                         return value
                 elif isinstance(value, (int, float)):
                     return Decimal(str(value))
@@ -857,6 +870,133 @@ class PostgreSQLDestination(BaseDestination):
         except (ValueError, TypeError):
             return values
 
+    @staticmethod
+    def _record_to_row(record: CDCRecord) -> dict[str, Any]:
+        """Normalize a CDC record into a flat row dict."""
+        row = dict(record.value or {})
+        if record.is_delete and record.key:
+            for key_col, key_val in record.key.items():
+                row.setdefault(key_col, key_val)
+        elif not row and record.key:
+            row = dict(record.key)
+        return row
+
+    def _coerce_column_values(
+        self,
+        raw_values: list[Any],
+        column: str,
+        debezium_types: dict[str, dict],
+        target_schema: Optional[dict[str, dict]],
+    ) -> list[Any]:
+        dbz_info = debezium_types.get(column)
+        if dbz_info:
+            coerced_values = self._coerce_values_for_duckdb(raw_values, dbz_info, column)
+        elif not debezium_types:
+            coerced_values = self._auto_coerce_numeric_column(raw_values)
+        else:
+            coerced_values = raw_values
+
+        if target_schema and column in target_schema:
+            coerced_values = [
+                self._convert_debezium_value(value, column, target_schema[column])
+                for value in coerced_values
+            ]
+        return coerced_values
+
+    def _collect_streaming_arrow_metadata(
+        self,
+        records: list[CDCRecord],
+        target_schema: Optional[dict[str, dict]],
+    ) -> tuple[list[str], dict[str, dict], dict[str, pa.DataType | None]]:
+        """
+        Collect stable column order and Arrow data types before streaming.
+
+        Arrow readers require a fixed schema up front. We scan the batch once to
+        learn the output columns and infer each column's Arrow type from the
+        first non-null coerced value across the entire batch.
+        """
+        columns: list[str] = []
+        seen_columns: set[str] = set()
+        sample_values: dict[str, Any] = {}
+        debezium_types = self._parse_debezium_field_types(records[0].schema)
+
+        for record in records:
+            row = self._record_to_row(record)
+            for column, value in row.items():
+                if column not in seen_columns:
+                    seen_columns.add(column)
+                    columns.append(column)
+                if value is not None and column not in sample_values:
+                    sample_values[column] = value
+
+        if not columns:
+            raise DestinationException(
+                "CDC batch has no usable columns to stage; record payload and key are empty"
+            )
+
+        arrow_types: dict[str, pa.DataType | None] = {}
+        for column in columns:
+            sample_value = sample_values.get(column)
+            if sample_value is None:
+                arrow_types[column] = None
+                continue
+            coerced_sample = self._coerce_column_values(
+                [sample_value],
+                column,
+                debezium_types,
+                target_schema,
+            )[0]
+            arrow_types[column] = (
+                None if coerced_sample is None else pa.array([coerced_sample]).type
+            )
+
+        return columns, debezium_types, arrow_types
+
+    def _build_arrow_record_batch_reader(
+        self,
+        records: list[CDCRecord],
+        target_schema: Optional[dict[str, dict]],
+    ) -> pa.RecordBatchReader:
+        """Build a streaming Arrow reader over CDC records in fixed-size chunks."""
+        columns, debezium_types, arrow_types = self._collect_streaming_arrow_metadata(
+            records,
+            target_schema,
+        )
+        chunk_size = max(1, min(len(records), 512))
+
+        def _iter_batches():
+            for start in range(0, len(records), chunk_size):
+                chunk_rows = [
+                    self._record_to_row(record)
+                    for record in records[start : start + chunk_size]
+                ]
+                arrays = []
+                for column in columns:
+                    coerced_values = self._coerce_column_values(
+                        [row.get(column) for row in chunk_rows],
+                        column,
+                        debezium_types,
+                        target_schema,
+                    )
+                    arrow_type = arrow_types.get(column)
+                    arrays.append(
+                        pa.array(coerced_values, type=arrow_type)
+                        if arrow_type is not None
+                        else pa.array(coerced_values)
+                    )
+                yield _record_batch_from_arrays(arrays, columns)
+
+        batch_iter = _iter_batches()
+        first_batch = next(batch_iter, None)
+        if first_batch is None:
+            raise DestinationException(
+                "CDC batch has no usable columns to stage; record payload and key are empty"
+            )
+        return pa.RecordBatchReader.from_batches(
+            first_batch.schema,
+            chain([first_batch], batch_iter),
+        )
+
     def _insert_batch_to_duckdb(
         self,
         records: list[CDCRecord],
@@ -890,74 +1030,16 @@ class PostgreSQLDestination(BaseDestination):
 
         # Drop existing table if exists (use identifier quoting for safety)
         self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{safe_table_name}"')
-
-        # Convert records to columnar format. Delete events may only carry the
-        # primary key, so fall back to the record key when the payload is empty.
-        data: list[dict[str, Any]] = []
-        columns: list[str] = []
-        seen_columns: set[str] = set()
-        for record in records:
-            row = dict(record.value or {})
-
-            if record.is_delete and record.key:
-                for key_col, key_val in record.key.items():
-                    row.setdefault(key_col, key_val)
-            elif not row and record.key:
-                row = dict(record.key)
-
-            data.append(row)
-            for col in row.keys():
-                if col not in seen_columns:
-                    seen_columns.add(col)
-                    columns.append(col)
-
-        if not columns:
-            raise DestinationException(
-                "CDC batch has no usable columns to stage; record payload and key are empty"
-            )
-
-        # Parse Debezium schema for type-aware ingestion
-        debezium_types = self._parse_debezium_field_types(records[0].schema)
-
-        arrays = {}
-        for col in columns:
-            raw_values = [row.get(col) for row in data]
-            dbz_info = debezium_types.get(col)
-
-            if dbz_info:
-                # Schema-aware coercion (primary path)
-                coerced_values = self._coerce_values_for_duckdb(
-                    raw_values, dbz_info, col
-                )
-            elif not debezium_types:
-                # No schema at all — try auto-detecting numeric strings
-                coerced_values = self._auto_coerce_numeric_column(raw_values)
-            else:
-                # Schema exists but this column isn't in it — keep raw
-                coerced_values = raw_values
-
-            if target_schema and col in target_schema:
-                # Finalize values using the actual target PostgreSQL column type.
-                # This catches format-only cases such as ISO timetz strings that
-                # still need normalization even when Debezium schema is present.
-                coerced_values = [
-                    self._convert_debezium_value(value, col, target_schema[col])
-                    for value in coerced_values
-                ]
-
-            arrays[col] = coerced_values
-
-        # Create Arrow table — DuckDB's native format (zero-copy)
-        arrow_table = pa.table(arrays)
+        arrow_stream = self._build_arrow_record_batch_reader(records, target_schema)
 
         self._duckdb_conn.execute(
-            f'CREATE TABLE "{safe_table_name}" AS SELECT * FROM arrow_table'
+            f'CREATE TABLE "{safe_table_name}" AS SELECT * FROM arrow_stream'
         )
 
         self._logger.debug(
             f"Inserted {len(records)} records into DuckDB table "
             f"'{safe_table_name}' (PyArrow, "
-            f"schema_aware={'yes' if debezium_types else 'auto'})"
+            f"streaming_batches=yes)"
         )
 
     def _apply_filters_in_duckdb(
@@ -1524,6 +1606,204 @@ class PostgreSQLDestination(BaseDestination):
 
         return [list(output_columns)[0]] if output_columns else source_pk
 
+    @staticmethod
+    def _should_use_direct_postgres_path(
+        table_sync: PipelineDestinationTableSync,
+    ) -> bool:
+        """Simple passthrough batches can bypass DuckDB entirely."""
+        return not table_sync.filter_sql and not table_sync.custom_sql
+
+    def _collect_record_columns(
+        self,
+        records: list[CDCRecord],
+        target_schema: dict[str, dict],
+    ) -> list[str]:
+        columns: list[str] = []
+        seen: set[str] = set()
+        for record in records:
+            for column in self._record_to_row(record).keys():
+                if column in target_schema and column not in seen:
+                    seen.add(column)
+                    columns.append(column)
+        return columns
+
+    @staticmethod
+    def _dedupe_rows_by_keys(
+        rows: list[dict[str, Any]],
+        key_columns: list[str],
+    ) -> list[dict[str, Any]]:
+        if not rows or not key_columns:
+            return rows
+
+        deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for row in rows:
+            deduped[tuple(row.get(column) for column in key_columns)] = row
+        return list(deduped.values())
+
+    def _prepare_direct_rows(
+        self,
+        records: list[CDCRecord],
+        columns: list[str],
+        target_schema: dict[str, dict],
+    ) -> list[dict[str, Any]]:
+        prepared_rows: list[dict[str, Any]] = []
+        for record in records:
+            row = self._record_to_row(record)
+            prepared_rows.append(
+                {
+                    column: self._convert_debezium_value(
+                        row.get(column),
+                        column,
+                        target_schema[column],
+                    )
+                    for column in columns
+                }
+            )
+        return prepared_rows
+
+    def _execute_direct_delete(
+        self,
+        cursor,
+        target_table: str,
+        key_columns: list[str],
+        rows: list[dict[str, Any]],
+    ) -> int:
+        if not rows:
+            return 0
+
+        values = [tuple(row.get(column) for column in key_columns) for row in rows]
+        source_identifiers = pg_sql.SQL(", ").join(
+            pg_sql.Identifier(column) for column in key_columns
+        )
+        match_conditions = pg_sql.SQL(" AND ").join(
+            pg_sql.SQL("tgt.{0} = src.{0}").format(pg_sql.Identifier(column))
+            for column in key_columns
+        )
+        delete_sql = pg_sql.SQL(
+            """
+            DELETE FROM {schema}.{table} AS tgt
+            USING (VALUES %s) AS src ({src_columns})
+            WHERE {match_conditions}
+            """
+        ).format(
+            schema=pg_sql.Identifier(self.schema),
+            table=pg_sql.Identifier(target_table),
+            src_columns=source_identifiers,
+            match_conditions=match_conditions,
+        )
+        execute_values(cursor, delete_sql.as_string(cursor), values)
+        return len(rows)
+
+    def _execute_direct_upsert(
+        self,
+        cursor,
+        target_table: str,
+        columns: list[str],
+        key_columns: list[str],
+        rows: list[dict[str, Any]],
+    ) -> int:
+        if not rows:
+            return 0
+
+        values = [tuple(row.get(column) for column in columns) for row in rows]
+        insert_columns = pg_sql.SQL(", ").join(
+            pg_sql.Identifier(column) for column in columns
+        )
+        conflict_columns = pg_sql.SQL(", ").join(
+            pg_sql.Identifier(column) for column in key_columns
+        )
+        non_key_columns = [column for column in columns if column not in key_columns]
+        if non_key_columns:
+            conflict_action = pg_sql.SQL("DO UPDATE SET {updates}").format(
+                updates=pg_sql.SQL(", ").join(
+                    pg_sql.SQL("{0} = EXCLUDED.{0}").format(
+                        pg_sql.Identifier(column)
+                    )
+                    for column in non_key_columns
+                )
+            )
+        else:
+            conflict_action = pg_sql.SQL("DO NOTHING")
+
+        insert_sql = pg_sql.SQL(
+            """
+            INSERT INTO {schema}.{table} ({insert_columns})
+            VALUES %s
+            ON CONFLICT ({conflict_columns}) {conflict_action}
+            """
+        ).format(
+            schema=pg_sql.Identifier(self.schema),
+            table=pg_sql.Identifier(target_table),
+            insert_columns=insert_columns,
+            conflict_columns=conflict_columns,
+            conflict_action=conflict_action,
+        )
+        execute_values(cursor, insert_sql.as_string(cursor), values)
+        return len(rows)
+
+    def _write_batch_direct_postgres(
+        self,
+        records: list[CDCRecord],
+        table_sync: PipelineDestinationTableSync,
+        target_table: str,
+        target_schema: dict[str, dict],
+    ) -> int:
+        output_columns = set(self._collect_record_columns(records, target_schema))
+        key_columns = self._resolve_key_columns(
+            records,
+            table_sync,
+            target_table,
+            output_columns,
+        )
+        if not key_columns:
+            raise DestinationException(
+                f"Could not resolve primary key columns for direct PostgreSQL write to '{target_table}'"
+            )
+
+        upsert_records = [record for record in records if not record.is_delete]
+        delete_records = [record for record in records if record.is_delete]
+        upsert_columns = self._collect_record_columns(upsert_records, target_schema)
+        for key_column in key_columns:
+            if key_column in target_schema and key_column not in upsert_columns:
+                upsert_columns.append(key_column)
+
+        prepared_upserts = self._dedupe_rows_by_keys(
+            self._prepare_direct_rows(upsert_records, upsert_columns, target_schema),
+            key_columns,
+        )
+        prepared_deletes = self._dedupe_rows_by_keys(
+            self._prepare_direct_rows(delete_records, key_columns, target_schema),
+            key_columns,
+        )
+
+        previous_autocommit = self._pg_conn.autocommit
+        written = 0
+        try:
+            self._pg_conn.autocommit = False
+            with self._pg_conn.cursor() as cursor:
+                if prepared_upserts:
+                    written += self._execute_direct_upsert(
+                        cursor,
+                        target_table,
+                        upsert_columns,
+                        key_columns,
+                        prepared_upserts,
+                    )
+                if prepared_deletes:
+                    written += self._execute_direct_delete(
+                        cursor,
+                        target_table,
+                        key_columns,
+                        prepared_deletes,
+                    )
+            self._pg_conn.commit()
+            return written
+        except Exception as exc:
+            self._pg_conn.rollback()
+            raise DestinationException(f"PostgreSQL direct sync failed: {exc}") from exc
+        finally:
+            self._pg_conn.autocommit = previous_autocommit
+
     def write_batch(
         self,
         records: list[CDCRecord],
@@ -1572,6 +1852,34 @@ class PostgreSQLDestination(BaseDestination):
                 )
 
             started = time.perf_counter()
+
+            if self._should_use_direct_postgres_path(table_sync):
+                written = self._write_batch_direct_postgres(
+                    records,
+                    table_sync,
+                    target_table,
+                    target_schema,
+                )
+                observe(
+                    "postgres_destination.write_duration",
+                    (time.perf_counter() - started) * 1000.0,
+                    unit="ms",
+                    destination_id=str(self._config.id),
+                    target_table=target_table,
+                )
+                set_gauge(
+                    "postgres_destination.last_batch_rows",
+                    written,
+                    unit="rows",
+                    destination_id=str(self._config.id),
+                    target_table=target_table,
+                )
+                self._logger.debug(
+                    "Wrote %s records to %s via direct PostgreSQL path",
+                    written,
+                    target_table,
+                )
+                return written
 
             delete_records = [record for record in records if record.is_delete]
             upsert_records = [record for record in records if not record.is_delete]
@@ -1707,6 +2015,9 @@ class PostgreSQLDestination(BaseDestination):
                 f"PostgreSQL sync failed: {error_msg}",
                 {"destination_id": self._config.id},
             )
+
+        except DestinationException:
+            raise
 
         except Exception as e:
             # Notify on error

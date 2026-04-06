@@ -67,7 +67,8 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
     subprocess_logger = logging.getLogger(f"Pipeline_{pipeline_id}")
 
     # Initialize database connection pool for this process with configurable size
-    # Default to 20 connections to support concurrent operations:
+    # Default to a small pool and let callers queue on the pool instead of
+    # holding many idle config-DB connections per pipeline process.
     # - Main engine repository queries (3-5 connections)
     # - Backfill manager operations (3-5 connections)
     # - DLQ recovery worker (2-3 connections)
@@ -76,8 +77,8 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
     # - Buffer for concurrent spikes (3-5 connections)
     import os
 
-    pipeline_pool_max_conn = int(os.getenv("PIPELINE_POOL_MAX_CONN", "20"))
-    init_connection_pool(min_conn=2, max_conn=pipeline_pool_max_conn)
+    pipeline_pool_max_conn = int(os.getenv("PIPELINE_POOL_MAX_CONN", "4"))
+    init_connection_pool(min_conn=1, max_conn=pipeline_pool_max_conn)
 
     engine = None
     _engine_errored = False
@@ -130,6 +131,12 @@ def _run_pipeline_process(pipeline_id: int, stop_event: EventClass) -> None:
                 subprocess_logger.warning(
                     f"Error during engine stop for pipeline {pipeline_id}: {_stop_err}"
                 )
+        try:
+            from core.repository import DataFlowRepository
+
+            DataFlowRepository.shutdown()
+        except Exception:
+            pass
         close_connection_pool()
 
 

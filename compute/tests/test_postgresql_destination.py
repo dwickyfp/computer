@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import pyarrow as pa
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,9 +49,18 @@ class _FakeCursor:
 class _FakePGConnection:
     def __init__(self, rows):
         self._cursor = _FakeCursor(rows)
+        self.autocommit = True
+        self.commits = 0
+        self.rollbacks = 0
 
     def cursor(self):
         return self._cursor
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
 
 
 def _make_destination() -> PostgreSQLDestination:
@@ -159,11 +169,21 @@ def test_insert_batch_uses_target_schema_fallback_for_plain_json_logical_types()
         timestamp=1700000000000,
     )
 
-    def _capture_arrow_table(arrays):
-        captured.update(arrays)
-        return SimpleNamespace()
+    real_from_arrays = pa.RecordBatch.from_arrays
 
-    with patch("destinations.postgresql.pa.table", side_effect=_capture_arrow_table):
+    def _capture_record_batch(arrays, names):
+        captured.update(
+            {
+                column_name: array.to_pylist()
+                for column_name, array in zip(names, arrays)
+            }
+        )
+        return real_from_arrays(arrays, names=names)
+
+    with patch(
+        "destinations.postgresql._record_batch_from_arrays",
+        side_effect=_capture_record_batch,
+    ):
         destination._insert_batch_to_duckdb(
             [record],
             "orders",
@@ -224,11 +244,21 @@ def test_insert_batch_applies_target_schema_after_debezium_schema_coercion():
         timestamp=1700000000000,
     )
 
-    def _capture_arrow_table(arrays):
-        captured.update(arrays)
-        return SimpleNamespace()
+    real_from_arrays = pa.RecordBatch.from_arrays
 
-    with patch("destinations.postgresql.pa.table", side_effect=_capture_arrow_table):
+    def _capture_record_batch(arrays, names):
+        captured.update(
+            {
+                column_name: array.to_pylist()
+                for column_name, array in zip(names, arrays)
+            }
+        )
+        return real_from_arrays(arrays, names=names)
+
+    with patch(
+        "destinations.postgresql._record_batch_from_arrays",
+        side_effect=_capture_record_batch,
+    ):
         destination._insert_batch_to_duckdb(
             [record],
             "orders",
@@ -252,11 +282,21 @@ def test_insert_batch_uses_record_key_when_delete_payload_is_empty():
         timestamp=1700000000000,
     )
 
-    def _capture_arrow_table(arrays):
-        captured.update(arrays)
-        return SimpleNamespace()
+    real_from_arrays = pa.RecordBatch.from_arrays
 
-    with patch("destinations.postgresql.pa.table", side_effect=_capture_arrow_table):
+    def _capture_record_batch(arrays, names):
+        captured.update(
+            {
+                column_name: array.to_pylist()
+                for column_name, array in zip(names, arrays)
+            }
+        )
+        return real_from_arrays(arrays, names=names)
+
+    with patch(
+        "destinations.postgresql._record_batch_from_arrays",
+        side_effect=_capture_record_batch,
+    ):
         destination._insert_batch_to_duckdb(
             [record],
             "orders",
@@ -276,3 +316,90 @@ def test_get_target_primary_key_uses_cache_after_first_lookup():
     assert first == ["id"]
     assert second == ["id"]
     assert destination._pg_conn._cursor.execute_calls == 1
+
+
+def test_write_batch_uses_direct_postgres_fast_path_without_transforms():
+    destination = _make_destination()
+    destination._pg_conn = _FakePGConnection(rows=[])
+    table_sync = _make_table_sync()
+    record = CDCRecord(
+        operation="u",
+        table_name="orders",
+        key={"id": 1},
+        value={"id": 1, "status": "ready"},
+        timestamp=1700000000000,
+    )
+
+    with patch.object(
+        destination,
+        "_get_table_schema",
+        return_value={"id": {"type": "integer"}, "status": {"type": "text"}},
+    ), patch.object(
+        destination,
+        "_write_batch_direct_postgres",
+        return_value=1,
+    ) as direct_write, patch.object(
+        destination,
+        "_insert_batch_to_duckdb",
+    ) as insert_batch:
+        written = destination.write_batch([record], table_sync)
+
+    assert written == 1
+    direct_write.assert_called_once()
+    insert_batch.assert_not_called()
+
+
+def test_write_batch_direct_postgres_dedupes_duplicate_keys():
+    destination = _make_destination()
+    destination._pg_conn = _FakePGConnection(rows=[])
+    table_sync = _make_table_sync()
+    records = [
+        CDCRecord(
+            operation="u",
+            table_name="orders",
+            key={"id": 1},
+            value={"id": 1, "status": "draft"},
+            timestamp=1700000000000,
+        ),
+        CDCRecord(
+            operation="u",
+            table_name="orders",
+            key={"id": 1},
+            value={"id": 1, "status": "ready"},
+            timestamp=1700000001000,
+        ),
+        CDCRecord(
+            operation="d",
+            table_name="orders",
+            key={"id": 2},
+            value={},
+            timestamp=1700000002000,
+        ),
+        CDCRecord(
+            operation="d",
+            table_name="orders",
+            key={"id": 2},
+            value={},
+            timestamp=1700000003000,
+        ),
+    ]
+
+    with patch.object(
+        destination,
+        "_execute_direct_upsert",
+        side_effect=lambda cursor, target_table, columns, key_columns, rows: len(rows),
+    ) as direct_upsert, patch.object(
+        destination,
+        "_execute_direct_delete",
+        side_effect=lambda cursor, target_table, key_columns, rows: len(rows),
+    ) as direct_delete:
+        written = destination._write_batch_direct_postgres(
+            records,
+            table_sync,
+            "orders",
+            {"id": {"type": "integer"}, "status": {"type": "text"}},
+        )
+
+    assert written == 2
+    assert direct_upsert.call_args.args[-1] == [{"id": 1, "status": "ready"}]
+    assert direct_delete.call_args.args[-1] == [{"id": 2}]

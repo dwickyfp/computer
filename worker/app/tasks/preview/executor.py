@@ -22,8 +22,8 @@ from app.core.redis_client import get_redis
 from app.core.security import decrypt_value
 from app.tasks.preview.serializer import (
     extract_column_types,
+    serialize_arrow_batches,
     serialize_error,
-    serialize_preview_result,
 )
 from app.tasks.preview.validator import validate_preview_sql
 
@@ -219,28 +219,46 @@ def execute_preview(
                 from app.tasks.flow_task.connection_factory import sanitize_connection_error
                 logger.warning("Failed to attach destination DB", error=sanitize_connection_error(str(e)))
 
-            # Execute query
-            result = con.execute(final_query).fetch_arrow_table()
+            # Execute query. Stream Arrow batches unless profiling needs the
+            # whole result table in memory for column statistics.
+            if include_profiling:
+                result = con.execute(final_query).fetch_arrow_table()
+            else:
+                result = con.execute(final_query).fetch_record_batch(
+                    settings.arrow_batch_size
+                )
+
+            # 6. Process results while the DuckDB connection remains open.
+            schema = result.schema
+            columns = list(schema.names)
+            column_types = extract_column_types(schema)
+            if include_profiling:
+                data = serialize_arrow_batches(
+                    result.to_reader(max_chunksize=settings.arrow_batch_size)
+                )
+            else:
+                data = serialize_arrow_batches(result)
+
+            response = {
+                "columns": columns,
+                "column_types": column_types,
+                "data": data,
+                "error": None,
+            }
+
+            # 6b. Data profiling (D7) — compute column statistics if requested
+            if include_profiling:
+                try:
+                    from app.tasks.preview.profiler import profile_arrow_table
+
+                    response["profile"] = profile_arrow_table(result)
+                except Exception as e:
+                    logger.warning("Data profiling failed", error=str(e))
+                    response["profile"] = []
         finally:
             if con:
                 con.close()
             release_duckdb_slot()
-
-        # 6. Process results
-        columns = result.column_names
-        column_types = extract_column_types(result.schema)
-        data = result.to_pylist()
-
-        response = serialize_preview_result(columns, column_types, data)
-
-        # 6b. Data profiling (D7) — compute column statistics if requested
-        if include_profiling:
-            try:
-                from app.tasks.preview.profiler import profile_arrow_table
-                response["profile"] = profile_arrow_table(result)
-            except Exception as e:
-                logger.warning("Data profiling failed", error=str(e))
-                response["profile"] = []
 
         # 7. Cache result (5 minute TTL)
         try:
