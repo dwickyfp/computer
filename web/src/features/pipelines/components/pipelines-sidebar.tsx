@@ -478,7 +478,9 @@ export function PipelinesSidebar() {
   const navigate = useNavigate()
   const { selection } = usePipelineSelection()
   const [searchQuery, setSearchQuery] = useState('')
-  const [expandedItems, setExpandedItems] = useState<string[]>([])
+  const [expandedItems, setExpandedItems] = useState<string[]>(() =>
+    currentId ? [`pipeline-${currentId}`] : []
+  )
   const [isManualRefreshing, setIsManualRefreshing] = useState(false)
   const queryClient = useQueryClient()
 
@@ -615,12 +617,8 @@ export function PipelinesSidebar() {
       nextItems = mergeExpandedItems(nextItems, itemsToExpand)
     }
 
-    if (currentId && !searchQuery) {
-      nextItems = mergeExpandedItems(nextItems, [`pipeline-${currentId}`])
-    }
-
     return nextItems
-  }, [expandedItems, itemsToExpand, currentId, searchQuery])
+  }, [expandedItems, itemsToExpand, searchQuery])
 
   if (isError) {
     return (
@@ -744,6 +742,9 @@ export function PipelinesSidebar() {
                             onClick={(event) => {
                               if (currentId !== pipeline.id) {
                                 event.preventDefault()
+                                setExpandedItems((previous) =>
+                                  mergeExpandedItems(previous, [pipelineKey])
+                                )
                                 navigate({
                                   to: '/pipelines/$pipelineId',
                                   params: {
