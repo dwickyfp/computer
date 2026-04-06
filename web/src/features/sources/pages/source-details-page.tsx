@@ -10,13 +10,14 @@ import { ThemeSwitch } from '@/components/theme-switch'
 import { SourceDetailsMetrics } from '../components/source-details-metrics'
 import { SourceReplicationTable } from '../components/source-replication-table'
 import { SourceDetailsCreatePublicationDialog } from '../components/source-details-create-publication-dialog'
+import { SourceDetailsCreateTopicDialog } from '../components/source-details-create-topic-dialog'
 import { SourceDetailsListTable } from '../components/source-details-list-table'
 import { SourceDetailsPresets } from '../components/source-details-presets'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CustomTabs, CustomTabsContent, CustomTabsList, CustomTabsTrigger } from '@/components/ui/custom-tabs'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { RefreshCcw, Activity, Database, Sliders } from 'lucide-react'
+import { RefreshCcw, Activity, Database, Sliders, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import {
     AlertDialog,
@@ -47,6 +48,7 @@ export default function SourceDetailsPage() {
     const [isPublicationLoading, setIsPublicationLoading] = useState(false)
     const [isReplicationLoading, setIsReplicationLoading] = useState(false)
     const [createPubDialogOpen, setCreatePubDialogOpen] = useState(false)
+    const [createTopicDialogOpen, setCreateTopicDialogOpen] = useState(false)
     const [dropPublicationDialogOpen, setDropPublicationDialogOpen] = useState(false)
     const [dropReplicationDialogOpen, setDropReplicationDialogOpen] = useState(false)
 
@@ -194,6 +196,16 @@ export default function SourceDetailsPage() {
                         </div>
                         {/* Action Buttons */}
                         <div className="flex items-center gap-2">
+                            {isKafkaSource && (
+                                <Button
+                                    size="sm"
+                                    onClick={() => setCreateTopicDialogOpen(true)}
+                                    disabled={isLoading}
+                                >
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Create Topic
+                                </Button>
+                            )}
                             <Button
                                 variant="outline"
                                 size="sm"
@@ -318,6 +330,14 @@ export default function SourceDetailsPage() {
                                     </AlertDialogContent>
                                 </AlertDialog>
                             </>
+                        )}
+                        {isKafkaSource && (
+                            <SourceDetailsCreateTopicDialog
+                                open={createTopicDialogOpen}
+                                onOpenChange={setCreateTopicDialogOpen}
+                                sourceId={id}
+                                topicPrefix={data?.source.topic_prefix || data?.source.config.topic_prefix}
+                            />
                         )}
                     </>
                 )}

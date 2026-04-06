@@ -230,6 +230,11 @@ export const sourcesRepo = {
       table_name: tableName,
     })
   },
+  createTopic: async (sourceId: number, topicName: string) => {
+    await api.post(`/sources/${sourceId}/topics`, {
+      topic_name: topicName,
+    })
+  },
   unregisterTable: async (sourceId: number, tableName: string) => {
     await api.delete(`/sources/${sourceId}/tables/${tableName}`)
   },

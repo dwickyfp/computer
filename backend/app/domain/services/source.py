@@ -7,6 +7,7 @@ Implements business rules and orchestrates repository operations for sources.
 from typing import Any, List
 from datetime import datetime, timezone, timedelta
 import asyncio
+import re
 
 from sqlalchemy.orm import Session
 import psycopg2
@@ -141,6 +142,41 @@ class SourceService:
         if config.get("ssl_key_location"):
             client["ssl.key.location"] = config["ssl_key_location"]
         return client
+
+    def _normalize_kafka_topic_name(self, source: Source, topic_name: str) -> tuple[str, str]:
+        normalized = str(topic_name or "").strip()
+        if not normalized:
+            raise ValueError("Topic name is required")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", normalized):
+            raise ValueError(
+                "Topic name may only contain letters, numbers, dots, underscores, and hyphens"
+            )
+
+        prefix = str((source.config or {}).get("topic_prefix") or "").strip()
+        prefix_with_dot = f"{prefix}." if prefix else ""
+        if prefix_with_dot and normalized.startswith(prefix_with_dot):
+            table_name = normalized.removeprefix(prefix_with_dot)
+            full_topic_name = normalized
+        else:
+            table_name = normalized
+            full_topic_name = f"{prefix_with_dot}{table_name}" if prefix_with_dot else table_name
+
+        if not table_name or table_name.startswith(".") or table_name.endswith("."):
+            raise ValueError("Topic name must resolve to a valid topic inside the source prefix")
+
+        return table_name, full_topic_name
+
+    def _invalidate_source_caches(self, source_id: int) -> None:
+        try:
+            redis_client = RedisClient.get_instance()
+            redis_client.delete(
+                f"source:{source_id}:tables",
+                f"source_details:{source_id}",
+                f"source:{source_id}:schema",
+                f"source:{source_id}:schema:only_tables",
+            )
+        except Exception as e:
+            logger.warning("Failed to invalidate cache for source %s: %s", source_id, e)
 
     def _discover_kafka_tables(self, source: Source) -> list[str]:
         if self._is_postgres_source(source):
@@ -1078,11 +1114,7 @@ class SourceService:
                     e,
                 )
                 raise ValueError(f"Failed to refresh Kafka source metadata: {e}") from e
-            try:
-                redis_client = RedisClient.get_instance()
-                redis_client.delete(f"source:{source_id}:tables")
-            except Exception as e:
-                logger.warning("Failed to invalidate cache for source %s: %s", source_id, e)
+            self._invalidate_source_caches(source_id)
             return
 
         # Store previous state to detect external drops
@@ -1105,11 +1137,48 @@ class SourceService:
             self._pause_running_pipelines_for_source(source_id)
 
         # Invalidate Available Tables Cache
+        self._invalidate_source_caches(source_id)
+
+    def create_kafka_topic(self, source_id: int, topic_name: str) -> str:
+        source = self.get_source(source_id)
+        if self._is_postgres_source(source):
+            raise ValueError("Kafka topics can only be created for KAFKA sources")
+
+        table_name, full_topic_name = self._normalize_kafka_topic_name(source, topic_name)
+
         try:
-            redis_client = RedisClient.get_instance()
-            redis_client.delete(f"source:{source_id}:tables")
+            from confluent_kafka.admin import NewTopic
+
+            admin = create_admin_client(self._build_kafka_admin_client_config(source))
+            future = admin.create_topics(
+                [
+                    NewTopic(
+                        full_topic_name,
+                        num_partitions=1,
+                        replication_factor=1,
+                        config={"retention.ms": str(12 * 60 * 60 * 1000)},
+                    )
+                ],
+                operation_timeout=30,
+            )[full_topic_name]
+            future.result()
         except Exception as e:
-            logger.warning("Failed to invalidate cache for source %s: %s", source_id, e)
+            error_message = str(e)
+            if "TOPIC_ALREADY_EXISTS" in error_message.upper() or "already exists" in error_message.lower():
+                raise ValueError(f"Kafka topic '{full_topic_name}' already exists") from e
+            logger.error("Failed to create Kafka topic %s: %s", full_topic_name, e)
+            raise ValueError(f"Failed to create Kafka topic '{full_topic_name}': {e}") from e
+
+        table_repo = TableMetadataRepository(self.db)
+        existing = table_repo.get_by_source_and_name(source_id, table_name)
+        if not existing:
+            table_repo.create(source_id=source_id, table_name=table_name, schema_table={})
+
+        source.total_tables = len(table_repo.get_by_source_id(source_id))
+        self.db.commit()
+        self.db.refresh(source)
+        self._invalidate_source_caches(source_id)
+        return table_name
 
     def create_publication(self, source_id: int, tables: List[str]) -> None:
         source = self.get_source(source_id)
@@ -1301,6 +1370,7 @@ class SourceService:
                 table_repo.create(source_id=source_id, table_name=table_name, schema_table={})
             source.total_tables = len(table_repo.get_by_source_id(source_id))
             self.db.commit()
+            self._invalidate_source_caches(source_id)
             return
         try:
             conn = self._get_connection(source)
@@ -1389,6 +1459,7 @@ class SourceService:
             table_repo.delete_table(source_id, table_name)
             source.total_tables = len(table_repo.get_by_source_id(source_id))
             self.db.commit()
+            self._invalidate_source_caches(source_id)
             return
         try:
             conn = self._get_connection(source)

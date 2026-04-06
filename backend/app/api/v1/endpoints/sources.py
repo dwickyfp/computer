@@ -236,6 +236,10 @@ class TableRegisterRequest(BaseModel):
     table_name: str
 
 
+class KafkaTopicCreateRequest(BaseModel):
+    topic_name: str
+
+
 @router.post(
     "/{source_id}/tables/register",
     status_code=status.HTTP_200_OK,
@@ -256,6 +260,23 @@ def register_table(
         service: Source service instance
     """
     service.register_table_to_publication(source_id, request.table_name)
+
+
+@router.post(
+    "/{source_id}/topics",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Kafka topic",
+    description="Create a Kafka topic for a Kafka source using the source topic prefix",
+)
+def create_kafka_topic(
+    source_id: int,
+    request: KafkaTopicCreateRequest,
+    service: SourceService = Depends(get_source_service),
+) -> None:
+    try:
+        service.create_kafka_topic(source_id, request.topic_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.delete(

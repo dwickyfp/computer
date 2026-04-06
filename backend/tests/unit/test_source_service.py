@@ -1,4 +1,5 @@
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 from app.domain.services.source import SourceService
 
@@ -87,3 +88,99 @@ def test_schema_snapshot_for_latest_version_uses_current_schema():
     )
 
     assert schema == current_schema
+
+
+def test_normalize_kafka_topic_name_applies_source_prefix():
+    service = SourceService(db=None)
+    source = SimpleNamespace(config={"topic_prefix": "salt.public"})
+
+    table_name, full_topic_name = service._normalize_kafka_topic_name(
+        source, "orders_cdc"
+    )
+
+    assert table_name == "orders_cdc"
+    assert full_topic_name == "salt.public.orders_cdc"
+
+
+def test_create_kafka_topic_uses_default_retention_partition_and_replica(monkeypatch):
+    created_topics = []
+    invalidated = []
+    commits = []
+    refreshed = []
+
+    class _Future:
+        def result(self):
+            return None
+
+    class _AdminClient:
+        def create_topics(self, topics, operation_timeout=None):
+            created_topics.extend(topics)
+            assert operation_timeout == 30
+            return {topics[0].topic: _Future()}
+
+    class _TableRepo:
+        def __init__(self):
+            self.rows = {}
+
+        def get_by_source_and_name(self, source_id, table_name):
+            return self.rows.get((source_id, table_name))
+
+        def create(self, source_id, table_name, schema_table):
+            self.rows[(source_id, table_name)] = SimpleNamespace(
+                source_id=source_id,
+                table_name=table_name,
+                schema_table=schema_table,
+            )
+
+        def get_by_source_id(self, source_id):
+            return [
+                row
+                for (row_source_id, _), row in self.rows.items()
+                if row_source_id == source_id
+            ]
+
+    kafka_admin_module = ModuleType("confluent_kafka.admin")
+
+    class NewTopic:
+        def __init__(self, topic, num_partitions, replication_factor, config):
+            self.topic = topic
+            self.num_partitions = num_partitions
+            self.replication_factor = replication_factor
+            self.config = config
+
+    kafka_admin_module.NewTopic = NewTopic
+    monkeypatch.setitem(sys.modules, "confluent_kafka.admin", kafka_admin_module)
+
+    fake_source = SimpleNamespace(
+        id=2,
+        type="KAFKA",
+        config={
+            "bootstrap_servers": "localhost:9092",
+            "topic_prefix": "salt.public",
+        },
+        total_tables=0,
+    )
+    fake_repo = _TableRepo()
+    fake_db = SimpleNamespace(
+        commit=lambda: commits.append(True),
+        refresh=lambda obj: refreshed.append(obj),
+    )
+    service = SourceService(db=fake_db)
+
+    monkeypatch.setattr(service, "get_source", lambda source_id: fake_source)
+    monkeypatch.setattr(service, "_invalidate_source_caches", lambda source_id: invalidated.append(source_id))
+    monkeypatch.setattr("app.domain.services.source.create_admin_client", lambda config: _AdminClient())
+    monkeypatch.setattr("app.domain.services.source.TableMetadataRepository", lambda db: fake_repo)
+
+    table_name = service.create_kafka_topic(2, "orders_cdc")
+
+    assert table_name == "orders_cdc"
+    assert fake_source.total_tables == 1
+    assert commits == [True]
+    assert refreshed == [fake_source]
+    assert invalidated == [2]
+    assert len(created_topics) == 1
+    assert created_topics[0].topic == "salt.public.orders_cdc"
+    assert created_topics[0].num_partitions == 1
+    assert created_topics[0].replication_factor == 1
+    assert created_topics[0].config == {"retention.ms": "43200000"}
