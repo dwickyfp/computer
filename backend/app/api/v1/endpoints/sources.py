@@ -6,7 +6,7 @@ Provides REST API for managing data sources.
 
 from typing import List
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.api.deps import (
@@ -131,7 +131,10 @@ def get_source_details(
         Source details
     """
     service = rw_service if force_refresh else ro_service
-    return service.get_source_details(source_id, force_refresh=force_refresh)
+    try:
+        return service.get_source_details(source_id, force_refresh=force_refresh)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.put(
@@ -277,7 +280,10 @@ def refresh_source(
     source_id: int,
     service: SourceService = Depends(get_source_service),
 ) -> None:
-    service.refresh_source_metadata(source_id)
+    try:
+        service.refresh_source_metadata(source_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.post(
@@ -345,9 +351,12 @@ def fetch_available_tables(
     If refresh is True, ignores cache and fetches directly from DB, updating cache.
     Otherwise, returns cached result or fetches if cache miss.
     """
-    if refresh:
-        return service.refresh_available_tables(source_id)
-    return service.fetch_available_tables(source_id)
+    try:
+        if refresh:
+            return service.refresh_available_tables(source_id)
+        return service.fetch_available_tables(source_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 # --- Presets ---

@@ -15,7 +15,9 @@ export function WALMonitorList() {
         refetchInterval: refreshInterval,
     })
 
-    const monitors = data?.monitors || []
+    const monitors = (data?.monitors || []).filter(
+        (monitor) => (monitor.source?.type || 'POSTGRES') === 'POSTGRES'
+    )
 
     const getWalSizeBadgeVariant = (status: 'OK' | 'WARNING' | 'ERROR' | null) => {
         switch (status) {

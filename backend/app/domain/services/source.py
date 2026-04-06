@@ -124,15 +124,11 @@ class SourceService:
 
         return payload
 
-    def _build_kafka_client_config(self, source: Source, include_group: bool = True) -> dict[str, Any]:
+    def _build_kafka_admin_client_config(self, source: Source) -> dict[str, Any]:
         config = dict(source.config or {})
         client = {
             "bootstrap.servers": config.get("bootstrap_servers", ""),
         }
-        if include_group and config.get("group_id"):
-            client["group.id"] = config.get("group_id")
-        if config.get("auto_offset_reset"):
-            client["auto.offset.reset"] = config["auto_offset_reset"]
         if config.get("security_protocol"):
             client["security.protocol"] = config["security_protocol"]
         if config.get("sasl_mechanism"):
@@ -154,8 +150,19 @@ class SourceService:
             raise ValueError("Kafka topic discovery is only available for KAFKA sources")
 
         config = dict(source.config or {})
-        admin = create_admin_client(self._build_kafka_client_config(source, include_group=False))
-        metadata = admin.list_topics(timeout=10)
+        bootstrap_servers = config.get("bootstrap_servers", "")
+        admin = create_admin_client(self._build_kafka_admin_client_config(source))
+        try:
+            metadata = admin.list_topics(timeout=10)
+        except Exception as exc:
+            raise ValueError(
+                "Failed to fetch Kafka metadata from "
+                f"'{bootstrap_servers}'. Ensure the broker hostname is reachable "
+                "from the backend service. If the bootstrap server is reachable "
+                "but metadata still times out, verify Kafka advertised.listeners "
+                "is not pointing to an internal hostname such as 'kafka:9092'. "
+                f"Original error: {exc}"
+            ) from exc
         prefix = config.get("topic_prefix", "")
         prefix_with_dot = f"{prefix}." if prefix else ""
         tables = []
@@ -184,6 +191,14 @@ class SourceService:
         source.total_tables = len(tables)
         self.db.flush()
         return tables
+
+    def _get_cached_kafka_tables(self, source_id: int) -> set[str]:
+        table_repo = TableMetadataRepository(self.db)
+        return {
+            table.table_name
+            for table in table_repo.get_by_source_id(source_id)
+            if table.table_name
+        }
 
     def create_source(self, source_data: SourceCreate) -> Source:
         """
@@ -501,7 +516,21 @@ class SourceService:
             wal_monitor_repo = WALMonitorRepository(self.db)
             wal_monitor = wal_monitor_repo.get_by_source(source_id)
         else:
-            registered_tables = set(self._sync_kafka_tables(source) if force_refresh else self.fetch_available_tables(source_id))
+            kafka_metadata_error: str | None = None
+            try:
+                registered_tables = set(
+                    self._sync_kafka_tables(source)
+                    if force_refresh
+                    else self.fetch_available_tables(source_id)
+                )
+            except ValueError as exc:
+                kafka_metadata_error = str(exc)
+                registered_tables = self._get_cached_kafka_tables(source.id)
+                logger.warning(
+                    "Using cached Kafka metadata for source %s after metadata fetch failed: %s",
+                    source_id,
+                    exc,
+                )
             runtime.update(
                 {
                     "bootstrap_servers": source.config.get("bootstrap_servers"),
@@ -510,6 +539,8 @@ class SourceService:
                     "group_id": source.config.get("group_id")
                     or self._system_kafka_group_id(source.id),
                     "format": source.config.get("format", "PLAIN_JSON"),
+                    "metadata_status": "stale" if kafka_metadata_error else "ready",
+                    "metadata_error": kafka_metadata_error,
                 }
             )
 
@@ -1003,9 +1034,21 @@ class SourceService:
         source = self.get_source(source_id)
 
         if not self._is_postgres_source(source):
-            self._sync_kafka_tables(source)
-            self.db.commit()
-            self.db.refresh(source)
+            try:
+                self._sync_kafka_tables(source)
+                self.db.commit()
+                self.db.refresh(source)
+            except ValueError:
+                self.db.rollback()
+                raise
+            except Exception as e:
+                self.db.rollback()
+                logger.error(
+                    "Failed to refresh Kafka source metadata for source %s: %s",
+                    source_id,
+                    e,
+                )
+                raise ValueError(f"Failed to refresh Kafka source metadata: {e}") from e
             try:
                 redis_client = RedisClient.get_instance()
                 redis_client.delete(f"source:{source_id}:tables")
@@ -1415,20 +1458,30 @@ class SourceService:
         cache_key = f"source:{source_id}:tables"
 
         if not self._is_postgres_source(source):
-            tables = self._sync_kafka_tables(source)
             try:
-                import json
+                tables = self._sync_kafka_tables(source)
+                try:
+                    import json
 
-                redis_client = RedisClient.get_instance()
-                redis_client.setex(cache_key, 300, json.dumps(tables))
+                    redis_client = RedisClient.get_instance()
+                    redis_client.setex(cache_key, 300, json.dumps(tables))
+                except Exception as e:
+                    logger.error(
+                        "Failed to update cache during refresh for source %s: %s",
+                        source_id,
+                        e,
+                    )
+                self.db.commit()
+                return tables
+            except ValueError:
+                self.db.rollback()
+                raise
             except Exception as e:
+                self.db.rollback()
                 logger.error(
-                    "Failed to update cache during refresh for source %s: %s",
-                    source_id,
-                    e,
+                    "Failed to refresh Kafka topics for source %s: %s", source.name, e
                 )
-            self.db.commit()
-            return tables
+                raise ValueError(f"Failed to refresh Kafka topics: {e}") from e
 
         try:
             conn = self._get_connection(source)

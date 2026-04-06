@@ -57,6 +57,11 @@ class WALMonitorService:
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
+    @staticmethod
+    def _supports_wal_monitor(source: Source) -> bool:
+        """Return whether the source type supports PostgreSQL WAL monitoring."""
+        return str(getattr(source, "type", "POSTGRES") or "POSTGRES").upper() == "POSTGRES"
+
     async def check_wal_status(self, source: Source) -> dict:
         """
         Check WAL status for a specific source.
@@ -222,6 +227,13 @@ class WALMonitorService:
         """
         import time
 
+        if not self._supports_wal_monitor(source):
+            logger.info(
+                "Skipping WAL monitor for unsupported source type",
+                extra={"source_id": source.id, "source_type": getattr(source, "type", None)},
+            )
+            return
+
         max_retries = self.settings.wal_monitor_max_retries
         retry_count = 0
 
@@ -289,6 +301,13 @@ class WALMonitorService:
             source: Source to monitor
             db: Database session for persisting status
         """
+        if not self._supports_wal_monitor(source):
+            logger.info(
+                "Skipping WAL monitor for unsupported source type",
+                extra={"source_id": source.id, "source_type": getattr(source, "type", None)},
+            )
+            return
+
         max_retries = self.settings.wal_monitor_max_retries
         retry_count = 0
 
@@ -478,10 +497,25 @@ class WALMonitorService:
                     logger.info("No sources to monitor")
                     return
 
-                logger.info(f"Monitoring WAL for {len(sources)} sources")
+                supported_sources = [
+                    source for source in sources if self._supports_wal_monitor(source)
+                ]
+                skipped_count = len(sources) - len(supported_sources)
+
+                if skipped_count:
+                    logger.info(
+                        "Skipping WAL monitor for unsupported source types",
+                        extra={"skipped_sources": skipped_count},
+                    )
+
+                if not supported_sources:
+                    logger.info("No PostgreSQL sources to monitor")
+                    return
+
+                logger.info(f"Monitoring WAL for {len(supported_sources)} sources")
 
                 # Monitor each source concurrently
-                tasks = [self.monitor_source(source, db) for source in sources]
+                tasks = [self.monitor_source(source, db) for source in supported_sources]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
                 logger.info("WAL monitoring cycle completed")

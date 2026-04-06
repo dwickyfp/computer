@@ -1582,7 +1582,6 @@ class PipelineService:
         all_tables_meta = tm_repo.get_by_source_id(pipeline.source_id)
 
         for table_meta in all_tables_meta:
-            # Parse schema
             columns = []
             if table_meta.schema_table:
                 schema_items = table_meta.schema_table
@@ -1610,7 +1609,6 @@ class PipelineService:
                             )
                         )
                     elif isinstance(col, str):
-                        # Handle case where schema might be list of strings logic
                         columns.append(
                             ColumnSchemaResponse(
                                 column_name=col,
@@ -1620,28 +1618,27 @@ class PipelineService:
                             )
                         )
 
-                # Convert sync configs (list)
-                current_syncs = syncs_map[table_meta.table_name]
-                sync_configs_response = [
-                    PipelineDestinationTableSyncResponse.from_orm(s)
-                    for s in current_syncs
-                ]
+            current_syncs = syncs_map[table_meta.table_name]
+            sync_configs_response = [
+                PipelineDestinationTableSyncResponse.from_orm(s)
+                for s in current_syncs
+            ]
 
-                response_list.append(
-                    TableWithSyncInfoResponse(
-                        table_name=table_meta.table_name,
-                        columns=columns,
-                        sync_configs=sync_configs_response,
-                        is_exists_table_landing=any(
-                            s.is_exists_table_landing for s in current_syncs
-                        ),
-                        is_exists_stream=any(s.is_exists_stream for s in current_syncs),
-                        is_exists_task=any(s.is_exists_task for s in current_syncs),
-                        is_exists_table_destination=any(
-                            s.is_exists_table_destination for s in current_syncs
-                        ),
-                    )
+            response_list.append(
+                TableWithSyncInfoResponse(
+                    table_name=table_meta.table_name,
+                    columns=columns,
+                    sync_configs=sync_configs_response,
+                    is_exists_table_landing=any(
+                        s.is_exists_table_landing for s in current_syncs
+                    ),
+                    is_exists_stream=any(s.is_exists_stream for s in current_syncs),
+                    is_exists_task=any(s.is_exists_task for s in current_syncs),
+                    is_exists_table_destination=any(
+                        s.is_exists_table_destination for s in current_syncs
+                    ),
                 )
+            )
 
         return [r.dict() for r in response_list]
 

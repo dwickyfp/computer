@@ -5,6 +5,7 @@ export interface WALMonitor {
     source_id: number
     source?: {
         name: string
+        type?: string
         [key: string]: any
     }
     wal_lsn: string | null

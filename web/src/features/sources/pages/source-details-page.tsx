@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ApiError, getApiErrorMessage } from '@/repo/client'
 import { sourcesRepo } from '@/repo/sources'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
@@ -56,13 +57,19 @@ export default function SourceDetailsPage() {
         retry: false, // Don't retry if it fails (e.g. 404)
     })
     const isKafkaSource = data?.source.type === 'KAFKA'
+    const kafkaMetadataError =
+        typeof data?.runtime?.metadata_error === 'string'
+            ? data.runtime.metadata_error
+            : null
 
     useEffect(() => {
         if (isError) {
-            toast.error("Source not found or access denied")
-            navigate({ to: '/sources' })
+            toast.error(getApiErrorMessage(error, 'Failed to load source details'))
+            if (error instanceof ApiError && [403, 404].includes(error.status)) {
+                navigate({ to: '/sources' })
+            }
         }
-    }, [isError, navigate])
+    }, [error, isError, navigate])
 
     const handleRefresh = async () => {
         setIsRefreshing(true)
@@ -73,7 +80,7 @@ export default function SourceDetailsPage() {
             toast.success("Source refreshed successfully")
         } catch (err) {
             console.error(err)
-            toast.error("Failed to refresh source")
+            toast.error(getApiErrorMessage(err, "Failed to refresh source"))
         } finally {
             setIsRefreshing(false)
         }
@@ -196,6 +203,13 @@ export default function SourceDetailsPage() {
                             </Button>
                         </div>
                     </div>
+                    {kafkaMetadataError && (
+                        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                            Kafka metadata is currently unavailable. Showing cached topics.
+                            {' '}
+                            {kafkaMetadataError}
+                        </div>
+                    )}
                 </div>
 
                 {isLoading ? (

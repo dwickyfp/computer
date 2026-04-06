@@ -216,13 +216,16 @@ class DashboardService:
 
     def get_source_health_summary(self) -> Dict[str, int]:
         """
-        Get count of sources by WAL Monitor status.
+        Get count of PostgreSQL sources by WAL Monitor status.
         """
         results = self.db.execute(
             select(
                 WALMonitor.status,
                 func.count(WALMonitor.id)
-            ).group_by(WALMonitor.status)
+            )
+            .join(Source, Source.id == WALMonitor.source_id)
+            .where(Source.type == "POSTGRES")
+            .group_by(WALMonitor.status)
         ).all()
         
         summary = {

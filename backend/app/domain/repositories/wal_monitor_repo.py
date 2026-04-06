@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, joinedload
 
+from app.domain.models.source import Source
 from app.domain.models.wal_monitor import WALMonitor
 from app.domain.repositories.base import BaseRepository
 from app.core.logging import get_logger
@@ -49,13 +50,16 @@ class WALMonitorRepository(BaseRepository[WALMonitor]):
 
     def get_all_monitors(self) -> List[WALMonitor]:
         """
-        Get all WAL monitor records.
+        Get all WAL monitor records for PostgreSQL sources.
 
         Returns:
             List of all WAL monitor records
         """
         result = self.db.execute(
-            select(WALMonitor).options(joinedload(WALMonitor.source))
+            select(WALMonitor)
+            .join(WALMonitor.source)
+            .options(joinedload(WALMonitor.source))
+            .where(Source.type == "POSTGRES")
         )
         return list(result.scalars().all())
 
