@@ -476,7 +476,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 const sidebarMenuMotionClassName =
-  'border border-transparent transform-gpu transition-[transform,background-color,color,border-color,box-shadow] duration-150 ease-out motion-reduce:transition-none motion-safe:hover:scale-[1.01] motion-safe:active:scale-[0.99]'
+  'border border-transparent transition-[background-color,color,border-color,box-shadow] duration-150 ease-out motion-reduce:transition-none'
 
 const sidebarMenuButtonVariants = cva(
   cn(
