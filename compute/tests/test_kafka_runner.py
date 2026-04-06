@@ -272,3 +272,43 @@ def test_run_does_not_commit_offsets_when_routing_fails():
 
     consumer = fake_consumer_holder["consumer"]
     assert consumer.commits == 0
+
+
+def test_run_skips_schema_tracking_for_delete_events():
+    runner = _make_runner()
+    tracked = []
+    runner._schema_tracker.track_record = lambda table_name, value, key: tracked.append(
+        (table_name, value, key)
+    )
+    msg = _FakeMessage(
+        topic="dbserver1.inventory.orders",
+        key=b'{"id": 1}',
+        value=b'{"id":1,"rosetta_timestamp":1700000000000,"rosetta_operation":"d"}',
+    )
+    fake_consumer_holder = {}
+
+    def _consumer_factory(config):
+        consumer = _FakeConsumer(config, [msg, None])
+        fake_consumer_holder["consumer"] = consumer
+        return consumer
+
+    stop_event = SimpleNamespace(
+        is_set=lambda: state["stopped"],
+        set=lambda: state.__setitem__("stopped", True),
+    )
+    state = {"stopped": False}
+
+    class _Router:
+        def route_batches(self, records_by_table):
+            assert records_by_table["orders"][0].is_delete is True
+            state["stopped"] = True
+
+    with patch.dict(
+        "sys.modules",
+        {"confluent_kafka": SimpleNamespace(Consumer=_consumer_factory)},
+    ):
+        runner.run("pipe", ["orders"], _Router(), stop_event)
+
+    consumer = fake_consumer_holder["consumer"]
+    assert consumer.commits == 1
+    assert tracked == []

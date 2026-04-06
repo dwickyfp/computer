@@ -110,6 +110,10 @@ class KafkaSourceRunner(BaseSourceRunner):
             return self._message_to_debezium_record(msg, value_obj)
         return self._message_to_plain_json_record(msg, value_obj)
 
+    @staticmethod
+    def _should_track_schema(record: CDCRecord) -> bool:
+        return record.is_insert or record.is_update
+
     def _add_message_to_batch(
         self,
         msg,
@@ -122,11 +126,12 @@ class KafkaSourceRunner(BaseSourceRunner):
         if record is None:
             return
 
-        self._schema_tracker.track_record(
-            record.table_name,
-            record.value,
-            record.key,
-        )
+        if self._should_track_schema(record):
+            self._schema_tracker.track_record(
+                record.table_name,
+                record.value,
+                record.key,
+            )
         records_by_table.setdefault(record.table_name, []).append(record)
 
     def _collect_batch(self, max_batch: int) -> tuple[dict[str, list[CDCRecord]], int]:
