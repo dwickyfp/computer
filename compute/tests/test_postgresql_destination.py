@@ -2,6 +2,7 @@
 Focused tests for PostgreSQL destination delete semantics.
 """
 
+from datetime import date, datetime, time
 import os
 import sys
 from types import SimpleNamespace
@@ -114,3 +115,126 @@ def test_custom_sql_delete_fails_closed():
     assert "DELETE events are not supported with custom_sql pipelines" in str(
         exc_info.value
     )
+
+
+def test_insert_batch_uses_target_schema_fallback_for_plain_json_logical_types():
+    destination = _make_destination()
+    captured = {}
+
+    record = CDCRecord(
+        operation="u",
+        table_name="orders",
+        key={"id": 1},
+        value={
+            "id": 1,
+            "transaction_date": 1,
+            "created_at": 1_000_000,
+        },
+        timestamp=1700000000000,
+    )
+
+    def _capture_arrow_table(arrays):
+        captured.update(arrays)
+        return SimpleNamespace()
+
+    with patch("destinations.postgresql.pa.table", side_effect=_capture_arrow_table):
+        destination._insert_batch_to_duckdb(
+            [record],
+            "orders",
+            target_schema={
+                "id": {"type": "integer"},
+                "transaction_date": {"type": "date"},
+                "created_at": {"type": "timestamp with time zone"},
+            },
+        )
+
+    assert captured["id"] == [1]
+    assert captured["transaction_date"] == [date(1970, 1, 2)]
+    assert captured["created_at"] == [datetime(1970, 1, 1, 0, 0, 1)]
+
+
+def test_convert_debezium_value_parses_iso_time_string_for_time_columns():
+    destination = _make_destination()
+
+    without_tz = destination._convert_debezium_value(
+        "02:31:58Z",
+        "support_call_time",
+        {"type": "time without time zone"},
+    )
+    with_tz = destination._convert_debezium_value(
+        "02:31:58Z",
+        "support_call_time",
+        {"type": "time with time zone"},
+    )
+
+    assert without_tz == time(2, 31, 58)
+    assert with_tz == "02:31:58+00:00"
+
+
+def test_insert_batch_applies_target_schema_after_debezium_schema_coercion():
+    destination = _make_destination()
+    captured = {}
+
+    record = CDCRecord(
+        operation="u",
+        table_name="orders",
+        key={"id": 1},
+        value={"support_call_time": "02:31:58Z"},
+        schema={
+            "type": "struct",
+            "fields": [
+                {
+                    "field": "after",
+                    "fields": [
+                        {
+                            "field": "support_call_time",
+                            "type": "string",
+                            "name": "io.debezium.time.ZonedTime",
+                        }
+                    ],
+                }
+            ],
+        },
+        timestamp=1700000000000,
+    )
+
+    def _capture_arrow_table(arrays):
+        captured.update(arrays)
+        return SimpleNamespace()
+
+    with patch("destinations.postgresql.pa.table", side_effect=_capture_arrow_table):
+        destination._insert_batch_to_duckdb(
+            [record],
+            "orders",
+            target_schema={
+                "support_call_time": {"type": "time without time zone"},
+            },
+        )
+
+    assert captured["support_call_time"] == [time(2, 31, 58)]
+
+
+def test_insert_batch_uses_record_key_when_delete_payload_is_empty():
+    destination = _make_destination()
+    captured = {}
+
+    record = CDCRecord(
+        operation="d",
+        table_name="orders",
+        key={"id": 7},
+        value={},
+        timestamp=1700000000000,
+    )
+
+    def _capture_arrow_table(arrays):
+        captured.update(arrays)
+        return SimpleNamespace()
+
+    with patch("destinations.postgresql.pa.table", side_effect=_capture_arrow_table):
+        destination._insert_batch_to_duckdb(
+            [record],
+            "orders",
+            target_schema={"id": {"type": "integer"}},
+        )
+
+    assert captured["id"] == [7]

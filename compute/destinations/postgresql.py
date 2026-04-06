@@ -364,7 +364,15 @@ class PostgreSQLDestination(BaseDestination):
                             + datetime.timedelta(microseconds=int(value))
                         ).time()
                     except (ValueError, TypeError):
-                        pass
+                        try:
+                            parsed = datetime.time.fromisoformat(
+                                value.strip().replace("Z", "+00:00")
+                            )
+                            if parsed.tzinfo is not None:
+                                return parsed.replace(tzinfo=None)
+                            return parsed
+                        except (ValueError, TypeError, AttributeError):
+                            pass
                 return value
 
             elif pg_type in ("time with time zone", "timetz"):
@@ -380,7 +388,13 @@ class PostgreSQLDestination(BaseDestination):
                             + datetime.timedelta(microseconds=int(value))
                         ).time()
                     except (ValueError, TypeError):
-                        pass
+                        try:
+                            parsed = datetime.time.fromisoformat(
+                                value.strip().replace("Z", "+00:00")
+                            )
+                            return parsed.isoformat()
+                        except (ValueError, TypeError, AttributeError):
+                            pass
                 return value
 
             elif pg_type in ("numeric", "decimal"):
@@ -845,6 +859,7 @@ class PostgreSQLDestination(BaseDestination):
         self,
         records: list[CDCRecord],
         table_name: str,
+        target_schema: Optional[dict[str, dict]] = None,
     ) -> None:
         """
         Insert CDC records into a DuckDB table with proper column types.
@@ -861,6 +876,9 @@ class PostgreSQLDestination(BaseDestination):
         Args:
             records: CDC records to insert
             table_name: Original source table name (e.g., 'tbl_sales')
+            target_schema: Optional PostgreSQL target schema metadata used as a
+                fallback when Debezium schema is unavailable (for example,
+                Kafka ``PLAIN_JSON`` messages or DLQ replays).
         """
         if not records:
             return
@@ -871,9 +889,30 @@ class PostgreSQLDestination(BaseDestination):
         # Drop existing table if exists (use identifier quoting for safety)
         self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{safe_table_name}"')
 
-        # Convert records to columnar format
-        data = [record.value for record in records]
-        columns = list(data[0].keys())
+        # Convert records to columnar format. Delete events may only carry the
+        # primary key, so fall back to the record key when the payload is empty.
+        data: list[dict[str, Any]] = []
+        columns: list[str] = []
+        seen_columns: set[str] = set()
+        for record in records:
+            row = dict(record.value or {})
+
+            if record.is_delete and record.key:
+                for key_col, key_val in record.key.items():
+                    row.setdefault(key_col, key_val)
+            elif not row and record.key:
+                row = dict(record.key)
+
+            data.append(row)
+            for col in row.keys():
+                if col not in seen_columns:
+                    seen_columns.add(col)
+                    columns.append(col)
+
+        if not columns:
+            raise DestinationException(
+                "CDC batch has no usable columns to stage; record payload and key are empty"
+            )
 
         # Parse Debezium schema for type-aware ingestion
         debezium_types = self._parse_debezium_field_types(records[0].schema)
@@ -885,13 +924,26 @@ class PostgreSQLDestination(BaseDestination):
 
             if dbz_info:
                 # Schema-aware coercion (primary path)
-                arrays[col] = self._coerce_values_for_duckdb(raw_values, dbz_info, col)
+                coerced_values = self._coerce_values_for_duckdb(
+                    raw_values, dbz_info, col
+                )
             elif not debezium_types:
                 # No schema at all — try auto-detecting numeric strings
-                arrays[col] = self._auto_coerce_numeric_column(raw_values)
+                coerced_values = self._auto_coerce_numeric_column(raw_values)
             else:
                 # Schema exists but this column isn't in it — keep raw
-                arrays[col] = raw_values
+                coerced_values = raw_values
+
+            if target_schema and col in target_schema:
+                # Finalize values using the actual target PostgreSQL column type.
+                # This catches format-only cases such as ISO timetz strings that
+                # still need normalization even when Debezium schema is present.
+                coerced_values = [
+                    self._convert_debezium_value(value, col, target_schema[col])
+                    for value in coerced_values
+                ]
+
+            arrays[col] = coerced_values
 
         # Create Arrow table — DuckDB's native format (zero-copy)
         arrow_table = pa.table(arrays)
@@ -1385,12 +1437,17 @@ class PostgreSQLDestination(BaseDestination):
         source_table: str,
         target_table: str,
         key_columns: list[str],
+        target_schema: Optional[dict[str, dict]] = None,
     ) -> int:
         if not records:
             return 0
 
         delete_table = f"_delete_{re.sub(r'[^a-zA-Z0-9_]', '_', source_table)}"
-        self._insert_batch_to_duckdb(records, delete_table)
+        self._insert_batch_to_duckdb(
+            records,
+            delete_table,
+            target_schema=target_schema,
+        )
         return self._delete_duckdb_table_from_postgres(
             delete_table,
             target_table,
@@ -1517,7 +1574,11 @@ class PostgreSQLDestination(BaseDestination):
 
             if delete_records:
                 delete_table = f"_delete_input_{safe_table_name}"
-                self._insert_batch_to_duckdb(delete_records, delete_table)
+                self._insert_batch_to_duckdb(
+                    delete_records,
+                    delete_table,
+                    target_schema=target_schema,
+                )
 
                 if table_sync.filter_sql:
                     self._apply_filters_in_duckdb(delete_table, table_sync.filter_sql)
@@ -1540,7 +1601,11 @@ class PostgreSQLDestination(BaseDestination):
                     )
 
             if upsert_records:
-                self._insert_batch_to_duckdb(upsert_records, source_table)
+                self._insert_batch_to_duckdb(
+                    upsert_records,
+                    source_table,
+                    target_schema=target_schema,
+                )
                 if table_sync.filter_sql:
                     self._apply_filters_in_duckdb(source_table, table_sync.filter_sql)
 
