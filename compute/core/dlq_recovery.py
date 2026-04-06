@@ -601,86 +601,96 @@ class DLQRecoveryWorker:
         total_written = 0
 
         try:
-            # Ensure destination is initialized before writing
-            if not destination._is_initialized:
-                self._logger.debug(
-                    f"Initializing destination {destination.name} before replay"
-                )
-                destination.initialize()
-            else:
-                self._logger.debug(
-                    f"Checking connection health for destination {destination.name}"
-                )
-                destination.initialize(force_reconnect=False)
-
-            # Process each operation type batch
-            for op in op_order:
-                if op not in messages_by_op:
-                    continue
-
-                op_messages = messages_by_op[op]
-                cdc_records = [msg.cdc_record for _, msg in op_messages]
-                msg_ids = [msg_id for msg_id, _ in op_messages]
-
-                # ── Version-aware filtering ──
-                # Drop records whose timestamp is older than what has
-                # already been written to this destination (tracked in Redis).
-                fresh_records = self._dlq_manager.filter_stale_records(
-                    destination_id, table_name, cdc_records
-                )
-                stale_count = len(cdc_records) - len(fresh_records)
-
-                if not fresh_records:
-                    # All records are stale — ACK them without writing
-                    all_success_ids.extend(msg_ids)
-                    if stale_count > 0:
-                        self._logger.info(
-                            f"Skipped entire op={op} batch ({stale_count} stale "
-                            f"records) for {table_name} on {destination.name}"
-                        )
-                    continue
-
-                try:
-                    written = destination.write_batch(fresh_records, table_sync)
-                    total_written += written
-                    all_success_ids.extend(msg_ids)
-
+            with self._dlq_manager.write_guard(destination_id, table_name):
+                # Ensure destination is initialized before writing
+                if not destination._is_initialized:
                     self._logger.debug(
-                        f"Batched replay op={op}: {written}/{len(fresh_records)} records "
-                        f"to {destination.name} for table {table_name}"
-                        + (f" ({stale_count} stale skipped)" if stale_count else "")
+                        f"Initializing destination {destination.name} before replay"
                     )
-                except Exception as batch_e:
-                    self._logger.warning(
-                        f"Batch replay failed for op={op} "
-                        f"({len(op_messages)} messages): {batch_e}"
+                    destination.initialize()
+                else:
+                    self._logger.debug(
+                        f"Checking connection health for destination {destination.name}"
                     )
-                    all_failed.extend(op_messages)
+                    destination.initialize(force_reconnect=False)
 
-            # Also process any operation types not in op_order
-            for op, op_messages in messages_by_op.items():
-                if op in op_order:
-                    continue
-                cdc_records = [msg.cdc_record for _, msg in op_messages]
-                msg_ids = [msg_id for msg_id, _ in op_messages]
+                # Process each operation type batch
+                for op in op_order:
+                    if op not in messages_by_op:
+                        continue
 
-                # ── Version-aware filtering (same as above) ──
-                fresh_records = self._dlq_manager.filter_stale_records(
-                    destination_id, table_name, cdc_records
-                )
-                stale_count = len(cdc_records) - len(fresh_records)
+                    op_messages = messages_by_op[op]
+                    cdc_records = [msg.cdc_record for _, msg in op_messages]
+                    msg_ids = [msg_id for msg_id, _ in op_messages]
 
-                if not fresh_records:
-                    all_success_ids.extend(msg_ids)
-                    continue
+                    # Drop records whose timestamp is older than what has
+                    # already been written to this destination (tracked in Redis).
+                    fresh_records = self._dlq_manager.filter_stale_records(
+                        destination_id, table_name, cdc_records
+                    )
+                    stale_count = len(cdc_records) - len(fresh_records)
 
-                try:
-                    written = destination.write_batch(fresh_records, table_sync)
-                    total_written += written
-                    all_success_ids.extend(msg_ids)
-                except Exception as batch_e:
-                    self._logger.warning(f"Batch replay failed for op={op}: {batch_e}")
-                    all_failed.extend(op_messages)
+                    if not fresh_records:
+                        all_success_ids.extend(msg_ids)
+                        if stale_count > 0:
+                            self._logger.info(
+                                f"Skipped entire op={op} batch ({stale_count} stale "
+                                f"records) for {table_name} on {destination.name}"
+                            )
+                        continue
+
+                    try:
+                        written = destination.write_batch(fresh_records, table_sync)
+                        total_written += written
+                        all_success_ids.extend(msg_ids)
+                        self._track_written_versions_if_safe(
+                            destination_id=destination_id,
+                            table_name=table_name,
+                            records=fresh_records,
+                            written=written,
+                        )
+
+                        self._logger.debug(
+                            f"Batched replay op={op}: {written}/{len(fresh_records)} records "
+                            f"to {destination.name} for table {table_name}"
+                            + (f" ({stale_count} stale skipped)" if stale_count else "")
+                        )
+                    except Exception as batch_e:
+                        self._logger.warning(
+                            f"Batch replay failed for op={op} "
+                            f"({len(op_messages)} messages): {batch_e}"
+                        )
+                        all_failed.extend(op_messages)
+
+                # Also process any operation types not in op_order
+                for op, op_messages in messages_by_op.items():
+                    if op in op_order:
+                        continue
+                    cdc_records = [msg.cdc_record for _, msg in op_messages]
+                    msg_ids = [msg_id for msg_id, _ in op_messages]
+
+                    fresh_records = self._dlq_manager.filter_stale_records(
+                        destination_id, table_name, cdc_records
+                    )
+                    if not fresh_records:
+                        all_success_ids.extend(msg_ids)
+                        continue
+
+                    try:
+                        written = destination.write_batch(fresh_records, table_sync)
+                        total_written += written
+                        all_success_ids.extend(msg_ids)
+                        self._track_written_versions_if_safe(
+                            destination_id=destination_id,
+                            table_name=table_name,
+                            records=fresh_records,
+                            written=written,
+                        )
+                    except Exception as batch_e:
+                        self._logger.warning(
+                            f"Batch replay failed for op={op}: {batch_e}"
+                        )
+                        all_failed.extend(op_messages)
 
             if all_success_ids:
                 self._logger.info(
@@ -732,6 +742,33 @@ class DLQRecoveryWorker:
 
             # Update retry count for ALL messages on total failure
             self._handle_retry(messages_with_ids, source_id, table_name, destination_id)
+
+    def _track_written_versions_if_safe(
+        self,
+        destination_id: int,
+        table_name: str,
+        records: list[CDCRecord],
+        written: int,
+    ) -> None:
+        """Track replayed versions only when the full filtered batch wrote."""
+        if written <= 0:
+            return
+
+        if written != len(records):
+            self._logger.debug(
+                "Skipping replay version tracking for partial write to d%s:t%s (%s/%s)",
+                destination_id,
+                table_name,
+                written,
+                len(records),
+            )
+            return
+
+        self._dlq_manager.track_written_versions(
+            destination_id=destination_id,
+            table_name=table_name,
+            records=records,
+        )
 
     def _handle_retry(
         self,

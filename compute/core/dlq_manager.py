@@ -12,6 +12,7 @@ import logging
 import re
 import time
 import threading
+from contextlib import contextmanager
 from typing import Optional, Any
 from datetime import datetime, timezone, timedelta
 
@@ -193,6 +194,8 @@ class DLQManager:
         # Track which streams have consumer groups initialized
         self._initialized_groups: set[str] = set()
         self._groups_lock = threading.Lock()
+        self._write_locks: dict[str, threading.RLock] = {}
+        self._write_locks_lock = threading.Lock()
 
         self._logger = logging.getLogger(f"{__name__}.DLQManager")
         self._logger.info(f"DLQ Manager initialized with Redis (prefix={key_prefix})")
@@ -312,12 +315,16 @@ class DLQManager:
         try:
             # Serialize table_sync to dict for storage
             table_sync_dict = {
-                "id": table_sync.id,
-                "pipeline_destination_id": table_sync.pipeline_destination_id,
-                "table_name": table_sync.table_name,
-                "table_name_target": table_sync.table_name_target,
-                "filter_sql": table_sync.filter_sql,
-                "custom_sql": table_sync.custom_sql,
+                "id": getattr(table_sync, "id", None),
+                "pipeline_destination_id": getattr(
+                    table_sync, "pipeline_destination_id", None
+                ),
+                "table_name": getattr(table_sync, "table_name", table_name),
+                "table_name_target": getattr(
+                    table_sync, "table_name_target", table_name_target
+                ),
+                "filter_sql": getattr(table_sync, "filter_sql", None),
+                "custom_sql": getattr(table_sync, "custom_sql", None),
             }
 
             message = DLQMessage(
@@ -391,12 +398,14 @@ class DLQManager:
 
         # Serialize table_sync once for all records
         table_sync_dict = {
-            "id": table_sync.id,
-            "pipeline_destination_id": table_sync.pipeline_destination_id,
-            "table_name": table_sync.table_name,
-            "table_name_target": table_sync.table_name_target,
-            "filter_sql": table_sync.filter_sql,
-            "custom_sql": table_sync.custom_sql,
+            "id": getattr(table_sync, "id", None),
+            "pipeline_destination_id": getattr(
+                table_sync, "pipeline_destination_id", None
+            ),
+            "table_name": getattr(table_sync, "table_name", None),
+            "table_name_target": getattr(table_sync, "table_name_target", None),
+            "filter_sql": getattr(table_sync, "filter_sql", None),
+            "custom_sql": getattr(table_sync, "custom_sql", None),
         }
 
         # Group messages by stream key
@@ -910,9 +919,41 @@ class DLQManager:
             self._redis.close()
             with self._groups_lock:
                 self._initialized_groups.clear()
+            with self._write_locks_lock:
+                self._write_locks.clear()
             self._logger.info("Closed DLQ Redis connection")
         except Exception as e:
             self._logger.warning(f"Error closing DLQ Redis connection: {e}")
+
+    def _write_lock_key(self, destination_id: int, table_name: str) -> str:
+        """Build the in-process write-guard key for a destination table."""
+        return f"{destination_id}:{table_name}"
+
+    def _get_write_lock(self, destination_id: int, table_name: str) -> threading.RLock:
+        """Get or create the shared write guard for a destination table."""
+        lock_key = self._write_lock_key(destination_id, table_name)
+        with self._write_locks_lock:
+            lock = self._write_locks.get(lock_key)
+            if lock is None:
+                lock = threading.RLock()
+                self._write_locks[lock_key] = lock
+            return lock
+
+    @contextmanager
+    def write_guard(self, destination_id: int, table_name: str):
+        """
+        Serialize live writes and DLQ replay for the same destination table.
+
+        Without this guard, recovery can pass the stale-record filter, then race
+        a newer live write and overwrite it afterward. Holding a shared lock
+        across filter -> write -> version tracking keeps the ordering stable.
+        """
+        lock = self._get_write_lock(destination_id, table_name)
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
 
     # ── Engine-level version tracking ──────────────────────────────────────
     #
@@ -995,8 +1036,56 @@ class DLQManager:
                 )
             pipe.execute()
         except Exception as e:
+            self._logger.debug(
+                f"Atomic version tracking failed, falling back to client-side compare: {e}"
+            )
+            self._track_written_versions_fallback(
+                destination_id=destination_id,
+                table_name=table_name,
+                records=records,
+                ttl=_ttl,
+            )
+
+    def _track_written_versions_fallback(
+        self,
+        destination_id: int,
+        table_name: str,
+        records: list[CDCRecord],
+        ttl: int,
+    ) -> None:
+        """
+        Best-effort fallback for Redis implementations without Lua support.
+
+        This path is primarily for tests using fakeredis. The hot path still
+        prefers the atomic Lua update above when available.
+        """
+        try:
+            latest_by_key: dict[str, int] = {}
+            for record in records:
+                ts = record.timestamp
+                if ts is None:
+                    continue
+                redis_key = self._version_key(
+                    destination_id, table_name, self._pk_hash(record.key)
+                )
+                latest_by_key[redis_key] = max(ts, latest_by_key.get(redis_key, ts))
+
+            if not latest_by_key:
+                return
+
+            stored = self._redis.mget(list(latest_by_key.keys()))
+            pipe = self._redis.pipeline(transaction=False)
+            for redis_key, stored_ver in zip(latest_by_key.keys(), stored):
+                new_ts = latest_by_key[redis_key]
+                current_ts = int(stored_ver) if stored_ver is not None else None
+                if current_ts is None or new_ts >= current_ts:
+                    pipe.set(redis_key, str(new_ts), ex=ttl)
+            pipe.execute()
+        except Exception as fallback_error:
             # Version tracking is best-effort — never fail the write path
-            self._logger.debug(f"Version tracking failed (non-fatal): {e}")
+            self._logger.debug(
+                f"Version tracking fallback failed (non-fatal): {fallback_error}"
+            )
 
     def filter_stale_records(
         self,

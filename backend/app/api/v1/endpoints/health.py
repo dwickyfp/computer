@@ -30,6 +30,18 @@ _health_cache_time: float = 0
 _health_cache_ttl: float = 2.0  # Reduced to 2s since checks are now fast
 
 
+def _normalize_utc_timestamp(value: datetime) -> datetime:
+    """
+    Normalize DB timestamps to UTC-aware datetimes.
+
+    Worker health timestamps are persisted in a timezone-naive column. Treat
+    naive values as UTC so freshness checks remain correct.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 @router.get(
     "",
     response_model=HealthResponse,
@@ -102,12 +114,8 @@ async def health_check() -> HealthResponse:
                         return False, {"error": "No worker health data yet"}
                     
                     # Check staleness (>30s = stale)
-                    from datetime import datetime, timezone, timedelta
-                    now = datetime.now(timezone(timedelta(hours=7)))
-                    last_check = latest.last_check_at
-                    # Ensure both are timezone-aware for comparison
-                    if last_check.tzinfo is None:
-                        last_check = last_check.replace(tzinfo=timezone(timedelta(hours=7)))
+                    now = datetime.now(timezone.utc)
+                    last_check = _normalize_utc_timestamp(latest.last_check_at)
                     age = (now - last_check).total_seconds()
                     
                     if age > 30:
@@ -198,12 +206,8 @@ async def worker_status() -> Dict[str, Any]:
                     }
                 
                 # Check staleness
-                from datetime import datetime, timezone, timedelta
-                now = datetime.now(timezone(timedelta(hours=7)))
-                last_check = latest.last_check_at
-                # Ensure both are timezone-aware for comparison
-                if last_check.tzinfo is None:
-                    last_check = last_check.replace(tzinfo=timezone(timedelta(hours=7)))
+                now = datetime.now(timezone.utc)
+                last_check = _normalize_utc_timestamp(latest.last_check_at)
                 age = (now - last_check).total_seconds()
                 
                 result = {
@@ -212,7 +216,7 @@ async def worker_status() -> Dict[str, Any]:
                     "active_workers": latest.active_workers,
                     "active_tasks": latest.active_tasks,
                     "reserved_tasks": latest.reserved_tasks,
-                    "last_check": latest.last_check_at.isoformat(),
+                    "last_check": last_check.isoformat(),
                     "age_seconds": round(age, 1),
                 }
                 if latest.error_message:

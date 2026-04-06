@@ -4,7 +4,7 @@ Worker Health Status Repository.
 Handles database operations for worker health status.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.domain.models.worker_health import WorkerHealthStatus
@@ -39,7 +39,9 @@ class WorkerHealthRepository:
         
         Always creates a new record for audit trail, but keeps only recent records.
         """
-        now = datetime.now(timezone(timedelta(hours=7)))
+        # Persist worker health timestamps as UTC to match the worker endpoint
+        # and avoid false staleness when reading from a naive DB column.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         
         status = WorkerHealthStatus(
             healthy=healthy,

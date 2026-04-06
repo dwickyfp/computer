@@ -9,6 +9,7 @@ transport.
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Optional
 
@@ -116,17 +117,20 @@ class RecordRouter:
                 if hasattr(routing.destination, "_config")
                 else "unknown"
             )
-            written = routing.destination.write_batch(records, routing.table_sync)
+            write_guard = nullcontext()
+            if self._dlq_manager:
+                write_guard = self._dlq_manager.write_guard(
+                    routing.destination.destination_id, table_name
+                )
 
-            if written > 0 and self._dlq_manager:
-                try:
-                    self._dlq_manager.track_written_versions(
-                        destination_id=routing.destination.destination_id,
-                        table_name=table_name,
-                        records=records,
-                    )
-                except Exception:
-                    pass
+            with write_guard:
+                written = routing.destination.write_batch(records, routing.table_sync)
+                self._track_written_versions_if_safe(
+                    destination_id=routing.destination.destination_id,
+                    table_name=table_name,
+                    records=records,
+                    written=written,
+                )
 
             if written > 0:
                 if dest_type.lower() == "snowflake":
@@ -192,6 +196,36 @@ class RecordRouter:
             routing.table_sync.error_message = db_error_msg
             routing.pipeline_destination.is_error = True
             routing.pipeline_destination.error_message = db_error_msg
+
+    def _track_written_versions_if_safe(
+        self,
+        destination_id: int,
+        table_name: str,
+        records: list[CDCRecord],
+        written: int,
+    ) -> None:
+        """Track versions only when the destination confirms the full batch wrote."""
+        if not self._dlq_manager or written <= 0:
+            return
+
+        if written != len(records):
+            self._logger.debug(
+                "Skipping version tracking for partial write to d%s:t%s (%s/%s)",
+                destination_id,
+                table_name,
+                written,
+                len(records),
+            )
+            return
+
+        try:
+            self._dlq_manager.track_written_versions(
+                destination_id=destination_id,
+                table_name=table_name,
+                records=records,
+            )
+        except Exception:
+            pass
 
     def _update_monitoring(
         self,
@@ -260,4 +294,3 @@ class RecordRouter:
             )
         except Exception as exc:
             self._logger.warning("Failed to create notification log: %s", exc)
-

@@ -4,7 +4,8 @@ Destination service containing business logic.
 Implements business rules and orchestrates repository operations for destinations.
 """
 
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -30,6 +31,94 @@ class DestinationService:
         """Initialize destination service."""
         self.db = db
         self.repository = DestinationRepository(db)
+
+    @staticmethod
+    def _destination_type(
+        destination: Destination | DestinationCreate | DestinationUpdate,
+    ) -> str:
+        return str(getattr(destination, "type", "SNOWFLAKE") or "SNOWFLAKE").upper()
+
+    def _is_kafka_destination(
+        self,
+        destination: Destination | DestinationCreate | DestinationUpdate,
+    ) -> bool:
+        return self._destination_type(destination) == "KAFKA"
+
+    def _build_kafka_admin_client_config(self, destination: Destination) -> dict[str, Any]:
+        config = dict(destination.config or {})
+        client = {
+            "bootstrap.servers": config.get("bootstrap_servers", ""),
+        }
+        if config.get("security_protocol"):
+            client["security.protocol"] = config["security_protocol"]
+        if config.get("sasl_mechanism"):
+            client["sasl.mechanism"] = config["sasl_mechanism"]
+        if config.get("sasl_username"):
+            client["sasl.username"] = config["sasl_username"]
+        if config.get("sasl_password"):
+            client["sasl.password"] = decrypt_value(config["sasl_password"])
+        if config.get("ssl_ca_location"):
+            client["ssl.ca.location"] = config["ssl_ca_location"]
+        if config.get("ssl_certificate_location"):
+            client["ssl.certificate.location"] = config["ssl_certificate_location"]
+        if config.get("ssl_key_location"):
+            client["ssl.key.location"] = config["ssl_key_location"]
+        return client
+
+    def _discover_kafka_topics(self, destination: Destination) -> list[str]:
+        if not self._is_kafka_destination(destination):
+            raise ValueError("Kafka topic discovery is only available for KAFKA destinations")
+
+        config = dict(destination.config or {})
+        bootstrap_servers = config.get("bootstrap_servers", "")
+        admin = create_admin_client(self._build_kafka_admin_client_config(destination))
+        try:
+            metadata = admin.list_topics(timeout=10)
+        except Exception as exc:
+            raise ValueError(
+                "Failed to fetch Kafka metadata from "
+                f"'{bootstrap_servers}'. Ensure the broker hostname is reachable "
+                "from the backend service. If the bootstrap server is reachable "
+                "but metadata still times out, verify Kafka advertised.listeners "
+                "is not pointing to an internal hostname such as 'kafka:9092'. "
+                f"Original error: {exc}"
+            ) from exc
+
+        prefix = str(config.get("topic_prefix") or "").strip()
+        prefix_with_dot = f"{prefix}." if prefix else ""
+        topics: list[str] = []
+        for topic in metadata.topics.keys():
+            if topic.startswith("_"):
+                continue
+            if prefix_with_dot and topic.startswith(prefix_with_dot):
+                topics.append(topic.removeprefix(prefix_with_dot))
+            elif prefix and topic == prefix:
+                continue
+
+        return sorted(set(topics))
+
+    def _cache_table_list(self, destination_id: int, tables: list[str]) -> None:
+        try:
+            redis_client = RedisClient.get_instance()
+            redis_client.setex(f"destination:{destination_id}:tables", 600, str(__import__("json").dumps(tables)))
+        except Exception as e:
+            logger.warning(
+                "Failed to cache destination tables in Redis",
+                extra={"destination_id": destination_id, "error": str(e)},
+            )
+
+    def _sync_kafka_topics(self, destination: Destination) -> list[str]:
+        tables = self._discover_kafka_topics(destination)
+        now = datetime.now(timezone.utc)
+
+        destination.list_tables = tables
+        destination.total_tables = len(tables)
+        destination.last_table_check_at = now
+        self.db.add(destination)
+        self.db.flush()
+
+        self._cache_table_list(destination.id, tables)
+        return tables
 
     def create_destination(self, destination_data: DestinationCreate) -> Destination:
         """
@@ -80,6 +169,15 @@ class DestinationService:
             )
 
         destination = self.repository.create(**destination_data.dict())
+
+        if self._is_kafka_destination(destination):
+            try:
+                self._sync_kafka_topics(destination)
+            except Exception as e:
+                logger.warning(
+                    "Failed to initialize Kafka destination topic cache",
+                    extra={"destination_id": destination.id, "error": str(e)},
+                )
 
         logger.info(
             "Destination created successfully",
@@ -180,6 +278,15 @@ class DestinationService:
             update_data["config"] = final_config
 
         destination = self.repository.update(destination_id, **update_data)
+
+        if self._is_kafka_destination(destination):
+            try:
+                self._sync_kafka_topics(destination)
+            except Exception as e:
+                logger.warning(
+                    "Failed to refresh Kafka destination topic cache after update",
+                    extra={"destination_id": destination.id, "error": str(e)},
+                )
 
         logger.info(
             "Destination updated successfully", extra={"destination_id": destination.id}
@@ -310,6 +417,15 @@ class DestinationService:
 
         # Create the new destination (secrets are already encrypted from original)
         new_destination = self.repository.create(**destination_data.dict())
+
+        if self._is_kafka_destination(new_destination):
+            try:
+                self._sync_kafka_topics(new_destination)
+            except Exception as e:
+                logger.warning(
+                    "Failed to initialize Kafka destination topic cache for duplicate",
+                    extra={"destination_id": new_destination.id, "error": str(e)},
+                )
 
         logger.info(
             "Destination duplicated successfully",
@@ -709,6 +825,22 @@ class DestinationService:
         Returns:
             Celery task ID if worker is available, or None if worker is disabled.
         """
+        destination = self.get_destination(destination_id)
+
+        if self._is_kafka_destination(destination):
+            try:
+                self._sync_kafka_topics(destination)
+                logger.info(
+                    "Kafka destination topics refreshed inline",
+                    extra={"destination_id": destination_id},
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to refresh Kafka destination topics inline",
+                    extra={"destination_id": destination_id, "error": str(e)},
+                )
+            return None
+
         from app.core.config import get_settings
 
         settings = get_settings()
@@ -752,6 +884,27 @@ class DestinationService:
         Returns:
             Dict with tables (list[str]), total_tables (int), last_table_check_at (str|None).
         """
+        destination = self.get_destination(destination_id)
+
+        if self._is_kafka_destination(destination):
+            try:
+                tables = self._sync_kafka_topics(destination)
+                last_check = (
+                    destination.last_table_check_at.isoformat()
+                    if destination.last_table_check_at
+                    else None
+                )
+                return {
+                    "tables": tables,
+                    "total_tables": len(tables),
+                    "last_table_check_at": last_check,
+                }
+            except Exception as e:
+                logger.warning(
+                    "Failed to refresh Kafka destination topics, falling back to cached data",
+                    extra={"destination_id": destination_id, "error": str(e)},
+                )
+
         # 1. Try Redis cache (set by worker after refresh)
         cache_key = f"destination:{destination_id}:tables"
         try:
@@ -763,7 +916,6 @@ class DestinationService:
             if cached:
                 tables = _json.loads(cached)
                 # Still need last_check from DB
-                destination = self.get_destination(destination_id)
                 last_check = (
                     destination.last_table_check_at.isoformat()
                     if destination.last_table_check_at
@@ -778,7 +930,6 @@ class DestinationService:
             logger.warning("Redis cache miss for destination tables: %s", e)
 
         # 2. Fallback to DB
-        destination = self.get_destination(destination_id)
         tables: list = destination.list_tables if destination.list_tables else []
         last_check = (
             destination.last_table_check_at.isoformat()

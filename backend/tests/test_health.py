@@ -13,6 +13,8 @@ Patch locations:
 """
 
 import pytest
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
@@ -295,3 +297,94 @@ class TestWorkerCheck:
         ):
             data = client.get("/api/v1/health").json()
         assert data["checks"]["worker"] is False
+
+
+class TestWorkerStatusFreshness:
+    def test_worker_status_treats_naive_utc_timestamp_as_fresh(self, client):
+        latest = SimpleNamespace(
+            healthy=True,
+            active_workers=1,
+            active_tasks=0,
+            reserved_tasks=0,
+            error_message=None,
+            last_check_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        fake_db = MagicMock()
+        fake_db.close = MagicMock()
+
+        class FakeWorkerHealthRepository:
+            def __init__(self, db):
+                self.db = db
+
+            def get_latest(self):
+                return latest
+
+        with (
+            patch(
+                "app.api.v1.endpoints.health.get_settings",
+                return_value=SimpleNamespace(worker_enabled=True),
+            ),
+            patch(
+                "app.core.database.db_manager",
+                new=SimpleNamespace(session_factory=lambda: fake_db),
+            ),
+            patch(
+                "app.domain.repositories.worker_health_repo.WorkerHealthRepository",
+                FakeWorkerHealthRepository,
+            ),
+        ):
+            data = client.get("/api/v1/health/worker").json()
+
+        assert data["enabled"] is True
+        assert data["healthy"] is True
+        assert data["active_workers"] == 1
+        assert data["age_seconds"] < 30
+        assert "error" not in data
+
+    def test_health_check_treats_naive_utc_worker_timestamp_as_fresh(self, client):
+        latest = SimpleNamespace(
+            healthy=True,
+            active_workers=1,
+            active_tasks=0,
+            reserved_tasks=0,
+            error_message=None,
+            last_check_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        fake_db = MagicMock()
+        fake_db.close = MagicMock()
+
+        class FakeWorkerHealthRepository:
+            def __init__(self, db):
+                self.db = db
+
+            def get_latest(self):
+                return latest
+
+        with (
+            patch(
+                "app.api.v1.endpoints.health.get_settings",
+                return_value=SimpleNamespace(
+                    worker_enabled=True,
+                    wal_monitor_enabled=True,
+                    compute_node_url="http://compute.local",
+                ),
+            ),
+            patch(
+                "app.api.v1.endpoints.health.check_database_health", return_value=True
+            ),
+            _mock_redis_ok(),
+            _mock_compute_fail(),
+            patch(
+                "app.core.database.db_manager",
+                new=SimpleNamespace(session_factory=lambda: fake_db),
+            ),
+            patch(
+                "app.domain.repositories.worker_health_repo.WorkerHealthRepository",
+                FakeWorkerHealthRepository,
+            ),
+            patch("app.api.v1.endpoints.health._health_cache", new=None),
+            patch("app.api.v1.endpoints.health._health_cache_time", new=0),
+        ):
+            data = client.get("/api/v1/health").json()
+
+        assert data["checks"]["worker"] is True
