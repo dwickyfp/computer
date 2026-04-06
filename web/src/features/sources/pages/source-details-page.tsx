@@ -74,10 +74,12 @@ export default function SourceDetailsPage() {
     const handleRefresh = async () => {
         setIsRefreshing(true)
         try {
-            await sourcesRepo.refreshSource(id)
-            queryClient.invalidateQueries({ queryKey: ['source-details', id] })
-            queryClient.invalidateQueries({ queryKey: ['source-available-tables', id] })
-            toast.success("Source refreshed successfully")
+            const result = await sourcesRepo.refreshSource(id)
+            setTimeout(() => {
+                queryClient.invalidateQueries({ queryKey: ['source-details', id] })
+                queryClient.invalidateQueries({ queryKey: ['source-available-tables', id] })
+            }, result.task_id ? 3000 : 0)
+            toast.success(result.task_id ? "Source refresh queued" : "Source refreshed successfully")
         } catch (err) {
             console.error(err)
             toast.error(getApiErrorMessage(err, "Failed to refresh source"))

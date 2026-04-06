@@ -275,6 +275,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy worker source code
 COPY worker/ ./worker/
+COPY backend/ ./backend/
 
 # Make start.sh executable
 RUN chmod +x ./worker/start.sh

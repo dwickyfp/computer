@@ -94,6 +94,11 @@ export interface SourceSchemaLookupParams {
   table?: string
 }
 
+export interface TaskDispatchResponse {
+  message: string
+  task_id: string | null
+}
+
 export type SourceSchemaLookupResponse = Record<string, string[]>
 
 export interface WALMonitorResponse {
@@ -228,8 +233,11 @@ export const sourcesRepo = {
   unregisterTable: async (sourceId: number, tableName: string) => {
     await api.delete(`/sources/${sourceId}/tables/${tableName}`)
   },
-  refreshSource: async (sourceId: number) => {
-    await api.post(`/sources/${sourceId}/refresh`)
+  refreshSource: async (sourceId: number): Promise<TaskDispatchResponse> => {
+    const { data } = await api.post<TaskDispatchResponse>(
+      `/sources/${sourceId}/refresh`
+    )
+    return data
   },
   createPublication: async (sourceId: number, tables: string[]) => {
     await api.post(`/sources/${sourceId}/publication`, { tables })

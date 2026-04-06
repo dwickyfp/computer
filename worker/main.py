@@ -20,6 +20,7 @@ from app.tasks.lineage.task import generate_lineage_task  # noqa: F401
 from app.tasks.flow_task.task import execute_flow_task_task, preview_flow_task_node_task  # noqa: F401
 from app.tasks.destination_table_list.task import fetch_destination_table_list_task  # noqa: F401
 from app.tasks.linked_task.task import execute_linked_task_task  # noqa: F401
+from app.tasks.backend_job.task import run_backend_job_task  # noqa: F401
 
 
 if __name__ == "__main__":

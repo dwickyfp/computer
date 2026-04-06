@@ -90,7 +90,7 @@ cp .env.example .env
 
 ```bash
 # Basic worker
-celery -A main worker --loglevel=info -Q preview,default -c 4 --pool=threads
+celery -A main worker --loglevel=info -Q preview,default,orchestration -c 4 --pool=threads
 
 # With Flower monitoring (optional)
 celery -A main flower --port=5555

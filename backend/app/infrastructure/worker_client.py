@@ -299,6 +299,39 @@ class WorkerClient:
             logger.error(f"Failed to submit lineage task: {e}")
             raise ConnectionError(f"Worker unavailable: {e}") from e
 
+    def submit_backend_job(
+        self,
+        job_name: str,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Submit a backend-owned job to the worker bridge queue.
+
+        Args:
+            job_name: Runner job identifier
+            payload: Optional JSON-serializable job payload
+
+        Returns:
+            Celery task ID string.
+        """
+        try:
+            result = self._send_task_with_retry(
+                "worker.backend_job.run",
+                args=[job_name, payload or {}],
+                queue="default",
+            )
+            logger.info(
+                "Backend bridge job submitted",
+                extra={
+                    "task_id": result.id,
+                    "job_name": job_name,
+                },
+            )
+            return result.id
+        except Exception as e:
+            logger.error(f"Failed to submit backend bridge job {job_name}: {e}")
+            raise ConnectionError(f"Worker unavailable: {e}") from e
+
     def get_task_status(self, task_id: str) -> dict[str, Any]:
         """
         Get the status of a submitted task.

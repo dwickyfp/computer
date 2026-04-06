@@ -4,6 +4,7 @@ Destination service containing business logic.
 Implements business rules and orchestrates repository operations for destinations.
 """
 
+import json
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
@@ -44,7 +45,9 @@ class DestinationService:
     ) -> bool:
         return self._destination_type(destination) == "KAFKA"
 
-    def _build_kafka_admin_client_config(self, destination: Destination) -> dict[str, Any]:
+    def _build_kafka_admin_client_config(
+        self, destination: Destination
+    ) -> dict[str, Any]:
         config = dict(destination.config or {})
         client = {
             "bootstrap.servers": config.get("bootstrap_servers", ""),
@@ -67,7 +70,9 @@ class DestinationService:
 
     def _discover_kafka_topics(self, destination: Destination) -> list[str]:
         if not self._is_kafka_destination(destination):
-            raise ValueError("Kafka topic discovery is only available for KAFKA destinations")
+            raise ValueError(
+                "Kafka topic discovery is only available for KAFKA destinations"
+            )
 
         config = dict(destination.config or {})
         bootstrap_servers = config.get("bootstrap_servers", "")
@@ -100,7 +105,9 @@ class DestinationService:
     def _cache_table_list(self, destination_id: int, tables: list[str]) -> None:
         try:
             redis_client = RedisClient.get_instance()
-            redis_client.setex(f"destination:{destination_id}:tables", 600, str(__import__("json").dumps(tables)))
+            redis_client.setex(
+                f"destination:{destination_id}:tables", 600, json.dumps(tables)
+            )
         except Exception as e:
             logger.warning(
                 "Failed to cache destination tables in Redis",
@@ -148,7 +155,10 @@ class DestinationService:
             )
 
         # Encrypt sensitive fields before storing
-        if "password" in destination_data.config and destination_data.config["password"]:
+        if (
+            "password" in destination_data.config
+            and destination_data.config["password"]
+        ):
             destination_data.config["password"] = encrypt_value(
                 destination_data.config["password"]
             )
@@ -480,7 +490,9 @@ class DestinationService:
                     "bootstrap.servers": config.config.get("bootstrap_servers"),
                 }
                 if config.config.get("security_protocol"):
-                    client_config["security.protocol"] = config.config["security_protocol"]
+                    client_config["security.protocol"] = config.config[
+                        "security_protocol"
+                    ]
                 if config.config.get("sasl_mechanism"):
                     client_config["sasl.mechanism"] = config.config["sasl_mechanism"]
                 if config.config.get("sasl_username"):

@@ -187,6 +187,11 @@ export interface PipelinePreviewStatusResponse {
   state: string
 }
 
+export interface TaskDispatchResponse {
+  message: string
+  task_id: string | null
+}
+
 export type PipelinePreviewResponse =
   | PipelinePreviewData
   | PipelinePreviewTaskResponse
@@ -280,9 +285,11 @@ export const pipelinesRepo = {
     return normalizePipeline(response.data)
   },
 
-  refresh: async (id: number): Promise<Pipeline> => {
-    const response = await api.post<Pipeline>(`/pipelines/${id}/refresh`)
-    return normalizePipeline(response.data)
+  refresh: async (id: number): Promise<TaskDispatchResponse> => {
+    const response = await api.post<TaskDispatchResponse>(
+      `/pipelines/${id}/refresh`
+    )
+    return response.data
   },
 
   removeDestination: async (

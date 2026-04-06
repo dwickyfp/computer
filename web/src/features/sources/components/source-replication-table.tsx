@@ -90,7 +90,9 @@ export function SourceReplicationTable({
       // Auto-refresh after drop
       await sourcesRepo.refreshSource(sourceId)
       toast.success(`Table ${tableName} dropped from publication successfully`)
-      queryClient.invalidateQueries({ queryKey: ['source-details', sourceId] })
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['source-details', sourceId] })
+      }, 3000)
       setTableToDrop(null)
     } catch (error) {
       toast.error(`Failed to drop table ${tableName}`)

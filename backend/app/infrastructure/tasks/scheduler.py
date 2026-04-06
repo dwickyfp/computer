@@ -6,6 +6,7 @@ Manages scheduling and execution of background tasks like WAL monitoring.
 
 import asyncio
 import threading
+import time
 from typing import Optional
 
 from apscheduler.schedulers.background import (
@@ -47,6 +48,69 @@ class BackgroundScheduler:
 
         # Persistent httpx client for worker health checks (avoids TCP churn)
         self._httpx_client = None
+        self._inflight_worker_jobs: dict[str, tuple[str, float]] = {}
+
+    def _dispatch_worker_job(
+        self,
+        job_name: str,
+        payload: dict | None = None,
+    ) -> bool:
+        """Dispatch a scheduler job to the worker bridge queue."""
+        if not self.settings.worker_enabled:
+            return False
+
+        try:
+            from app.infrastructure.worker_client import get_worker_client
+
+            worker_client = get_worker_client()
+            existing = self._inflight_worker_jobs.get(job_name)
+            if existing:
+                existing_task_id, dispatched_at = existing
+                existing_status = worker_client.get_task_status(existing_task_id)
+                age_seconds = time.monotonic() - dispatched_at
+                status_name = existing_status.get("status")
+
+                # Avoid permanent deadlocks when a task is sent to a queue with no
+                # consumer or the worker drops the task before acknowledging it.
+                if status_name == "queued" and age_seconds < 60:
+                    logger.info(
+                        "Skipping worker dispatch because the previous run is still queued",
+                        extra={
+                            "job_name": job_name,
+                            "task_id": existing_task_id,
+                            "state": existing_status.get("state"),
+                            "age_seconds": round(age_seconds, 1),
+                        },
+                    )
+                    return True
+
+                if status_name == "running" and age_seconds < 600:
+                    logger.info(
+                        "Skipping worker dispatch because the previous run is still active",
+                        extra={
+                            "job_name": job_name,
+                            "task_id": existing_task_id,
+                            "state": existing_status.get("state"),
+                            "age_seconds": round(age_seconds, 1),
+                        },
+                    )
+                    return True
+
+                self._inflight_worker_jobs.pop(job_name, None)
+
+            task_id = worker_client.submit_backend_job(job_name, payload or {})
+            self._inflight_worker_jobs[job_name] = (task_id, time.monotonic())
+            logger.info(
+                "Scheduled job dispatched to worker",
+                extra={"job_name": job_name, "task_id": task_id},
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "Failed to dispatch scheduled job to worker",
+                extra={"job_name": job_name, "error": str(exc)},
+            )
+            return False
 
     def _get_event_loop(self) -> asyncio.AbstractEventLoop:
         """Get or create a persistent event loop running in a background thread."""
@@ -128,6 +192,8 @@ class BackgroundScheduler:
         Synchronous wrapper for async WAL monitor task.
         Uses shared event loop to avoid creating/destroying loops per invocation.
         """
+        if self._dispatch_worker_job("wal_monitor"):
+            return
         try:
             self._run_async(self.wal_monitor.monitor_all_sources())
             self._record_job_metric("wal_monitor")
@@ -139,6 +205,8 @@ class BackgroundScheduler:
         Synchronous wrapper for replication monitor task.
         Uses shared event loop.
         """
+        if self._dispatch_worker_job("replication_monitor"):
+            return
         try:
             if self.replication_monitor:
                 self._run_async(self.replication_monitor.monitor_all_sources())
@@ -153,6 +221,8 @@ class BackgroundScheduler:
         Synchronous wrapper for schema monitor task.
         Uses shared event loop.
         """
+        if self._dispatch_worker_job("schema_monitor"):
+            return
         try:
             if self.schema_monitor:
                 self._run_async(self.schema_monitor.monitor_all_sources())
@@ -164,6 +234,8 @@ class BackgroundScheduler:
         """
         Synchronous wrapper for credit monitor task.
         """
+        if self._dispatch_worker_job("credit_monitor"):
+            return
         try:
             if self.credit_monitor:
                 self.credit_monitor.monitor_all_destinations()
@@ -176,6 +248,8 @@ class BackgroundScheduler:
         Synchronous wrapper for table list refresh task.
         Uses ThreadPoolExecutor for parallel source refresh (#11).
         """
+        if self._dispatch_worker_job("table_list_refresh"):
+            return
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             from app.core.database import db_manager
@@ -230,6 +304,8 @@ class BackgroundScheduler:
         Dispatches a Celery task per destination to the worker.
         Uses single DB session for both work and job metric recording.
         """
+        if self._dispatch_worker_job("destination_table_list_refresh"):
+            return
         try:
             from app.core.database import db_manager
             from app.domain.services.destination import DestinationService
@@ -254,6 +330,8 @@ class BackgroundScheduler:
         Synchronous wrapper for system metric collection task.
         Uses single DB session for both metric collection and job metric recording.
         """
+        if self._dispatch_worker_job("system_metric_collection"):
+            return
         try:
             from app.core.database import db_manager
             from app.domain.services.system_metric import SystemMetricService
@@ -277,6 +355,8 @@ class BackgroundScheduler:
         Synchronous wrapper for notification sender task.
         Uses single DB session for both work and job metric recording.
         """
+        if self._dispatch_worker_job("notification_sender"):
+            return
         try:
             from app.core.database import db_manager
             from app.domain.services.notification_service import NotificationService
@@ -300,6 +380,8 @@ class BackgroundScheduler:
         Runs every 10 seconds to keep status fresh.
         Uses persistent httpx client to avoid TCP connection churn.
         """
+        if self._dispatch_worker_job("worker_health_check"):
+            return
         try:
             from app.core.database import db_manager
             from app.domain.repositories.worker_health_repo import (
@@ -369,6 +451,8 @@ class BackgroundScheduler:
         Synchronous wrapper for pipeline refresh check task.
         Uses single DB session for both work and job metric recording.
         """
+        if self._dispatch_worker_job("pipeline_refresh_check"):
+            return
         try:
             from app.core.database import db_manager
             from app.domain.models.pipeline import Pipeline, PipelineStatus

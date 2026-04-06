@@ -285,13 +285,15 @@ class TestPausePipeline:
 
 
 class TestRefreshPipeline:
-    def test_success_returns_200(self, client, mock_svc):
+    def test_success_returns_202(self, client, mock_svc):
+        mock_svc.get_pipeline.return_value = make_pipeline_ns(status="START")
         mock_svc.refresh_pipeline.return_value = make_pipeline_ns(status="REFRESH")
         resp = client.post("/api/v1/pipelines/1/refresh")
-        assert resp.status_code == 200
+        assert resp.status_code == 202
+        assert resp.json()["task_id"] is None
 
     def test_not_found_returns_404(self, client, mock_svc):
-        mock_svc.refresh_pipeline.side_effect = EntityNotFoundError("Pipeline", 99)
+        mock_svc.get_pipeline.side_effect = EntityNotFoundError("Pipeline", 99)
         resp = client.post("/api/v1/pipelines/99/refresh")
         assert resp.status_code == 404
 

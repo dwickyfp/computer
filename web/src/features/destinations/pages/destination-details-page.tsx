@@ -112,9 +112,11 @@ export function DestinationDetailsPage() {
 
     const handleRefresh = () => {
         refreshCredits(destinationId, {
-            onSuccess: () => {
-                toast.success('Credit usage data refreshed')
-                refetch()
+            onSuccess: (result) => {
+                toast.success(result.task_id ? 'Credit refresh queued' : 'Credit usage data refreshed')
+                setTimeout(() => {
+                    refetch()
+                }, result.task_id ? 3000 : 0)
             },
             onError: (error) => {
                 toast.error('Failed to refresh data: ' + error.message)

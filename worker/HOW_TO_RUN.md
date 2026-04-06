@@ -49,10 +49,10 @@ uv sync
 uv run python server.py &
 
 # Start Celery worker
-uv run celery -A main worker --loglevel=info -Q preview,default -c 4 --pool=threads
+uv run celery -A main worker --loglevel=info -Q preview,default,orchestration -c 4 --pool=threads
 
 # With Beat scheduler
-uv run celery -A main worker --loglevel=info -Q preview,default -c 4 --pool=threads --beat
+uv run celery -A main worker --loglevel=info -Q preview,default,orchestration -c 4 --pool=threads --beat
 ```
 
 ## Run Directly (without uv)
@@ -62,5 +62,5 @@ uv run celery -A main worker --loglevel=info -Q preview,default -c 4 --pool=thre
 python server.py &
 
 # Start Celery worker
-celery -A main worker --loglevel=info -Q preview,default -c 4 --pool=threads
+celery -A main worker --loglevel=info -Q preview,default,orchestration -c 4 --pool=threads
 ```

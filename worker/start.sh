@@ -12,6 +12,19 @@ set -e
 
 cd "$(dirname "$0")"
 
+if [ -x ".venv/bin/python" ]; then
+    PYTHON_BIN="$(pwd)/.venv/bin/python"
+else
+    PYTHON_BIN="$(command -v python3 || command -v python)"
+fi
+
+if [ -z "$PYTHON_BIN" ]; then
+    echo "Python interpreter not found"
+    exit 1
+fi
+
+export PATH="$(dirname "$PYTHON_BIN"):$PATH"
+
 CONCURRENCY=${WORKER_CONCURRENCY:-10}
 QUEUES="preview,default,orchestration"
 LOGLEVEL=${LOG_LEVEL:-info}
@@ -35,7 +48,7 @@ done
 # SNOWFLAKE_ADBC_DRIVER_PATH is an explicit fallback recognized by the extension.
 if [ -z "$SNOWFLAKE_ADBC_DRIVER_PATH" ]; then
     # Resolve from venv if not already set (local dev)
-    _ADBC_SO="$(python3 -c "import adbc_driver_snowflake, os; print(os.path.join(os.path.dirname(adbc_driver_snowflake.__file__), 'libadbc_driver_snowflake.so'))" 2>/dev/null || true)"
+    _ADBC_SO="$("$PYTHON_BIN" -c "import adbc_driver_snowflake, os; print(os.path.join(os.path.dirname(adbc_driver_snowflake.__file__), 'libadbc_driver_snowflake.so'))" 2>/dev/null || true)"
     if [ -f "$_ADBC_SO" ]; then
         export SNOWFLAKE_ADBC_DRIVER_PATH="$_ADBC_SO"
         echo "  ADBC driver: $SNOWFLAKE_ADBC_DRIVER_PATH"
@@ -48,10 +61,11 @@ echo "Starting Rosetta Worker..."
 echo "  Concurrency: $CONCURRENCY"
 echo "  Queues: $QUEUES"
 echo "  Log Level: $LOGLEVEL"
+echo "  Python: $PYTHON_BIN"
 
 # Start health API server in background
 echo "Starting health API server on port ${SERVER_PORT:-8002}..."
-python server.py &
+"$PYTHON_BIN" server.py &
 HEALTH_PID=$!
 echo "  Health API PID: $HEALTH_PID"
 
@@ -60,14 +74,14 @@ trap "echo 'Stopping health API server...'; kill $HEALTH_PID 2>/dev/null" EXIT I
 
 if [ "$RUN_BEAT" = true ]; then
     echo "  Beat: enabled"
-    exec python -m celery -A main worker \
+    exec "$PYTHON_BIN" -m celery -A main worker \
         --loglevel=$LOGLEVEL \
         -Q $QUEUES \
         -c $CONCURRENCY \
         --pool=threads \
         --beat
 else
-    exec python -m celery -A main worker \
+    exec "$PYTHON_BIN" -m celery -A main worker \
         --loglevel=$LOGLEVEL \
         -Q $QUEUES \
         -c $CONCURRENCY \

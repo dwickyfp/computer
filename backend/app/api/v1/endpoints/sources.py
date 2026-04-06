@@ -21,10 +21,12 @@ from app.domain.schemas.source import (
     SourceUpdate,
     SourceConnectionTest,
 )
+from app.domain.schemas.common import TaskDispatchResponse
 from app.domain.schemas.source_detail import SourceDetailResponse, TableSchemaResponse
 from app.domain.services.source import SourceService
 from app.domain.services.preset import PresetService
 from app.domain.schemas.preset import PresetCreate, PresetResponse
+from app.core.config import get_settings
 
 router = APIRouter()
 
@@ -272,16 +274,42 @@ def unregister_table(
 
 @router.post(
     "/{source_id}/refresh",
-    status_code=status.HTTP_200_OK,
+    response_model=TaskDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Refresh source metadata",
     description="Manually checks and updates table list and status",
 )
 def refresh_source(
     source_id: int,
     service: SourceService = Depends(get_source_service),
-) -> None:
+) -> TaskDispatchResponse:
+    service.get_source(source_id)
+
+    settings = get_settings()
+    if settings.worker_enabled:
+        try:
+            from app.infrastructure.worker_client import get_worker_client
+
+            task_id = get_worker_client().submit_backend_job(
+                "source.refresh_metadata",
+                {"source_id": source_id},
+            )
+            return TaskDispatchResponse(
+                message="Source refresh dispatched",
+                task_id=task_id,
+            )
+        except ConnectionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Worker service unavailable. Please ensure the worker is running.",
+            ) from exc
+
     try:
         service.refresh_source_metadata(source_id)
+        return TaskDispatchResponse(
+            message="Source refreshed successfully",
+            task_id=None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

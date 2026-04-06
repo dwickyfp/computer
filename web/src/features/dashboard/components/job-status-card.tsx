@@ -20,9 +20,13 @@ export function JobStatusCard() {
     'wal_monitor': 60,
     'replication_monitor': 60,
     'schema_monitor': 60,
-    'system_metric_collection': 10,
-    'table_list_refresh': 600,
-    'credit_monitor': 21600, // 6 hours
+    'table_list_refresh': 300,
+    'destination_table_list_refresh': 1800,
+    'system_metric_collection': 15,
+    'notification_sender': 30,
+    'worker_health_check': 10,
+    'pipeline_refresh_check': 10,
+    'credit_monitor': 3600,
   }
 
   const getStatus = (key: string, lastRun: string) => {

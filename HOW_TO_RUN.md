@@ -22,7 +22,7 @@ uv run python server.py &
 
 # Start Celery worker
 
-uv run celery -A main worker --loglevel=info -Q preview,default -c 4 --pool=threads
+uv run celery -A main worker --loglevel=info -Q preview,default,orchestration -c 4 --pool=threads
 
 # Kill Python Process
 

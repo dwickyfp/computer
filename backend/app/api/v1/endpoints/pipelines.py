@@ -6,10 +6,11 @@ Provides REST API for managing ETL pipelines.
 
 from typing import List
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import get_pipeline_service, get_pipeline_service_readonly
 from app.core.config import get_settings
+from app.domain.schemas.common import TaskDispatchResponse
 from app.domain.schemas.pipeline import (
     PipelineCreate,
     PipelineResponse,
@@ -244,13 +245,14 @@ def pause_pipeline(
 
 @router.post(
     "/{pipeline_id}/refresh",
-    response_model=PipelineResponse,
+    response_model=TaskDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Refresh pipeline",
     description="Trigger a pipeline refresh",
 )
 def refresh_pipeline(
     pipeline_id: int, service: PipelineService = Depends(get_pipeline_service)
-) -> PipelineResponse:
+) -> TaskDispatchResponse:
     """
     Refresh a pipeline.
 
@@ -259,10 +261,34 @@ def refresh_pipeline(
         service: Pipeline service instance
 
     Returns:
-        Updated pipeline
+        Dispatch acknowledgement
     """
-    pipeline = service.refresh_pipeline(pipeline_id)
-    return PipelineResponse.from_orm(pipeline)
+    service.get_pipeline(pipeline_id)
+
+    settings = get_settings()
+    if settings.worker_enabled:
+        try:
+            from app.infrastructure.worker_client import get_worker_client
+
+            task_id = get_worker_client().submit_backend_job(
+                "pipeline.refresh",
+                {"pipeline_id": pipeline_id},
+            )
+            return TaskDispatchResponse(
+                message="Pipeline refresh dispatched",
+                task_id=task_id,
+            )
+        except ConnectionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Worker service unavailable. Please ensure the worker is running.",
+            ) from exc
+
+    service.refresh_pipeline(pipeline_id)
+    return TaskDispatchResponse(
+        message="Pipeline refreshed successfully",
+        task_id=None,
+    )
 
 
 @router.get(

@@ -18,14 +18,19 @@ export interface CreditUsageResponse {
     daily_usage: DailyUsage[]
 }
 
+export interface TaskDispatchResponse {
+    message: string
+    task_id: string | null
+}
+
 export const creditsRepo = {
     getUsage: async (destinationId: number): Promise<CreditUsageResponse> => {
         const response = await api.get<CreditUsageResponse>(`/destinations/${destinationId}/credits`)
         return response.data
     },
 
-    refresh: async (destinationId: number): Promise<{ message: string }> => {
-        const response = await api.post<{ message: string }>(`/destinations/${destinationId}/credits/refresh`)
+    refresh: async (destinationId: number): Promise<TaskDispatchResponse> => {
+        const response = await api.post<TaskDispatchResponse>(`/destinations/${destinationId}/credits/refresh`)
         return response.data
     },
 }

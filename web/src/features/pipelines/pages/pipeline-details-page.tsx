@@ -169,7 +169,18 @@ export default function PipelineDetailsPage() {
       if (pipeline.source_id !== null) {
         await sourcesRepo.refreshSource(pipeline.source_id)
       }
-      toast.success('Pipeline and Source restarted successfully')
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['pipeline', id] })
+        if (pipeline.source_id !== null) {
+          queryClient.invalidateQueries({
+            queryKey: ['source-details', pipeline.source_id],
+          })
+          queryClient.invalidateQueries({
+            queryKey: ['source-available-tables', pipeline.source_id],
+          })
+        }
+      }, 3000)
+      toast.success('Pipeline and source refresh queued')
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Failed to restart pipeline'))
     }

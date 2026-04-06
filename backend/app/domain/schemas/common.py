@@ -121,3 +121,13 @@ class ErrorResponse(BaseSchema):
             }
         },
     )
+
+
+class TaskDispatchResponse(BaseSchema):
+    """Asynchronous worker task dispatch acknowledgement."""
+
+    message: str = Field(..., description="Dispatch status message")
+    task_id: str | None = Field(
+        default=None,
+        description="Celery task identifier when the worker accepted the job",
+    )

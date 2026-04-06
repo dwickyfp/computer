@@ -39,6 +39,7 @@ celery_app.conf.update(
         "worker.preview.execute": {"queue": "preview"},
         "worker.flow_task.preview": {"queue": "preview"},
         "worker.linked_task.execute": {"queue": "orchestration"},
+        "worker.backend_job.run": {"queue": "default"},
     },
     # Default queue
     task_default_queue="default",
@@ -80,6 +81,7 @@ celery_app.autodiscover_tasks([
     "app.tasks.flow_task",
     "app.tasks.destination_table_list",
     "app.tasks.linked_task",
+    "app.tasks.backend_job",
 ])
 
 

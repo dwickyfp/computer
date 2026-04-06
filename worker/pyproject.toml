@@ -23,6 +23,10 @@ dependencies = [
     "sqlglot>=26.0.0",
     "snowflake-connector-python>=3.0.0",
     "orjson>=3.10.0",
+    "httpx>=0.27.0",
+    "psutil>=7.2.2",
+    "deepdiff==8.6.1",
+    "confluent-kafka>=2.5.0",
 ]
 
 [dependency-groups]

@@ -9,6 +9,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.deps import get_destination_service, get_destination_service_readonly
+from app.domain.schemas.common import TaskDispatchResponse
 from app.domain.schemas.destination import (
     DestinationCreate,
     DestinationResponse,
@@ -242,6 +243,7 @@ def get_destination_table_list(
 
 @router.post(
     "/{destination_id}/tables/refresh",
+    response_model=TaskDispatchResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Dispatch destination table list refresh",
     description="Enqueue a worker task to refresh the table list for a destination",
@@ -249,7 +251,7 @@ def get_destination_table_list(
 def refresh_destination_table_list(
     destination_id: int,
     service: DestinationService = Depends(get_destination_service),
-) -> dict:
+) -> TaskDispatchResponse:
     """
     Dispatch a Celery task to refresh the table list for a destination.
 
@@ -261,6 +263,12 @@ def refresh_destination_table_list(
     """
     task_id = service.dispatch_table_list_task(destination_id)
     if task_id:
-        return {"message": "Table list refresh dispatched", "task_id": task_id}
-    return {"message": "Worker is disabled; table list refresh not dispatched", "task_id": None}
+        return TaskDispatchResponse(
+            message="Table list refresh dispatched",
+            task_id=task_id,
+        )
+    return TaskDispatchResponse(
+        message="Worker is disabled; table list refresh not dispatched",
+        task_id=None,
+    )
 

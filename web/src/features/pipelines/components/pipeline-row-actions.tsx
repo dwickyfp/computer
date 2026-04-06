@@ -76,8 +76,10 @@ export function PipelineRowActions<TData>({
   const { mutate: refreshMutate } = useMutation({
     mutationFn: pipelinesRepo.refresh,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
-      toast.success('Pipeline refreshed')
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+      }, 3000)
+      toast.success('Pipeline refresh queued')
     },
     onError: () => {
       toast.error('Failed to refresh pipeline')
