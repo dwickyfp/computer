@@ -8,8 +8,10 @@ import time
 from threading import Event
 
 from config.config import get_config
+from core.kafka_config import build_kafka_client_config
 from core.models import Source
 from core.record_router import RecordRouter
+from core.runtime_metrics import observe, set_gauge
 from destinations.base import CDCRecord
 from sources.runner_base import BaseSourceRunner
 
@@ -24,35 +26,19 @@ class KafkaSourceRunner(BaseSourceRunner):
         self._consumer = None
 
     def _consumer_config(self) -> dict:
-        from core.security import decrypt_value
-
-        config = dict(self._source.config or {})
-        client = {
-            "bootstrap.servers": config.get("bootstrap_servers"),
-            "group.id": config.get("group_id") or f"rosetta-kafka-source-{self._source.id}",
-            "auto.offset.reset": config.get("auto_offset_reset", "earliest"),
-            "enable.auto.commit": True,
-        }
-        if config.get("security_protocol"):
-            client["security.protocol"] = config["security_protocol"]
-        if config.get("sasl_mechanism"):
-            client["sasl.mechanism"] = config["sasl_mechanism"]
-        if config.get("sasl_username"):
-            client["sasl.username"] = config["sasl_username"]
-        if config.get("sasl_password"):
-            client["sasl.password"] = decrypt_value(config["sasl_password"])
-        if config.get("ssl_ca_location"):
-            client["ssl.ca.location"] = config["ssl_ca_location"]
-        if config.get("ssl_certificate_location"):
-            client["ssl.certificate.location"] = config["ssl_certificate_location"]
-        if config.get("ssl_key_location"):
-            client["ssl.key.location"] = config["ssl_key_location"]
-        return client
+        return build_kafka_client_config(
+            self._source.config,
+            client_type="consumer",
+            group_id=self._source.config.get("group_id")
+            or f"rosetta-kafka-source-{self._source.id}",
+        )
 
     def validate(self, pipeline_name: str, table_include_list: list[str]) -> None:
         from confluent_kafka.admin import AdminClient
 
-        admin = AdminClient({"bootstrap.servers": self._source.config.get("bootstrap_servers")})
+        admin = AdminClient(
+            build_kafka_client_config(self._source.config, client_type="admin")
+        )
         metadata = admin.list_topics(timeout=10)
         prefix = self._source.config.get("topic_prefix")
         expected_topics = {f"{prefix}.{table}" for table in table_include_list}
@@ -139,11 +125,14 @@ class KafkaSourceRunner(BaseSourceRunner):
         cfg = get_config()
         max_batch = cfg.pipeline.max_batch_size
         while not stop_event.is_set():
+            poll_started = time.perf_counter()
             records_by_table: dict[str, list[CDCRecord]] = {}
+            polled_messages = 0
             for _ in range(max_batch):
                 msg = self._consumer.poll(1.0)
                 if msg is None:
                     break
+                polled_messages += 1
                 if msg.error():
                     raise RuntimeError(str(msg.error()))
 
@@ -152,8 +141,35 @@ class KafkaSourceRunner(BaseSourceRunner):
                     continue
                 records_by_table.setdefault(record.table_name, []).append(record)
 
+            observe(
+                "kafka_source.poll_duration",
+                (time.perf_counter() - poll_started) * 1000.0,
+                unit="ms",
+                source_id=str(self._source.id),
+            )
+
+            if polled_messages:
+                routed_count = sum(len(batch) for batch in records_by_table.values())
+                set_gauge(
+                    "kafka_source.last_batch_records",
+                    routed_count,
+                    unit="records",
+                    source_id=str(self._source.id),
+                )
+
             if records_by_table:
+                route_started = time.perf_counter()
                 router.route_batches(records_by_table)
+                observe(
+                    "kafka_source.route_duration",
+                    (time.perf_counter() - route_started) * 1000.0,
+                    unit="ms",
+                    source_id=str(self._source.id),
+                )
+                self._consumer.commit(asynchronous=False)
+            elif polled_messages:
+                # Advance offsets for batches that contained only tombstones/ignored records.
+                self._consumer.commit(asynchronous=False)
 
     def stop(self) -> None:
         if self._consumer is not None:

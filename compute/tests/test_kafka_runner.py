@@ -4,6 +4,8 @@ Unit tests for KafkaSourceRunner normalization.
 
 import os
 import sys
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -125,3 +127,96 @@ def test_consumer_config_uses_system_group_id_when_source_has_none():
     config = runner._consumer_config()
 
     assert config["group.id"] == "rosetta-kafka-source-1"
+    assert config["enable.auto.commit"] is False
+
+
+class _FakeConsumer:
+    def __init__(self, config, messages):
+        self.config = config
+        self._messages = list(messages)
+        self.subscribed = []
+        self.commits = 0
+        self.closed = False
+
+    def subscribe(self, topics):
+        self.subscribed = list(topics)
+
+    def poll(self, timeout):
+        if self._messages:
+            return self._messages.pop(0)
+        return None
+
+    def commit(self, asynchronous=False):
+        self.commits += 1
+        self.last_commit_async = asynchronous
+
+    def close(self):
+        self.closed = True
+
+
+def test_run_commits_offsets_after_successful_routing():
+    runner = _make_runner()
+    msg = _FakeMessage(
+        topic="dbserver1.inventory.orders",
+        key=b'{"id": 1}',
+        value=b'{"id":1,"rosetta_timestamp":1700000000000,"rosetta_operation":"u"}',
+    )
+    fake_consumer_holder = {}
+
+    def _consumer_factory(config):
+        consumer = _FakeConsumer(config, [msg, None])
+        fake_consumer_holder["consumer"] = consumer
+        return consumer
+
+    stop_event = SimpleNamespace(is_set=lambda: state["stopped"], set=lambda: state.__setitem__("stopped", True))
+    state = {"stopped": False}
+
+    class _Router:
+        def route_batches(self, records_by_table):
+            assert list(records_by_table) == ["orders"]
+            state["stopped"] = True
+
+    with patch.dict(
+        "sys.modules",
+        {"confluent_kafka": SimpleNamespace(Consumer=_consumer_factory)},
+    ):
+        runner.run("pipe", ["orders"], _Router(), stop_event)
+
+    consumer = fake_consumer_holder["consumer"]
+    assert consumer.commits == 1
+    assert consumer.last_commit_async is False
+
+
+def test_run_does_not_commit_offsets_when_routing_fails():
+    runner = _make_runner()
+    msg = _FakeMessage(
+        topic="dbserver1.inventory.orders",
+        key=b'{"id": 1}',
+        value=b'{"id":1,"rosetta_timestamp":1700000000000,"rosetta_operation":"u"}',
+    )
+    fake_consumer_holder = {}
+
+    def _consumer_factory(config):
+        consumer = _FakeConsumer(config, [msg, None])
+        fake_consumer_holder["consumer"] = consumer
+        return consumer
+
+    stop_event = SimpleNamespace(is_set=lambda: False)
+
+    class _Router:
+        def route_batches(self, records_by_table):
+            raise RuntimeError("boom")
+
+    with patch.dict(
+        "sys.modules",
+        {"confluent_kafka": SimpleNamespace(Consumer=_consumer_factory)},
+    ):
+        try:
+            runner.run("pipe", ["orders"], _Router(), stop_event)
+        except RuntimeError as exc:
+            assert str(exc) == "boom"
+        else:
+            raise AssertionError("expected routing error")
+
+    consumer = fake_consumer_holder["consumer"]
+    assert consumer.commits == 0

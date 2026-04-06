@@ -554,3 +554,21 @@ class TestDLQManagerConnection:
         dlq_manager.close_all()
 
         assert len(dlq_manager._initialized_groups) == 0
+
+
+class TestDLQVersionTracking:
+    def test_track_written_versions_skips_records_without_keys(self, dlq_manager):
+        records = [
+            CDCRecord(
+                operation="u",
+                table_name="users",
+                key={},
+                value={"name": "orphan"},
+                timestamp=1000,
+            )
+        ]
+
+        dlq_manager.track_written_versions(destination_id=2, table_name="users", records=records)
+
+        keys = dlq_manager._redis.keys("rosetta:ver:*")
+        assert keys == []

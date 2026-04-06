@@ -13,7 +13,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from core.database import get_connection_pool, get_db_connection
+from core.filter_sql import build_where_clause_from_filter_sql
 from core.models import Source, QueueBackfillData, BackfillStatus
+from core.runtime_metrics import observe, set_gauge
 from core.security import decrypt_value
 from core.timezone import convert_timestamp_to_target_tz, convert_time_to_target_tz
 from config.config import get_config
@@ -75,6 +77,7 @@ class BackfillManager:
         self.stop_event = threading.Event()
         self.active_jobs: dict[int, threading.Thread] = {}
         self.active_jobs_lock = threading.Lock()
+        self._max_concurrent_jobs = get_config().runtime.backfill_max_concurrent_jobs
 
         if not duckdb:
             logger.error("DuckDB is not installed. Install with: pip install duckdb")
@@ -268,6 +271,12 @@ class BackfillManager:
         conn = None
 
         try:
+            with self.active_jobs_lock:
+                capacity = max(self._max_concurrent_jobs - len(self.active_jobs), 0)
+            set_gauge("backfill.active_jobs", len(self.active_jobs), unit="jobs")
+            if capacity <= 0:
+                return []
+
             # get_db_connection() handles retries on pool exhaustion
             conn = get_db_connection()
 
@@ -285,10 +294,10 @@ class BackfillManager:
                     JOIN sources s ON qb.source_id = s.id
                     WHERE qb.status = %s
                     ORDER BY qb.created_at ASC
-                    LIMIT 10
+                    LIMIT %s
                     FOR UPDATE OF qb SKIP LOCKED
                     """,
-                    (BackfillStatus.PENDING.value,),
+                    (BackfillStatus.PENDING.value, capacity),
                 )
                 jobs = cursor.fetchall()
                 result = [dict(job) for job in jobs]
@@ -402,18 +411,18 @@ class BackfillManager:
         last_pk_value = job.get(
             "last_pk_value"
         )  # Cursor position for keyset pagination
-        pk_column = job.get("pk_column")  # Cached PK column name
+        pk_columns = self._parse_pk_columns(job.get("pk_column"))
+        pk_column = pk_columns[0] if len(pk_columns) == 1 else None
 
         # Build PostgreSQL connection string
         pg_conn_str = self._build_postgres_connection(job)
 
         # Initialize DuckDB connection (in-memory)
-        import os
-
-        duckdb_mem = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+        runtime_cfg = get_config().runtime
+        duckdb_mem = runtime_cfg.duckdb_memory_limit
         conn = duckdb.connect(":memory:")
         conn.execute(f"SET memory_limit='{duckdb_mem}'")
-        conn.execute("SET threads=4")
+        conn.execute(f"SET threads={runtime_cfg.duckdb_threads}")
         conn.execute("SET enable_progress_bar=false")
 
         total_processed = start_count  # Start from checkpoint
@@ -439,11 +448,15 @@ class BackfillManager:
                     f"check host reachability and credentials"
                 ) from None  # suppress original which may contain the password
 
-            # Detect primary key column if not already cached
-            if not pk_column:
-                pk_column = self._detect_primary_key(conn, table_name)
-                if pk_column:
-                    self._update_job_pk_column(job_id, pk_column)
+            # Detect primary key columns if not already cached.
+            if not pk_columns:
+                pk_columns = self._detect_primary_key_columns(conn, table_name)
+                if pk_columns:
+                    self._update_job_pk_column(job_id, ";".join(pk_columns))
+                job["pk_columns"] = pk_columns
+                pk_column = pk_columns[0] if len(pk_columns) == 1 else None
+            else:
+                job["pk_columns"] = pk_columns
 
             # Build base WHERE clause from filters
             base_where = ""
@@ -533,7 +546,15 @@ class BackfillManager:
                 logger.debug(
                     f"Job {job_id}: Processing batch, total_processed={total_processed}"
                 )
+                fetch_started = time.perf_counter()
                 result = conn.execute(batch_query, query_params).fetchall()
+                observe(
+                    "backfill.fetch_duration",
+                    (time.perf_counter() - fetch_started) * 1000.0,
+                    unit="ms",
+                    job_id=str(job_id),
+                    table_name=table_name,
+                )
 
                 if not result:
                     break
@@ -543,8 +564,16 @@ class BackfillManager:
 
                 # Process batch - convert to CDC events and send to destinations
                 batch_records = [dict(zip(columns, row)) for row in result]
+                write_started = time.perf_counter()
                 self._process_batch_to_destinations(
                     job, batch_records, destinations_cache
+                )
+                observe(
+                    "backfill.destination_write_duration",
+                    (time.perf_counter() - write_started) * 1000.0,
+                    unit="ms",
+                    job_id=str(job_id),
+                    table_name=table_name,
                 )
 
                 # Update progress and cursor position
@@ -566,19 +595,25 @@ class BackfillManager:
             # Close cached destination instances
             self._close_destinations_cache(destinations_cache)
 
-    def _detect_primary_key(self, conn, table_name: str) -> Optional[str]:
-        """
-        Detect the primary key column of a table via DuckDB's postgres attachment.
+    def _parse_pk_columns(self, pk_value: Optional[str]) -> list[str]:
+        if not pk_value:
+            return []
+        return [column.strip() for column in str(pk_value).split(";") if column.strip()]
 
-        Returns a single PK column name, or None if no PK or composite PK.
-        For composite PKs, falls back to OFFSET pagination.
+    def _detect_primary_key_columns(self, conn, table_name: str) -> list[str]:
+        """
+        Detect the primary key columns of a table via DuckDB's postgres attachment.
+
+        Returns all PK columns in ordinal order. Backfill pagination still uses
+        keyset only for a single-column PK, but row version tracking should use
+        the full key set when it exists.
 
         Args:
             conn: DuckDB connection with source_db attached
             table_name: Table name (may include schema)
 
         Returns:
-            Primary key column name, or None
+            Primary key column names
         """
         try:
             # Parse schema and table from table_name
@@ -606,25 +641,23 @@ class BackfillManager:
                 [schema, tbl],
             ).fetchall()
 
-            if len(result) == 1:
-                pk_col = result[0][0]
+            pk_columns = [row[0] for row in result]
+            if len(pk_columns) == 1:
                 logger.info(
-                    f"Detected primary key column '{pk_col}' for table {table_name}"
+                    f"Detected primary key column '{pk_columns[0]}' for table {table_name}"
                 )
-                return pk_col
-            elif len(result) > 1:
+            elif len(pk_columns) > 1:
                 logger.info(
-                    f"Composite primary key detected for {table_name} "
-                    f"({[r[0] for r in result]}), falling back to OFFSET"
+                    f"Composite primary key detected for {table_name} ({pk_columns}), "
+                    f"falling back to OFFSET pagination"
                 )
-                return None
             else:
                 logger.info(f"No primary key found for {table_name}, using OFFSET")
-                return None
+            return pk_columns
 
         except Exception as e:
             logger.warning(f"Could not detect PK for {table_name}: {e}")
-            return None
+            return []
 
     def _update_job_pk_column(self, job_id: int, pk_column: str) -> None:
         """
@@ -889,6 +922,7 @@ class BackfillManager:
 
             # Convert records to CDC format with proper serialization
             cdc_records = []
+            key_columns = job.get("pk_columns") or self._parse_pk_columns(job.get("pk_column"))
             # BUG-12 FIX: Use current wall-clock timestamp instead of None so
             # the DLQ version tracker can compare backfill records against
             # live CDC records and avoid re-applying stale replays.
@@ -902,7 +936,7 @@ class BackfillManager:
                 cdc_record = CDCRecord(
                     operation="r",  # 'r' = read/snapshot operation
                     table_name=table_name,
-                    key=self._extract_keys(serialized_record),
+                    key=self._extract_keys(serialized_record, key_columns),
                     value=serialized_record,
                     schema=None,
                     timestamp=_batch_ts,
@@ -1079,21 +1113,23 @@ class BackfillManager:
             logger.error(f"Error processing batch to destinations: {e}", exc_info=True)
             raise
 
-    def _extract_keys(self, record: dict) -> dict:
+    def _extract_keys(self, record: dict, key_columns: Optional[list[str]] = None) -> dict:
         """
         Extract primary key fields from record.
 
         Args:
             record: Record dictionary
+            key_columns: Detected primary key columns in ordinal order
 
         Returns:
-            Dictionary with key fields (simple heuristic - look for 'id' field)
+            Dictionary with key fields
         """
-        # Simple heuristic - in production you should query the table schema
-        # to get actual primary keys
-        if "id" in record:
-            return {"id": record["id"]}
-        return {}
+        selected_columns = key_columns or (["id"] if "id" in record else [])
+        return {
+            column: record[column]
+            for column in selected_columns
+            if column in record and record[column] is not None
+        }
 
     def _serialize_record(self, record: dict) -> dict:
         """
@@ -1314,19 +1350,7 @@ class BackfillManager:
         Returns:
             WHERE clause string (without WHERE keyword), or empty string
         """
-        if not filter_sql:
-            return ""
-
-        try:
-            import json
-
-            parsed = json.loads(filter_sql)
-            if isinstance(parsed, dict) and parsed.get("version") == 2:
-                return self._build_where_clause_v2(parsed)
-        except (json.JSONDecodeError, TypeError):
-            raise ValueError("filter_sql must be valid JSON v2")
-
-        raise ValueError("filter_sql must use version 2 JSON format")
+        return build_where_clause_from_filter_sql(filter_sql, error_cls=ValueError)
 
     def _build_where_clause_v2(self, parsed: dict) -> str:
         """

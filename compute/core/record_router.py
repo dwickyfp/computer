@@ -8,6 +8,7 @@ transport.
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from core.exceptions import DestinationException
 from core.dlq_manager import DLQManager
 from core.notification import NotificationLogRepository, NotificationLogCreate
 from core.error_sanitizer import sanitize_for_db, sanitize_for_log
+from core.runtime_metrics import observe
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +102,15 @@ class RecordRouter:
 
     def route_batches(self, records_by_table: dict[str, list[CDCRecord]]) -> None:
         for table_name, table_records in records_by_table.items():
+            started = time.perf_counter()
             self.route_records(table_name, table_records)
+            observe(
+                "record_router.route_duration",
+                (time.perf_counter() - started) * 1000.0,
+                unit="ms",
+                pipeline_id=str(self._pipeline.id),
+                table_name=table_name,
+            )
 
     def _process_single_destination(
         self,

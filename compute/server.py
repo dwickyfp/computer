@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from core.runtime_health import overall_status
+from core.runtime_metrics import snapshot as metrics_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ async def health_check():
     payload = {
         "status": "healthy" if healthy else "unhealthy",
         "workers": workers,
+        "metrics": metrics_snapshot(),
     }
     if healthy:
         return payload
@@ -43,4 +45,3 @@ def run_server(host: str, port: int) -> None:
     except Exception as exc:
         logger.error("Failed to start API server: %s", exc)
         raise
-

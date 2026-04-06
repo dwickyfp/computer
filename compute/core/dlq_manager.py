@@ -1015,7 +1015,7 @@ class DLQManager:
             pipe = self._redis.pipeline(transaction=False)
             for record in records:
                 ts = record.timestamp
-                if ts is None:
+                if ts is None or not record.key:
                     continue
                 pk_h = self._pk_hash(record.key)
                 rkey = self._version_key(destination_id, table_name, pk_h)
@@ -1063,7 +1063,7 @@ class DLQManager:
             latest_by_key: dict[str, int] = {}
             for record in records:
                 ts = record.timestamp
-                if ts is None:
+                if ts is None or not record.key:
                     continue
                 redis_key = self._version_key(
                     destination_id, table_name, self._pk_hash(record.key)
@@ -1112,15 +1112,23 @@ class DLQManager:
             return records
 
         try:
-            keys = [
-                self._version_key(destination_id, table_name, self._pk_hash(r.key))
-                for r in records
-            ]
-            stored = self._redis.mget(keys)
+            keyed_records: list[tuple[CDCRecord, str | None]] = []
+            for record in records:
+                version_key = None
+                if record.key:
+                    version_key = self._version_key(
+                        destination_id, table_name, self._pk_hash(record.key)
+                    )
+                keyed_records.append((record, version_key))
+
+            redis_keys = [version_key for _, version_key in keyed_records if version_key]
+            stored_values = self._redis.mget(redis_keys) if redis_keys else []
+            stored_iter = iter(stored_values)
 
             fresh: list[CDCRecord] = []
             skipped = 0
-            for record, stored_ver in zip(records, stored):
+            for record, version_key in keyed_records:
+                stored_ver = next(stored_iter) if version_key else None
                 if stored_ver is None:
                     # No tracked version → safe to write
                     fresh.append(record)

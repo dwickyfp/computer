@@ -158,6 +158,17 @@ class SnowflakeConfig:
 
 
 @dataclass
+class RuntimeConfig:
+    """Runtime resource guardrails and lightweight client tuning."""
+
+    jvm_max_heap: str = "4G"
+    duckdb_memory_limit: str = "2GB"
+    duckdb_threads: int = 2
+    backfill_max_concurrent_jobs: int = 2
+    kafka_flush_timeout_seconds: float = 10.0
+
+
+@dataclass
 class Config:
     """
     Central configuration for Rosetta Compute Engine.
@@ -172,6 +183,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     dlq: DLQConfig = field(default_factory=DLQConfig)
     snowflake: SnowflakeConfig = field(default_factory=SnowflakeConfig)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -227,6 +239,17 @@ class Config:
                     os.getenv("SNOWFLAKE_BATCH_TIMEOUT_BASE", "300")
                 ),
                 batch_timeout_max=int(os.getenv("SNOWFLAKE_BATCH_TIMEOUT_MAX", "600")),
+            ),
+            runtime=RuntimeConfig(
+                jvm_max_heap=os.getenv("JVM_MAX_HEAP", "4G"),
+                duckdb_memory_limit=os.getenv("DUCKDB_MEMORY_LIMIT", "2GB"),
+                duckdb_threads=int(os.getenv("DUCKDB_THREADS", "2")),
+                backfill_max_concurrent_jobs=int(
+                    os.getenv("BACKFILL_MAX_CONCURRENT_JOBS", "2")
+                ),
+                kafka_flush_timeout_seconds=float(
+                    os.getenv("KAFKA_FLUSH_TIMEOUT_SECONDS", "10.0")
+                ),
             ),
         )
 

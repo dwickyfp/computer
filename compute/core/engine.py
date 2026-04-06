@@ -92,8 +92,8 @@ def _ensure_jvm_started() -> None:
         if isinstance(jvm_path, bytes):
             jvm_path = jvm_path.decode("utf-8")
 
-        # C3/R3: Add configurable JVM heap size to prevent unbounded memory growth
-        jvm_max_heap = os.getenv("JVM_MAX_HEAP", "16G")
+        # Keep JVM heap bounded so multiple pipelines cannot overcommit the host.
+        jvm_max_heap = get_config().runtime.jvm_max_heap
         jvm_args = [f"-Xmx{jvm_max_heap}"]
 
         logger.debug(

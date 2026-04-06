@@ -6,19 +6,25 @@ Provides CDC data sync to PostgreSQL with filter and custom SQL support.
 
 import logging
 import re
+import time
 from typing import Any, Optional
-from contextlib import contextmanager
 
 import duckdb
 import psycopg2
 import pyarrow as pa
 
+from config.config import get_config
+from core.filter_sql import (
+    build_single_clause as build_filter_clause,
+    build_where_clause_from_filter_sql,
+)
 from destinations.base import BaseDestination, CDCRecord
 from core.models import Destination, PipelineDestinationTableSync
 from core.exceptions import DestinationException
 from core.security import decrypt_value
 from core.notification import NotificationLogRepository, NotificationLogCreate
 from core.error_sanitizer import sanitize_for_db
+from core.runtime_metrics import observe, set_gauge
 
 logger = logging.getLogger(__name__)
 
@@ -179,12 +185,11 @@ class PostgreSQLDestination(BaseDestination):
 
         try:
             # Create in-memory DuckDB connection with performance tuning
-            import os
-
-            duckdb_mem = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+            runtime_cfg = get_config().runtime
+            duckdb_mem = runtime_cfg.duckdb_memory_limit
             self._duckdb_conn = duckdb.connect(":memory:")
             self._duckdb_conn.execute(f"SET memory_limit='{duckdb_mem}'")
-            self._duckdb_conn.execute("SET threads=4")
+            self._duckdb_conn.execute(f"SET threads={runtime_cfg.duckdb_threads}")
             self._duckdb_conn.execute("SET enable_progress_bar=false")
 
             # Reset staging table tracker on new connection
@@ -199,7 +204,7 @@ class PostgreSQLDestination(BaseDestination):
             alias = self.duckdb_alias
             self._duckdb_conn.execute(
                 f"""
-                ATTACH '{conn_str}' AS {alias} (TYPE postgres, READ_WRITE, SCHEMA 'public');
+                ATTACH '{conn_str}' AS {alias} (TYPE postgres, READ_WRITE, SCHEMA '{self.schema}');
             """
             )
             self._logger.debug(f"Attached destination as '{alias}'")
@@ -213,7 +218,7 @@ class PostgreSQLDestination(BaseDestination):
                     if source_conn_str and source_alias:
                         self._duckdb_conn.execute(
                             f"""
-                            ATTACH '{source_conn_str}' AS {source_alias} (TYPE postgres, READ_ONLY, SCHEMA 'public');
+                            ATTACH '{source_conn_str}' AS {source_alias} (TYPE postgres, READ_ONLY);
                         """
                         )
                         self._logger.info(
@@ -509,16 +514,8 @@ class PostgreSQLDestination(BaseDestination):
         if not filter_sql:
             return []
 
-        try:
-            import json
-
-            parsed = json.loads(filter_sql)
-            if isinstance(parsed, dict) and parsed.get("version") == 2:
-                return []
-        except (json.JSONDecodeError, TypeError):
-            raise DestinationException("filter_sql must be valid JSON v2")
-
-        raise DestinationException("filter_sql must use version 2 JSON format")
+        build_where_clause_from_filter_sql(filter_sql, error_cls=DestinationException)
+        return []
 
     def _build_where_clause_from_filter_sql(self, filter_sql: str) -> str:
         """
@@ -530,19 +527,10 @@ class PostgreSQLDestination(BaseDestination):
         Returns:
             Complete WHERE clause (without the WHERE keyword), or empty string
         """
-        if not filter_sql:
-            return ""
-
-        try:
-            import json
-
-            parsed = json.loads(filter_sql)
-            if isinstance(parsed, dict) and parsed.get("version") == 2:
-                return self._build_where_clause_v2(parsed)
-        except (json.JSONDecodeError, TypeError):
-            raise DestinationException("filter_sql must be valid JSON v2")
-
-        raise DestinationException("filter_sql must use version 2 JSON format")
+        return build_where_clause_from_filter_sql(
+            filter_sql,
+            error_cls=DestinationException,
+        )
 
     def _build_where_clause_v2(self, parsed: dict) -> str:
         """
@@ -557,52 +545,12 @@ class PostgreSQLDestination(BaseDestination):
         Returns:
             WHERE clause string (without WHERE keyword)
         """
-        groups = parsed.get("groups", [])
-        inter_logic = parsed.get("interLogic", [])
+        import json
 
-        if not groups:
-            return ""
-
-        group_clauses = []
-        for group in groups:
-            conditions = group.get("conditions", [])
-            intra_logic = group.get("intraLogic", "AND")
-
-            if not conditions:
-                continue
-
-            clauses = []
-            for cond in conditions:
-                column = cond.get("column", "")
-                operator = cond.get("operator", "")
-                value = cond.get("value", "")
-                value2 = cond.get("value2", "")
-
-                if not column:
-                    continue
-
-                clause = self._build_single_clause(column, operator, value, value2)
-                if clause:
-                    clauses.append(clause)
-
-            if not clauses:
-                continue
-
-            if len(clauses) == 1:
-                group_clauses.append(clauses[0])
-            else:
-                group_clauses.append(f"({f' {intra_logic} '.join(clauses)})")
-
-        if not group_clauses:
-            return ""
-
-        # Join groups with inter-logic operators
-        result = group_clauses[0]
-        for i in range(1, len(group_clauses)):
-            logic = inter_logic[i - 1] if i - 1 < len(inter_logic) else "AND"
-            result = f"{result} {logic} {group_clauses[i]}"
-
-        return result
+        return build_where_clause_from_filter_sql(
+            json.dumps(parsed),
+            error_cls=DestinationException,
+        )
 
     # Whitelist of allowed SQL operators for filter clauses
     _ALLOWED_OPERATORS = frozenset(
@@ -647,47 +595,13 @@ class PostgreSQLDestination(BaseDestination):
         Returns:
             SQL clause string
         """
-        op_upper = operator.upper().strip()
-
-        # Validate operator against whitelist
-        if op_upper not in self._ALLOWED_OPERATORS:
-            self._logger.warning(
-                f"Rejected disallowed operator '{operator}' in filter SQL"
-            )
-            return ""
-
-        # Validate column name is a safe identifier
-        if not self._IDENTIFIER_PATTERN.match(column):
-            self._logger.warning(
-                f"Rejected invalid column name '{column}' in filter SQL"
-            )
-            return ""
-
-        # Quote column name for safety
-        safe_column = f'"{column}"'
-
-        if op_upper in ("IS NULL", "IS NOT NULL"):
-            return f"{safe_column} {op_upper}"
-
-        if not value and op_upper not in ("IS NULL", "IS NOT NULL"):
-            return ""
-
-        if op_upper == "BETWEEN" and value and value2:
-            q_val = self._quote_filter_value(value)
-            q_val2 = self._quote_filter_value(value2)
-            return f"{safe_column} BETWEEN {q_val} AND {q_val2}"
-
-        if op_upper in ("LIKE", "ILIKE", "NOT LIKE", "NOT ILIKE"):
-            safe_value = self._escape_sql_string(value)
-            return f"{safe_column} {op_upper} '%{safe_value}%'"
-
-        if op_upper in ("IN", "NOT IN"):
-            # Values are comma-separated
-            values = [v.strip() for v in value.split(",") if v.strip()]
-            quoted = [self._quote_filter_value(v) for v in values]
-            return f"{safe_column} {op_upper} ({', '.join(quoted)})"
-
-        return f"{safe_column} {operator} {self._quote_filter_value(value)}"
+        return build_filter_clause(
+            column,
+            operator,
+            value,
+            value2,
+            error_cls=DestinationException,
+        )
 
     @staticmethod
     def _escape_sql_string(value: str) -> str:
@@ -1031,9 +945,9 @@ class PostgreSQLDestination(BaseDestination):
         self,
         table_name: str,
         custom_sql: Optional[str],
-    ) -> list[dict]:
+    ) -> str:
         """
-        Execute custom SQL on DuckDB table.
+        Materialize the transformed result set as a DuckDB temp table.
 
         User can directly reference table name in their SQL.
         If table name has dots (schema.table), it's already sanitized to underscores.
@@ -1043,37 +957,51 @@ class PostgreSQLDestination(BaseDestination):
             custom_sql: User's custom SQL query
 
         Returns:
-            Transformed records as dicts
+            Name of the DuckDB temp table containing the transformed result
         """
-        # Sanitize table name
         safe_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
+        result_table = f"_result_{safe_table_name}"
+        self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{result_table}"')
 
         if not custom_sql:
-            # Return all rows from table
             sql = f'SELECT * FROM "{safe_table_name}"'
         else:
-            # Replace original table name with sanitized version in user's SQL
-            # This allows users to write: SELECT * FROM tbl_sales
-            # Even if the actual DuckDB table is tbl_sales
             sql = custom_sql.replace(table_name, safe_table_name)
-
-            # Also handle case where table name has schema prefix
             if "." in table_name:
                 bare_name = table_name.split(".")[-1]
                 sql = sql.replace(bare_name, safe_table_name)
 
         self._logger.debug(f"Executing custom SQL: {sql}")
-        result = self._duckdb_conn.execute(sql).fetchall()
+        self._duckdb_conn.execute(f'CREATE TEMP TABLE "{result_table}" AS {sql}')
+        return result_table
 
-        # Get column names
-        result_columns = [desc[0] for desc in self._duckdb_conn.description]
+    def _get_duckdb_columns(self, table_name: str) -> list[str]:
+        rows = self._duckdb_conn.execute(
+            f"PRAGMA table_info('{table_name}')"
+        ).fetchall()
+        return [str(row[1]) for row in rows]
 
-        # Convert to dicts
-        transformed = []
-        for row in result:
-            transformed.append(dict(zip(result_columns, row)))
+    def _count_duckdb_rows(self, table_name: str) -> int:
+        return int(
+            self._duckdb_conn.execute(
+                f'SELECT COUNT(1) FROM "{table_name}"'
+            ).fetchone()[0]
+        )
 
-        return transformed
+    def _prune_all_null_rows(self, table_name: str) -> int:
+        columns = self._get_duckdb_columns(table_name)
+        if not columns:
+            return 0
+
+        total_before = self._count_duckdb_rows(table_name)
+        if total_before == 0:
+            return 0
+
+        predicate = " AND ".join([f'"{column}" IS NULL' for column in columns])
+        self._duckdb_conn.execute(
+            f'DELETE FROM "{table_name}" WHERE {predicate}'
+        )
+        return total_before - self._count_duckdb_rows(table_name)
 
     def _apply_filters(
         self,
@@ -1305,285 +1233,217 @@ class PostgreSQLDestination(BaseDestination):
             )
             return []
 
+    def _get_pg_cast_type(self, column: str, table_schema: dict[str, dict]) -> str:
+        col_info = table_schema.get(column, {"type": "text"})
+        pg_type = col_info.get("type", "text")
+        udt_name = col_info.get("udt_name")
+
+        if pg_type == "array" and udt_name:
+            if udt_name.startswith("_"):
+                inner = udt_name[1:]
+                if inner == "text":
+                    return "TEXT[]"
+                if inner in {"varchar", "bpchar"}:
+                    return "VARCHAR[]"
+                if inner == "int2":
+                    return "SMALLINT[]"
+                if inner == "int4":
+                    return "INTEGER[]"
+                if inner == "int8":
+                    return "BIGINT[]"
+                if inner == "float4":
+                    return "FLOAT[]"
+                if inner == "float8":
+                    return "DOUBLE[]"
+                if inner == "bool":
+                    return "BOOLEAN[]"
+                return f"{inner}[]"
+            return "VARCHAR[]"
+
+        if pg_type in ("json", "jsonb"):
+            return "JSON"
+        if pg_type in ("time with time zone", "timetz"):
+            return "VARCHAR"
+        if pg_type in ("geography", "geometry", "point", "polygon", "linestring"):
+            return "VARCHAR"
+        return pg_type
+
+    def _dedupe_duckdb_table(self, table_name: str, key_columns: list[str]) -> None:
+        if not key_columns:
+            return
+        pk_row_num_expr = ", ".join([f'"{k}"' for k in key_columns])
+        dedup_sql = f"""
+            DELETE FROM "{table_name}"
+            WHERE rowid NOT IN (
+                SELECT MAX(rowid)
+                FROM "{table_name}"
+                GROUP BY {pk_row_num_expr}
+            )
+        """
+        try:
+            self._duckdb_conn.execute(dedup_sql)
+        except Exception as exc:
+            self._logger.debug(
+                "Staging dedup skipped for %s (rowid unavailable): %s",
+                table_name,
+                exc,
+            )
+
+    def _delete_matching_rows(
+        self,
+        source_table: str,
+        target_table: str,
+        key_columns: list[str],
+        table_schema: dict[str, dict],
+    ) -> None:
+        if not key_columns:
+            return
+
+        full_table = f"{self.duckdb_alias}.{self.schema}.{target_table}"
+        if len(key_columns) == 1:
+            key_column = key_columns[0]
+            cast_type = self._get_pg_cast_type(key_column, table_schema)
+            delete_sql = f"""
+                DELETE FROM {full_table}
+                WHERE "{key_column}" IN (
+                    SELECT "{key_column}"::{cast_type}
+                    FROM "{source_table}"
+                )
+            """
+        else:
+            pk_list = ", ".join([f'"{column}"' for column in key_columns])
+            select_pks = ", ".join(
+                [
+                    f'"{column}"::{self._get_pg_cast_type(column, table_schema)}'
+                    for column in key_columns
+                ]
+            )
+            delete_sql = f"""
+                DELETE FROM {full_table}
+                WHERE ({pk_list}) IN (
+                    SELECT {select_pks}
+                    FROM "{source_table}"
+                )
+            """
+
+        self._duckdb_conn.execute(delete_sql)
+
     def _merge_into_postgres(
         self,
-        records: list[dict],
+        source_table: str,
         target_table: str,
         key_columns: list[str],
     ) -> int:
         """
-        Perform MERGE INTO operation on PostgreSQL via DuckDB.
-
-        Args:
-            records: Records to merge
-            target_table: Target table name
-            key_columns: Primary key columns for merge condition
-
-        Returns:
-            Number of affected rows
+        Apply a transformed DuckDB temp table into PostgreSQL atomically.
         """
+        row_count = self._count_duckdb_rows(source_table)
+        if row_count == 0:
+            return 0
+
+        table_schema = self._get_table_schema(target_table)
+        columns = self._get_duckdb_columns(source_table)
+        insert_cols = ", ".join([f'"{column}"' for column in columns])
+        select_list = ", ".join(
+            [
+                f'"{column}"::{self._get_pg_cast_type(column, table_schema)}'
+                for column in columns
+            ]
+        )
+        full_table = f"{self.duckdb_alias}.{self.schema}.{target_table}"
+        temp_source = "_merge_source"
+
+        self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{temp_source}"')
+        self._duckdb_conn.execute(
+            f'CREATE TEMP TABLE "{temp_source}" AS SELECT * FROM "{source_table}"'
+        )
+        self._dedupe_duckdb_table(temp_source, key_columns)
+        row_count = self._count_duckdb_rows(temp_source)
+
+        try:
+            self._duckdb_conn.execute("BEGIN TRANSACTION")
+            self._delete_matching_rows(temp_source, target_table, key_columns, table_schema)
+            self._duckdb_conn.execute(
+                f"""
+                INSERT INTO {full_table} ({insert_cols})
+                SELECT {select_list}
+                FROM "{temp_source}"
+                """
+            )
+            self._duckdb_conn.execute("COMMIT")
+            return row_count
+        except Exception as exc:
+            self._duckdb_conn.execute("ROLLBACK")
+            self._logger.error("PostgreSQL sync failed: %s", exc)
+            raise DestinationException(f"PostgreSQL sync failed: {exc}") from exc
+        finally:
+            self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{temp_source}"')
+
+    def _delete_records_from_postgres(
+        self,
+        records: list[CDCRecord],
+        source_table: str,
+        target_table: str,
+        key_columns: list[str],
+    ) -> int:
         if not records:
             return 0
 
-        self._logger.info(
-            f"Starting MERGE INTO for {len(records)} records to table '{target_table}'"
-        )
-
+        delete_table = f"_delete_{re.sub(r'[^a-zA-Z0-9_]', '_', source_table)}"
+        self._insert_batch_to_duckdb(records, delete_table)
+        table_schema = self._get_table_schema(target_table)
+        self._dedupe_duckdb_table(delete_table, key_columns)
         try:
-            # Get target table schema for type conversion
-            table_schema = self._get_table_schema(target_table)
-            self._logger.debug(f"Target schema for {target_table}: {table_schema}")
+            self._duckdb_conn.execute("BEGIN TRANSACTION")
+            self._delete_matching_rows(delete_table, target_table, key_columns, table_schema)
+            self._duckdb_conn.execute("COMMIT")
+            return self._count_duckdb_rows(delete_table)
+        except Exception as exc:
+            self._duckdb_conn.execute("ROLLBACK")
+            raise DestinationException(f"PostgreSQL delete failed: {exc}") from exc
+        finally:
+            self._duckdb_conn.execute(f'DROP TABLE IF EXISTS "{delete_table}"')
 
-            # Create temporary source table
-            temp_source = "_merge_source"
-            columns = list(records[0].keys())
-
-            self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {temp_source}")
-
-            # Convert first record values using schema mapping
-            def convert_record(record, log_first=False):
-                converted = []
-                for c in columns:
-                    raw_value = record.get(c)
-
-                    # Get column info from schema (default to text if not found)
-                    col_info = table_schema.get(c, {"type": "text"})
-                    pg_type = col_info.get("type", "text")
-
-                    if log_first:
-                        self._logger.info(
-                            f"  Column '{c}': raw={repr(raw_value)} (type={type(raw_value).__name__}) -> pg_type='{pg_type}' scale={col_info.get('scale')}"
-                        )
-
-                    # Pass full column info to converter
-                    converted_value = self._convert_debezium_value(
-                        raw_value, c, col_info
-                    )
-
-                    # Special handling for TIME WITH TIME ZONE: normalize 'Z' to '+00:00'
-                    # PostgreSQL doesn't accept 'Z' suffix for timetz, only explicit offsets
-                    if pg_type in ("time with time zone", "timetz") and isinstance(
-                        converted_value, str
-                    ):
-                        if converted_value.endswith("Z"):
-                            converted_value = converted_value[:-1] + "+00:00"
-
-                    converted.append(converted_value)
-                return converted
-
-            # Map PostgreSQL types to DuckDB types for explicit table creation
-            def pg_to_duckdb_type(pg_type):
-                if pg_type in ("date",):
-                    return "DATE"
-                if pg_type in (
-                    "timestamp",
-                    "timestamp without time zone",
-                    "timestamp with time zone",
-                ):
-                    return "TIMESTAMP"
-                if pg_type in ("time", "time without time zone"):
-                    return "TIME"
-                if pg_type in ("time with time zone", "timetz"):
-                    return "VARCHAR"  # Store as string to avoid DuckDB cast errors
-                if pg_type in ("integer", "int", "serial"):
-                    return "INTEGER"
-                if pg_type in ("bigint", "bigserial"):
-                    return "BIGINT"
-                if pg_type in ("smallint",):
-                    return "SMALLINT"
-                if pg_type in ("boolean", "bool"):
-                    return "BOOLEAN"
-                if pg_type in ("real", "float4"):
-                    return "FLOAT"
-                if pg_type in ("double precision", "float8", "numeric", "decimal"):
-                    return "DOUBLE"
-                # Store complex types as VARCHAR - PostgreSQL will handle implicit conversion
-                if pg_type in ("json", "jsonb"):
-                    return "json"  # DuckDB has JSON type
-                if pg_type == "text[]":
-                    return "VARCHAR[]"  # Array of text
-                if pg_type == "integer[]":
-                    return "INTEGER[]"  # Array of integers
-                if "[]" in pg_type:
-                    return "VARCHAR[]"
-                if pg_type in ("geometry", "geography"):
-                    return "VARCHAR"  # Store as hex WKB
-                return "VARCHAR"  # Default fallback
-
-            # Create explicit column definitions
-            col_defs = []
-            for c in columns:
-                col_info = table_schema.get(c, {"type": "text"})
-                pg_type = col_info.get("type", "text")
-                duck_type = pg_to_duckdb_type(pg_type)
-                col_defs.append(f'"{c}" {duck_type}')
-
-            col_def_str = ", ".join(col_defs)
-
-            # Use persistent staging table: create once, truncate on reuse
-            # Key includes target_table to avoid schema conflicts across tables
-            staging_key = f"{temp_source}_{target_table}"
-            if staging_key in self._staging_tables:
-                try:
-                    self._duckdb_conn.execute(f"DELETE FROM {temp_source}")
-                except Exception:
-                    # Schema might have changed, recreate
-                    self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {temp_source}")
-                    self._duckdb_conn.execute(
-                        f"CREATE TABLE {temp_source} ({col_def_str})"
-                    )
-            else:
-                self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {temp_source}")
-                self._duckdb_conn.execute(f"CREATE TABLE {temp_source} ({col_def_str})")
-                self._staging_tables.add(staging_key)
-
-            # Insert values using executemany for bulk performance
-            placeholders = ", ".join(["?" for _ in columns])
-
-            # Convert all records first, then bulk insert
-            all_values = [
-                convert_record(record, log_first=(i == 0))
-                for i, record in enumerate(records)
+    def _resolve_key_columns(
+        self,
+        records: list[CDCRecord],
+        table_sync: PipelineDestinationTableSync,
+        target_table: str,
+        output_columns: set[str],
+    ) -> list[str]:
+        if table_sync.primary_key_column_target:
+            key_columns = [
+                k.strip()
+                for k in table_sync.primary_key_column_target.split(";")
+                if k.strip()
             ]
-            self._duckdb_conn.executemany(
-                f"INSERT INTO {temp_source} VALUES ({placeholders})", all_values
+            self._logger.info(
+                "Using custom primary key columns for '%s': %s",
+                target_table,
+                key_columns,
             )
+            return key_columns
 
-            # Build DELETE + INSERT pattern instead of MERGE INTO
-            # DuckDB's postgres_scanner strips type casts when translating MERGE to UPDATE,
-            # causing type mismatch errors. DELETE+INSERT with explicit casts is more reliable.
-
-            full_table = f"{self.duckdb_alias}.{self.schema}.{target_table}"
-
-            # Helper to get valid PG cast type compatible with DuckDB parser
-            def get_pg_cast_type(c):
-                col_info = table_schema.get(c, {"type": "text"})
-                pg_type = col_info.get("type", "text")
-                udt_name = col_info.get("udt_name")
-
-                # Handle arrays: Map internal names like _text to TEXT[] for DuckDB
-                if pg_type == "array" and udt_name:
-                    if udt_name.startswith("_"):
-                        inner = udt_name[1:]
-                        if inner == "text":
-                            return "TEXT[]"
-                        if inner == "varchar" or inner == "bpchar":
-                            return "VARCHAR[]"
-                        if inner == "int2":
-                            return "SMALLINT[]"
-                        if inner == "int4":
-                            return "INTEGER[]"
-                        if inner == "int8":
-                            return "BIGINT[]"
-                        if inner == "float4":
-                            return "FLOAT[]"
-                        if inner == "float8":
-                            return "DOUBLE[]"
-                        if inner == "bool":
-                            return "BOOLEAN[]"
-                        return f"{inner}[]"
-                    return "VARCHAR[]"
-
-                # Handle JSONB/JSON
-                if pg_type in ("json", "jsonb"):
-                    return "JSON"
-
-                # Handle TIME WITH TIME ZONE (use VARCHAR to avoid cast errors)
-                if pg_type in ("time with time zone", "timetz"):
-                    return "VARCHAR"
-
-                # Handle Geospatial types (map to VARCHAR for DuckDB compatibility)
-                if pg_type in (
-                    "geography",
-                    "geometry",
-                    "point",
-                    "polygon",
-                    "linestring",
-                ):
-                    return "VARCHAR"
-
-                # Use base type for others
-                return pg_type
-
-            # 1a. Deduplicate staging table by PK — keep last row per key.
-            # This prevents intra-batch duplicate key violations when the DLQ
-            # replays multiple CDC events (e.g. op=c) for the same primary key.
+        if table_sync.custom_sql or table_sync.filter_sql:
+            key_columns = self._get_target_primary_key(target_table)
             if key_columns:
-                pk_row_num_expr = ", ".join([f'"{k}"' for k in key_columns])
-                dedup_sql = f"""
-                    DELETE FROM {temp_source}
-                    WHERE rowid NOT IN (
-                        SELECT MAX(rowid)
-                        FROM {temp_source}
-                        GROUP BY {pk_row_num_expr}
-                    )
-                """
-                try:
-                    self._duckdb_conn.execute(dedup_sql)
-                    self._logger.debug(
-                        f"Deduped staging table '{temp_source}' by keys {key_columns}"
-                    )
-                except Exception as e_dedup:
-                    # rowid may not exist on all DuckDB versions; log and continue
-                    self._logger.debug(
-                        f"Staging dedup skipped (rowid unavailable): {e_dedup}"
-                    )
+                return key_columns
 
-            # 1b. DELETE existing rows that match keys
-            if key_columns:
-                # DuckDB doesn't support DELETE ... FROM ... USING directly for Postgres attached tables
-                # We use a subquery with IN or a JOIN-like condition if possible,
-                # but the most reliable way in DuckDB for this is a combined DELETE via the scanner
+        source_pk = self._get_primary_key_columns(records[0]) if records else []
+        if source_pk and all(column in output_columns for column in source_pk):
+            return source_pk
 
-                # However, for simplicity and reliability with common PKs (like a single ID):
-                if len(key_columns) == 1:
-                    k = key_columns[0]
-                    # Get the right PG type for casting in the subquery
-                    cast_type = get_pg_cast_type(k)
+        key_columns = self._get_target_primary_key(target_table)
+        if key_columns:
+            self._logger.warning(
+                "Source PK %s not found in output columns for '%s'. Using target PK instead: %s",
+                source_pk,
+                target_table,
+                key_columns,
+            )
+            return key_columns
 
-                    delete_sql = f"""
-                        DELETE FROM {full_table} 
-                        WHERE "{k}" IN (SELECT "{k}"::{cast_type} FROM {temp_source})
-                    """
-                else:
-                    # Multiple PKs - use tuple comparison (supported by PG)
-                    pk_list = ", ".join([f'"{k}"' for k in key_columns])
-
-                    # Construct casted select list for DuckDB
-                    select_pks = ", ".join(
-                        [f'"{k}"::{get_pg_cast_type(k)}' for k in key_columns]
-                    )
-
-                    delete_sql = f"""
-                        DELETE FROM {full_table}
-                        WHERE ({pk_list}) IN (SELECT {select_pks} FROM {temp_source})
-                    """
-
-                self._logger.debug(f"Executing DELETE: {delete_sql}")
-                self._duckdb_conn.execute(delete_sql)
-
-            # 2. INSERT new records
-            insert_cols = ", ".join([f'"{c}"' for c in columns])
-
-            # Construct SELECT with explicit casts to original PG types
-            select_list = ", ".join([f'"{c}"::{get_pg_cast_type(c)}' for c in columns])
-
-            insert_sql = f"""
-                INSERT INTO {full_table} ({insert_cols})
-                SELECT {select_list} FROM {temp_source}
-            """
-
-            self._logger.debug(f"Executing INSERT: {insert_sql}")
-            self._duckdb_conn.execute(insert_sql)
-
-            # Cleanup
-            self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {temp_source}")
-
-            return len(records)
-
-        except Exception as e:
-            self._logger.error(f"PostgreSQL sync failed: {e}")
-            raise DestinationException(f"PostgreSQL sync failed: {e}")
+        return [list(output_columns)[0]] if output_columns else source_pk
 
     def write_batch(
         self,
@@ -1616,44 +1476,9 @@ class PostgreSQLDestination(BaseDestination):
         source_table = table_sync.table_name  # e.g., 'tbl_sales'
         target_table = table_sync.table_name_target
         safe_table_name = source_table.replace(".", "_").replace("-", "_")
+        transformed_table = None
 
         try:
-            # Step 1: Insert batch into DuckDB with original table name
-            self._insert_batch_to_duckdb(records, source_table)
-
-            # Step 2: Apply filter SQL in DuckDB (modifies table in-place)
-            if table_sync.filter_sql:
-                self._apply_filters_in_duckdb(source_table, table_sync.filter_sql)
-
-            # Step 3: Execute custom SQL or select all
-            transformed = self._execute_custom_sql_from_duckdb(
-                source_table, table_sync.custom_sql
-            )
-
-            # Validation: Filter out rows where all values are None
-            # This prevents inserting empty rows
-            valid_rows = []
-            skipped_count = 0
-            for row in transformed:
-                # Check if any value in the row is not None
-                if any(v is not None for v in row.values()):
-                    valid_rows.append(row)
-                else:
-                    skipped_count += 1
-
-            if skipped_count > 0:
-                self._logger.warning(
-                    f"Skipped {skipped_count} rows with all null values for {target_table}"
-                )
-
-            if not valid_rows:
-                self._logger.info(
-                    f"No valid rows to write to {target_table} (all rows had null values)"
-                )
-                return 0
-
-            transformed = valid_rows
-
             # Validate target table exists on destination before MERGE
             target_schema = self._get_table_schema(target_table)
             if not target_schema:
@@ -1666,99 +1491,77 @@ class PostgreSQLDestination(BaseDestination):
                     f"configured target: '{target_table}'."
                 )
 
-            # Determine primary key columns for MERGE
-            # Priority:
-            #   1. primary_key_column_target  – explicit user override
-            #   2. custom_sql present         – target table PK (SQL may reshape schema)
-            #   3. filter_sql present         – target table PK (source CDC key may not
-            #                                   be present in record.value columns)
-            #   4. base query                 – source CDC record PK, validated against
-            #                                   actual output columns before use
-            if table_sync.primary_key_column_target:
-                # User has specified custom primary key columns
-                custom_keys = [
-                    k.strip()
-                    for k in table_sync.primary_key_column_target.split(";")
-                    if k.strip()
-                ]
-                key_columns = custom_keys
-                self._logger.info(
-                    f"Using custom primary key columns for '{target_table}': {key_columns}"
+            started = time.perf_counter()
+
+            # Delete events are applied directly by key on the base replication path.
+            delete_records: list[CDCRecord] = []
+            upsert_records = records
+            if not table_sync.filter_sql and not table_sync.custom_sql:
+                delete_records = [record for record in records if record.is_delete]
+                upsert_records = [record for record in records if not record.is_delete]
+
+            output_columns: set[str] = set()
+            written = 0
+
+            if upsert_records:
+                self._insert_batch_to_duckdb(upsert_records, source_table)
+                if table_sync.filter_sql:
+                    self._apply_filters_in_duckdb(source_table, table_sync.filter_sql)
+
+                transformed_table = self._execute_custom_sql_from_duckdb(
+                    source_table, table_sync.custom_sql
                 )
-            elif table_sync.custom_sql:
-                # Custom SQL may transform data into a different schema
-                # (e.g., transaction rows → daily aggregates).
-                # Use the TARGET table's PK, not the source CDC record's PK.
-                key_columns = self._get_target_primary_key(target_table)
-                if not key_columns:
-                    # Fallback: try source record PK if target PK detection fails
-                    source_pk = self._get_primary_key_columns(records[0])
-                    # Only use source PK if it exists in the transformed output
-                    output_cols = set(transformed[0].keys())
-                    if all(k in output_cols for k in source_pk):
-                        key_columns = source_pk
-                        self._logger.warning(
-                            f"Could not detect target PK for '{target_table}', "
-                            f"falling back to source PK: {source_pk}"
-                        )
-                    else:
-                        # Last resort: use first column of transformed output
-                        key_columns = [list(output_cols)[0]]
-                        self._logger.warning(
-                            f"Could not detect target PK for '{target_table}' "
-                            f"and source PK {source_pk} not in output columns. "
-                            f"Using first output column as key: {key_columns}"
-                        )
-            elif table_sync.filter_sql:
-                # filter_sql only filters rows; it does not reshape columns.  However
-                # the source CDC record key (e.g. "sale_key_id") may be a logical key
-                # that is absent from record.value columns — causing a Binder Error when
-                # it is referenced in the MERGE DELETE subquery.
-                # Prefer the target table's actual PK; fall back gracefully.
-                key_columns = self._get_target_primary_key(target_table)
-                if not key_columns:
-                    source_pk = self._get_primary_key_columns(records[0])
-                    output_cols = set(transformed[0].keys()) if transformed else set()
-                    if all(k in output_cols for k in source_pk):
-                        key_columns = source_pk
-                        self._logger.warning(
-                            f"Could not detect target PK for '{target_table}' (filter_sql path), "
-                            f"falling back to source PK: {source_pk}"
-                        )
-                    else:
-                        key_columns = (
-                            [list(output_cols)[0]] if output_cols else source_pk
-                        )
-                        self._logger.warning(
-                            f"Could not detect target PK for '{target_table}' and source PK "
-                            f"{source_pk} not in output columns (filter_sql path). "
-                            f"Using first output column as key: {key_columns}"
-                        )
-            else:
-                # Base query: use source CDC record PK but verify it is actually present
-                # in the output columns.  The CDC key dict may name a column that is
-                # absent from record.value (different logical vs physical PK), which
-                # would cause a DuckDB Binder Error in the MERGE DELETE subquery.
-                source_pk = self._get_primary_key_columns(records[0])
-                output_cols = set(transformed[0].keys()) if transformed else set()
-                if all(k in output_cols for k in source_pk):
-                    key_columns = source_pk
-                else:
-                    # Source PK column(s) not present in output — fall back to target PK
-                    key_columns = self._get_target_primary_key(target_table)
-                    if not key_columns:
-                        key_columns = (
-                            [list(output_cols)[0]] if output_cols else source_pk
-                        )
+                skipped_count = self._prune_all_null_rows(transformed_table)
+                if skipped_count > 0:
                     self._logger.warning(
-                        f"Source PK {source_pk} not found in output columns for '{target_table}'. "
-                        f"Using target PK instead: {key_columns}"
+                        "Skipped %s rows with all null values for %s",
+                        skipped_count,
+                        target_table,
                     )
 
-            # Step 4: MERGE INTO destination
-            written = self._merge_into_postgres(transformed, target_table, key_columns)
+                output_columns = set(self._get_duckdb_columns(transformed_table))
+                key_columns = self._resolve_key_columns(
+                    upsert_records,
+                    table_sync,
+                    target_table,
+                    output_columns,
+                )
+                written += self._merge_into_postgres(
+                    transformed_table,
+                    target_table,
+                    key_columns,
+                )
+            else:
+                key_columns = self._resolve_key_columns(
+                    records,
+                    table_sync,
+                    target_table,
+                    set(records[0].value.keys()) if records else set(),
+                )
 
-            self._logger.debug(f"Wrote {written} records to {target_table}")
+            if delete_records:
+                written += self._delete_records_from_postgres(
+                    delete_records,
+                    source_table,
+                    target_table,
+                    key_columns,
+                )
+
+            observe(
+                "postgres_destination.write_duration",
+                (time.perf_counter() - started) * 1000.0,
+                unit="ms",
+                destination_id=str(self._config.id),
+                target_table=target_table,
+            )
+            set_gauge(
+                "postgres_destination.last_batch_rows",
+                written,
+                unit="rows",
+                destination_id=str(self._config.id),
+                target_table=target_table,
+            )
+            self._logger.debug("Wrote %s records to %s", written, target_table)
             return written
 
         except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
@@ -1827,13 +1630,18 @@ class PostgreSQLDestination(BaseDestination):
             raise e
 
         finally:
-            # Step 5: Cleanup DuckDB table
             try:
                 if self._duckdb_conn:
                     self._duckdb_conn.execute(f"DROP TABLE IF EXISTS {safe_table_name}")
+                    if transformed_table:
+                        self._duckdb_conn.execute(
+                            f'DROP TABLE IF EXISTS "{transformed_table}"'
+                        )
             except Exception as e:
                 self._logger.warning(
-                    f"Failed to cleanup DuckDB table {safe_table_name}: {e}"
+                    "Failed to cleanup DuckDB tables for %s: %s",
+                    safe_table_name,
+                    e,
                 )
 
     def create_table_if_not_exists(
