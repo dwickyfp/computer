@@ -1,27 +1,17 @@
-import { Header } from '@/components/layout/header'
-import { Main } from '@/components/layout/main'
-import { Search } from '@/components/search'
-import { ThemeSwitch } from '@/components/theme-switch'
-import { WALMonitorList } from './components/wal-monitor-list'
-import { SystemLoadCard } from './components/system-load-card'
-import { SystemHealthWidget } from './components/system-health-widget'
-import { JobStatusCard } from './components/job-status-card'
-import { WorkerStatusCard } from './components/worker-status-card'
-import { SourceHealthCard } from './components/source-health-card'
-import { TopTablesChart } from './components/top-tables-chart'
-import { ActivityFeed } from './components/activity-feed'
-import { BackfillStatsCard } from './components/backfill-stats-card'
 import { useQuery } from '@tanstack/react-query'
-import { dashboardRepo } from '@/repo/dashboard'
 import {
   Activity,
+  ArrowUpRight,
+  Calendar,
   CreditCard,
+  Loader2,
   Minus,
+  RefreshCw,
   Server,
   TrendingDown,
   TrendingUp,
-  RefreshCw,
 } from 'lucide-react'
+import { format } from 'date-fns'
 import {
   Area,
   AreaChart,
@@ -32,11 +22,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { cn } from '@/lib/utils'
-import { DashboardGrid } from './components/dashboard-grid'
-import { DashboardPanel } from './components/dashboard-panel'
-import { useState, useEffect } from 'react'
-import { format } from 'date-fns'
+import { Header } from '@/components/layout/header'
+import { Main } from '@/components/layout/main'
+import { Search } from '@/components/search'
+import { ThemeSwitch } from '@/components/theme-switch'
 import {
   Select,
   SelectContent,
@@ -44,275 +33,513 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { RefreshIntervalProvider, useRefreshInterval } from './context/refresh-interval-context'
+import { dashboardRepo } from '@/repo/dashboard'
+import { cn } from '@/lib/utils'
+import { ActivityFeed } from './components/activity-feed'
+import { BackfillStatsCard } from './components/backfill-stats-card'
+import {
+  dashboardTooltipStyle,
+  getDashboardSeriesColor,
+} from './components/chart-theme'
+import { DashboardGrid } from './components/dashboard-grid'
+import { DashboardPanel } from './components/dashboard-panel'
+import { JobStatusCard } from './components/job-status-card'
+import { SourceHealthCard } from './components/source-health-card'
+import { SystemHealthWidget } from './components/system-health-widget'
+import { SystemLoadCard } from './components/system-load-card'
+import { TopTablesChart } from './components/top-tables-chart'
+import { WALMonitorList } from './components/wal-monitor-list'
+import { WorkerStatusCard } from './components/worker-status-card'
+import {
+  RefreshIntervalProvider,
+  useRefreshInterval,
+} from './context/refresh-interval-context'
 
 const REFRESH_INTERVALS = [
   { label: 'Auto', value: 5000 },
-  { label: '10s', value: 10000 },
-  { label: '15s', value: 15000 },
-  { label: '30s', value: 30000 },
-  { label: '60s', value: 60000 },
+  { label: '10 sec', value: 10000 },
+  { label: '15 sec', value: 15000 },
+  { label: '30 sec', value: 30000 },
+  { label: '60 sec', value: 60000 },
 ] as const
 
+const compactNumberFormatter = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+})
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: value < 1 ? 4 : 2,
+    maximumFractionDigits: value < 1 ? 4 : 2,
+  }).format(value)
+}
+
 function DashboardContent() {
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
-  const [, setTick] = useState(0)
   const { refreshInterval, setRefreshInterval } = useRefreshInterval()
 
-  const { data: summary, dataUpdatedAt: summaryUpdatedAt } = useQuery({
+  const {
+    data: summary,
+    dataUpdatedAt: summaryUpdatedAt,
+    isFetching: isSummaryFetching,
+  } = useQuery({
     queryKey: ['dashboard', 'summary'],
     queryFn: dashboardRepo.getSummary,
     refetchInterval: refreshInterval,
   })
 
-  // Keep existing queries for consistency
-  const { data: flowChart } = useQuery({
+  const { data: flowChart, isLoading: isFlowChartLoading } = useQuery({
     queryKey: ['dashboard', 'flow-chart'],
     queryFn: () => dashboardRepo.getFlowChart(14),
     refetchInterval: refreshInterval,
   })
 
-  // Update last refresh timestamp when data changes
-  useEffect(() => {
-    if (summaryUpdatedAt) {
-      setLastRefresh(new Date(summaryUpdatedAt))
-    }
-  }, [summaryUpdatedAt])
-
-  // Update the time display every second
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTick((prev) => prev + 1)
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [])
-
-  // Calculate trends
+  const flowToday = summary?.data_flow?.today ?? 0
+  const flowYesterday = summary?.data_flow?.yesterday ?? 0
   const flowTrend =
-    summary?.data_flow && summary.data_flow.yesterday > 0
-      ? ((summary.data_flow.today - summary.data_flow.yesterday) /
-        summary.data_flow.yesterday) *
-      100
-      : 0
+    flowYesterday > 0 ? ((flowToday - flowYesterday) / flowYesterday) * 100 : 0
+
+  const formattedDate = format(new Date(), 'EEEE, MMMM d, yyyy')
+  const lastUpdatedText = summaryUpdatedAt
+    ? format(new Date(summaryUpdatedAt), 'HH:mm:ss')
+    : 'Waiting for first sync'
 
   return (
     <>
       <Header>
         <Search />
-        <div className='ms-auto flex items-center space-x-4'>
+        <div className='ms-auto flex items-center gap-3'>
           <ThemeSwitch />
-          
         </div>
       </Header>
 
-      <Main className="bg-background min-h-screen p-4 space-y-4">
-        <div className='flex items-center justify-between'>
-          <h1 className='text-3xl font-bold tracking-tight'>
-            Dashboard
-          </h1>
-          <div className="flex flex-col items-end gap-1">
-            <div className="text-sm text-muted-foreground">
-              {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1.5">
-                <RefreshCw className="h-3 w-3 animate-spin-slow" />
-                <span>Last updated at {format(lastRefresh, 'HH:mm:ss')}</span>
+      <Main className='dashboard-shell min-h-screen px-4 py-4 sm:px-6 sm:py-6'>
+        <div className='relative z-10 mx-auto flex w-full max-w-[1600px] flex-col gap-6'>
+          <section className='flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between'>
+            <div className='space-y-3'>
+              <div className='dashboard-chip w-fit rounded-full px-3.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground'>
+                Operations cockpit
               </div>
-              <Select
-                value={refreshInterval.toString()}
-                onValueChange={(value) => setRefreshInterval(Number(value))}
-              >
-                <SelectTrigger className="h-7 w-[110px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {REFRESH_INTERVALS.map((interval) => (
-                    <SelectItem
-                      key={interval.value}
-                      value={interval.value.toString()}
-                      className="text-xs"
-                    >
-                      {interval.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </div>
-
-        <DashboardGrid>
-          {/* Row 1: High Level Stats - 4 cols each (6 cols in 24-grid) */}
-          <div className="col-span-24 md:col-span-12 lg:col-span-6 h-32">
-            <SourceHealthCard />
-          </div>
-
-          <DashboardPanel
-            title="Pipeline Health"
-            headerAction={<Server className='h-4 w-4 text-muted-foreground' />}
-            className="col-span-24 md:col-span-12 lg:col-span-6 h-32"
-          >
-            <div className='flex items-end gap-2'>
-              <div className='text-3xl font-bold font-mono leading-none'>
-                {summary?.pipelines?.total || 0}
-              </div>
-              <div className='text-sm text-muted-foreground mb-1'>Total Pipelines</div>
-            </div>
-            <div className='mt-4 flex text-xs text-muted-foreground'>
-              <div className='flex items-center mr-4'>
-                <div className='w-2 h-2 rounded-full bg-emerald-500 mr-2' />
-                <span className='font-medium text-foreground'>{summary?.pipelines?.START || 0}</span>
-                <span className='ml-1'>Active</span>
-              </div>
-              <div className='flex items-center'>
-                <div className='w-2 h-2 rounded-full bg-amber-500 mr-2' />
-                <span className='font-medium text-foreground'>{summary?.pipelines?.PAUSE || 0}</span>
-                <span className='ml-1'>Paused</span>
+              <div className='space-y-3'>
+                <h1 className='font-manrope text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl'>
+                  Dashboard
+                </h1>
+                <p className='max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base'>
+                  Monitor source health, pipeline throughput, spend, and
+                  infrastructure signals without leaving the page.
+                </p>
               </div>
             </div>
-          </DashboardPanel>
 
-          <DashboardPanel
-            title="Data Velocity"
-            headerAction={<Activity className='h-4 w-4 text-muted-foreground' />}
-            className="col-span-24 md:col-span-12 lg:col-span-6 h-32"
-          >
-            <div className='flex items-end gap-2'>
-              <div className='text-3xl font-bold font-mono leading-none'>
-                {summary?.data_flow?.today.toLocaleString() || 0}
+            <div className='grid gap-3 sm:grid-cols-3 xl:min-w-[620px]'>
+              <div className='dashboard-toolbar-chip rounded-[22px] px-4 py-3.5'>
+                <div className='flex items-center gap-2 text-xs text-muted-foreground'>
+                  <Calendar className='h-3.5 w-3.5' />
+                  Today
+                </div>
+                <p className='mt-2 text-sm font-medium text-foreground'>
+                  {formattedDate}
+                </p>
               </div>
-              <div className='text-xs text-muted-foreground mb-1'>Rows today</div>
-            </div>
-            <div className='mt-4 flex items-center text-xs'>
-              {flowTrend > 0 ? (
-                <TrendingUp className='mr-1 h-3 w-3 text-emerald-500' />
-              ) : flowTrend < 0 ? (
-                <TrendingDown className='mr-1 h-3 w-3 text-rose-500' />
-              ) : (
-                <Minus className='mr-1 h-3 w-3 text-muted-foreground' />
-              )}
-              <span
-                className={cn(
-                  flowTrend > 0 ? 'text-emerald-500' : flowTrend < 0 ? 'text-rose-500' : 'text-muted-foreground',
-                  'font-medium ml-1'
-                )}
-              >
-                {Math.abs(flowTrend).toFixed(1)}%
-              </span>
-              <span className='ml-1 text-muted-foreground'>vs yesterday</span>
-            </div>
-          </DashboardPanel>
 
-          <DashboardPanel
-            title="Est. Cost"
-            description="Run rate this month"
-            headerAction={<CreditCard className='h-4 w-4 text-muted-foreground' />}
-            className="col-span-24 md:col-span-12 lg:col-span-6 h-32"
-          >
-            <div className='text-3xl font-bold font-mono'>
-              ${summary?.credits?.month_total.toFixed(8) || '0.00000000'}
-            </div>
-          </DashboardPanel>
+              <div className='dashboard-toolbar-chip rounded-[22px] px-4 py-3.5'>
+                <div className='flex items-center gap-2 text-xs text-muted-foreground'>
+                  {isSummaryFetching ? (
+                    <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                  ) : (
+                    <RefreshCw className='h-3.5 w-3.5' />
+                  )}
+                  {isSummaryFetching ? 'Refreshing' : 'Last updated'}
+                </div>
+                <p className='mt-2 text-sm font-medium text-foreground'>
+                  {lastUpdatedText}
+                </p>
+              </div>
 
-          {/* Row 2: Main Top Charts */}
-          <DashboardPanel
-            title="Data Flow Volume"
-            description="Transaction volume history (14 Days)"
-            className='col-span-24 lg:col-span-16 h-[400px]'
-          >
-            <div className='h-full w-full min-h-[300px]'>
-              <ResponsiveContainer width='100%' height="100%">
-                <AreaChart
-                  data={flowChart?.history || []}
-                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+              <div className='dashboard-toolbar-chip rounded-[22px] px-4 py-3.5'>
+                <div className='text-xs text-muted-foreground'>Auto refresh</div>
+                <Select
+                  value={refreshInterval.toString()}
+                  onValueChange={(value) => setRefreshInterval(Number(value))}
                 >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                  <defs>
-                    <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8} />
-                      <stop offset="95%" stopColor="#8884d8" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey='date'
-                    stroke='#888888'
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => {
-                      const date = new Date(value)
-                      return `${date.getMonth() + 1}/${date.getDate()}`
-                    }}
-                  />
-                  <YAxis
-                    stroke='#888888'
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `${value}`}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'rgba(23, 23, 23, 0.95)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '4px',
-                      color: '#fff',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                      fontSize: '12px'
-                    }}
-                  />
-                  <Legend iconType='circle' />
-                  {flowChart?.pipelines?.map((pipeline, index) => {
-                    const colors = ["#8884d8", "#82ca9d", "#ffc658", "#ff7300", "#0088fe", "#00C49F"];
-                    const color = colors[index % colors.length];
-                    return (
-                      <Area
-                        key={pipeline}
-                        type='monotone'
-                        dataKey={pipeline}
-                        stackId="1"
-                        stroke={color}
-                        fill={color}
-                        fillOpacity={0.6}
-                      />
-                    )
-                  })}
-                </AreaChart>
-              </ResponsiveContainer>
+                  <SelectTrigger className='mt-2 h-11 w-full rounded-xl border border-white/8 bg-white/[0.035] px-3 text-left text-sm font-medium text-foreground shadow-none focus:ring-0'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REFRESH_INTERVALS.map((interval) => (
+                      <SelectItem
+                        key={interval.value}
+                        value={interval.value.toString()}
+                      >
+                        {interval.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          </DashboardPanel>
+          </section>
 
-          <div className="col-span-24 lg:col-span-8">
-            <TopTablesChart />
-          </div>
+          <DashboardGrid>
+            <SourceHealthCard className='xl:col-span-3' href='/sources' />
 
-          {/* Row 3: Secondary Charts & Feed */}
-          <div className="col-span-24 lg:col-span-16">
-            <ActivityFeed />
-          </div>
-          <div className="col-span-24 lg:col-span-8">
-            <BackfillStatsCard data={summary?.backfills} />
-          </div>
+            <DashboardPanel
+              title='Pipeline health'
+              description='Running and paused pipelines.'
+              headerSlot={
+                <div className='dashboard-chip rounded-full p-2.5'>
+                  <Server className='h-4 w-4 text-muted-foreground' />
+                </div>
+              }
+              className='min-h-[220px] xl:col-span-3'
+              contentClassName='justify-between gap-4'
+              href='/pipelines'
+              interactive
+              variant='dense'
+            >
+              <div className='space-y-2'>
+                <div className='flex items-end justify-between gap-3'>
+                  <div>
+                    <p className='text-sm text-muted-foreground'>Total pipelines</p>
+                    <p className='mt-2 font-mono text-5xl font-semibold tracking-tight'>
+                      {(summary?.pipelines?.total ?? 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <ArrowUpRight className='h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5' />
+                </div>
+                <p className='text-sm leading-6 text-muted-foreground'>
+                  Open the pipeline workspace to inspect jobs and state changes.
+                </p>
+              </div>
 
-          {/* Row 4: System Monitor Status (Bottom Row) */}
-          <div className="col-span-24 md:col-span-12 lg:col-span-6 h-[280px]">
-            <SystemLoadCard />
-          </div>
-          <div className="col-span-24 md:col-span-12 lg:col-span-6 h-[280px]">
-            <SystemHealthWidget />
-          </div>
-          <div className="col-span-24 md:col-span-12 lg:col-span-6 h-[280px]">
-            <WorkerStatusCard />
-          </div>
-          <div className="col-span-24 md:col-span-12 lg:col-span-6 h-[280px]">
-            <JobStatusCard />
-          </div>
-          <div className="col-span-24 md:col-span-12 lg:col-span-6 h-[280px]">
-            <WALMonitorList />
-          </div>
+              <div className='dashboard-inset dashboard-inset-strong grid grid-cols-2 gap-3 rounded-[22px] p-4'>
+                <div>
+                  <p className='text-xs text-muted-foreground'>Active</p>
+                  <p className='mt-2 font-mono text-2xl font-semibold text-emerald-300'>
+                    {(summary?.pipelines?.START ?? 0).toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <p className='text-xs text-muted-foreground'>Paused</p>
+                  <p className='mt-2 font-mono text-2xl font-semibold text-amber-300'>
+                    {(summary?.pipelines?.PAUSE ?? 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            </DashboardPanel>
 
-        </DashboardGrid>
+            <DashboardPanel
+              title='Data velocity'
+              description='Fresh ingestion volume versus yesterday.'
+              headerSlot={
+                <div className='dashboard-chip rounded-full p-2.5'>
+                  <Activity className='h-4 w-4 text-muted-foreground' />
+                </div>
+              }
+              className='min-h-[220px] xl:col-span-3'
+              contentClassName='justify-between gap-4'
+              href='/pipelines'
+              interactive
+              variant='dense'
+            >
+              <div className='space-y-3'>
+                <div className='flex items-end justify-between gap-3'>
+                  <div>
+                    <p className='text-sm text-muted-foreground'>Rows today</p>
+                    <p className='mt-2 font-mono text-5xl font-semibold tracking-tight'>
+                      {flowToday.toLocaleString()}
+                    </p>
+                  </div>
+                  <ArrowUpRight className='h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5' />
+                </div>
+                <p className='text-sm leading-6 text-muted-foreground'>
+                  Track how much fresh data the platform is processing now.
+                </p>
+              </div>
+
+              <div className='dashboard-inset dashboard-inset-strong flex items-center justify-between rounded-[22px] px-4 py-3'>
+                <div className='flex items-center gap-2'>
+                  {flowTrend > 0 ? (
+                    <TrendingUp className='h-4 w-4 text-emerald-300' />
+                  ) : flowTrend < 0 ? (
+                    <TrendingDown className='h-4 w-4 text-rose-300' />
+                  ) : (
+                    <Minus className='h-4 w-4 text-muted-foreground' />
+                  )}
+                  <span
+                    className={cn(
+                      'font-mono text-lg font-semibold',
+                      flowTrend > 0
+                        ? 'text-emerald-300'
+                        : flowTrend < 0
+                          ? 'text-rose-300'
+                          : 'text-muted-foreground'
+                    )}
+                  >
+                    {Math.abs(flowTrend).toFixed(1)}%
+                  </span>
+                </div>
+                <span className='text-xs text-muted-foreground'>
+                  Yesterday {compactNumberFormatter.format(flowYesterday)}
+                </span>
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel
+              title='Estimated cost'
+              description='Current month run rate.'
+              headerSlot={
+                <div className='dashboard-chip rounded-full p-2.5'>
+                  <CreditCard className='h-4 w-4 text-muted-foreground' />
+                </div>
+              }
+              className='min-h-[220px] xl:col-span-3'
+              contentClassName='justify-between gap-4'
+              href='/destinations'
+              interactive
+              variant='dense'
+            >
+              <div className='space-y-3'>
+                <div className='flex items-end justify-between gap-3'>
+                  <div>
+                    <p className='text-sm text-muted-foreground'>
+                      Projected run rate
+                    </p>
+                    <p className='mt-2 font-mono text-4xl font-semibold tracking-tight sm:text-5xl'>
+                      {formatCurrency(summary?.credits?.month_total ?? 0)}
+                    </p>
+                  </div>
+                  <ArrowUpRight className='h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5' />
+                </div>
+                <p className='text-sm leading-6 text-muted-foreground'>
+                  Review destinations and adjust workload before spend rises.
+                </p>
+              </div>
+
+              <div className='dashboard-inset dashboard-inset-strong rounded-[22px] px-4 py-3'>
+                <p className='text-xs text-muted-foreground'>
+                  Based on credits consumed this month so far.
+                </p>
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel
+              title='Data flow volume'
+              description='Transaction history over the last 14 days.'
+              headerSlot={
+                <div className='dashboard-chip rounded-full px-3 py-2 text-xs text-muted-foreground'>
+                  14 days
+                </div>
+              }
+              className='min-h-[460px] xl:col-span-8'
+              contentClassName='gap-4'
+              variant='dense'
+            >
+              <div className='flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between'>
+                <div>
+                  <p className='text-sm text-muted-foreground'>
+                    Rows processed today
+                  </p>
+                  <p className='mt-2 font-mono text-4xl font-semibold tracking-tight sm:text-5xl'>
+                    {(flowChart?.total_today ?? flowToday).toLocaleString()}
+                  </p>
+                </div>
+
+                <div className='dashboard-inset dashboard-inset-strong flex items-center justify-between gap-3 rounded-[20px] px-4 py-3 xl:min-w-[260px]'>
+                  <div>
+                    <p className='text-xs text-muted-foreground'>
+                      Compared with yesterday
+                    </p>
+                    <p className='mt-1 text-sm text-foreground'>
+                      {(flowChart?.total_yesterday ?? flowYesterday).toLocaleString()} rows
+                    </p>
+                  </div>
+                  <div
+                    className={cn(
+                      'font-mono text-lg font-semibold',
+                      flowTrend > 0
+                        ? 'text-emerald-300'
+                        : flowTrend < 0
+                          ? 'text-rose-300'
+                          : 'text-muted-foreground'
+                    )}
+                  >
+                    {Math.abs(flowTrend).toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+
+              <div className='dashboard-inset dashboard-inset-strong rounded-[24px] p-4 sm:p-5'>
+                {!isFlowChartLoading &&
+                (!flowChart?.history || flowChart.history.length === 0) ? (
+                  <div className='flex min-h-[320px] flex-col items-center justify-center gap-2 text-center'>
+                    <Activity className='h-8 w-8 text-muted-foreground/60' />
+                    <div className='space-y-1'>
+                      <p className='text-sm font-medium text-foreground'>
+                        Flow history is still empty
+                      </p>
+                      <p className='text-sm text-muted-foreground'>
+                        Once pipelines begin processing records, the 14-day trend
+                        will appear here.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className='h-[320px] w-full sm:h-[340px]'>
+                    <ResponsiveContainer width='100%' height='100%'>
+                      <AreaChart
+                        data={flowChart?.history || []}
+                        margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
+                      >
+                        <CartesianGrid
+                          stroke='var(--dashboard-grid)'
+                          vertical={false}
+                          strokeDasharray='3 3'
+                        />
+
+                        <defs>
+                          {flowChart?.pipelines?.map((pipeline, index) => {
+                            const color = getDashboardSeriesColor(index)
+
+                            return (
+                              <linearGradient
+                                key={pipeline}
+                                id={`dashboard-flow-series-${index}`}
+                                x1='0'
+                                y1='0'
+                                x2='0'
+                                y2='1'
+                              >
+                                <stop
+                                  offset='5%'
+                                  stopColor={color}
+                                  stopOpacity={0.48}
+                                />
+                                <stop
+                                  offset='95%'
+                                  stopColor={color}
+                                  stopOpacity={0}
+                                />
+                              </linearGradient>
+                            )
+                          })}
+                        </defs>
+
+                        <XAxis
+                          dataKey='date'
+                          stroke='var(--muted-foreground)'
+                          fontSize={12}
+                          tickLine={false}
+                          axisLine={false}
+                          tickMargin={12}
+                          tickFormatter={(value) => {
+                            const date = new Date(value)
+                            return `${date.getMonth() + 1}/${date.getDate()}`
+                          }}
+                        />
+                        <YAxis
+                          stroke='var(--muted-foreground)'
+                          fontSize={12}
+                          tickLine={false}
+                          axisLine={false}
+                          width={46}
+                          tickFormatter={(value) =>
+                            compactNumberFormatter.format(Number(value))
+                          }
+                        />
+                        <Tooltip
+                          contentStyle={dashboardTooltipStyle}
+                          formatter={(value) => [
+                            Number(value ?? 0).toLocaleString(),
+                            'Rows',
+                          ]}
+                          labelFormatter={(label) =>
+                            format(new Date(label), 'MMM d, yyyy')
+                          }
+                        />
+                        <Legend
+                          iconType='circle'
+                          verticalAlign='bottom'
+                          wrapperStyle={{ paddingTop: 16, fontSize: '12px' }}
+                          formatter={(value) => (
+                            <span className='text-xs text-muted-foreground'>
+                              {value}
+                            </span>
+                          )}
+                        />
+
+                        {flowChart?.pipelines?.map((pipeline, index) => {
+                          const color = getDashboardSeriesColor(index)
+
+                          return (
+                            <Area
+                              key={pipeline}
+                              type='monotone'
+                              dataKey={pipeline}
+                              stackId='1'
+                              stroke={color}
+                              strokeWidth={2}
+                              fill={`url(#dashboard-flow-series-${index})`}
+                              activeDot={{ r: 4 }}
+                            />
+                          )
+                        })}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            </DashboardPanel>
+
+            <TopTablesChart className='min-h-[460px] xl:col-span-4' />
+
+            <div className='xl:col-span-8'>
+              <ActivityFeed />
+            </div>
+
+            <div className='xl:col-span-4'>
+              <BackfillStatsCard data={summary?.backfills} />
+            </div>
+          </DashboardGrid>
+
+          <section className='space-y-4'>
+            <div className='flex flex-col gap-2 md:flex-row md:items-end md:justify-between'>
+              <div className='space-y-2'>
+                <div className='dashboard-chip w-fit rounded-full px-3.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground'>
+                  Infrastructure
+                </div>
+                <div>
+                  <h2 className='font-manrope text-2xl font-semibold tracking-tight text-foreground'>
+                    Platform signals
+                  </h2>
+                  <p className='text-sm text-muted-foreground'>
+                    Health panels for compute, workers, schedulers, and replication.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className='grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-12 xl:gap-5'>
+              <div className='xl:col-span-4'>
+                <SystemLoadCard />
+              </div>
+              <div className='xl:col-span-4'>
+                <SystemHealthWidget />
+              </div>
+              <div className='xl:col-span-4'>
+                <WorkerStatusCard />
+              </div>
+              <div className='xl:col-span-7'>
+                <JobStatusCard />
+              </div>
+              <div className='xl:col-span-5'>
+                <WALMonitorList />
+              </div>
+            </div>
+          </section>
+        </div>
       </Main>
     </>
   )

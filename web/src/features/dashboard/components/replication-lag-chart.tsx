@@ -62,7 +62,7 @@ export function ReplicationLagChart() {
                 boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                 fontSize: '12px'
               }}
-              formatter={(value: number | undefined) => [formatBytes(value || 0), 'Lag']}
+              formatter={(value) => [formatBytes(Number(value ?? 0)), 'Lag']}
               labelFormatter={(label) => new Date(label).toLocaleString()}
             />
             {lagData?.sources?.map((source, index) => (

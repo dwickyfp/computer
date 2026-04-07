@@ -1,48 +1,96 @@
-import { cn } from '@/lib/utils'
+import { Link } from '@tanstack/react-router'
 import { type ReactNode } from 'react'
+import { cn } from '@/lib/utils'
+
+type DashboardPanelVariant = 'glass' | 'dense'
 
 interface DashboardPanelProps {
-    children: ReactNode
-    className?: string
-    headerAction?: ReactNode
-    title?: ReactNode
-    description?: ReactNode
-    noPadding?: boolean
+  children: ReactNode
+  className?: string
+  contentClassName?: string
+  headerAction?: ReactNode
+  headerSlot?: ReactNode
+  title?: ReactNode
+  description?: ReactNode
+  noPadding?: boolean
+  interactive?: boolean
+  href?: string
+  variant?: DashboardPanelVariant
 }
 
 export function DashboardPanel({
-    children,
-    className,
-    headerAction,
-    title,
-    description,
-    noPadding = false,
+  children,
+  className,
+  contentClassName,
+  headerAction,
+  headerSlot,
+  title,
+  description,
+  noPadding = false,
+  interactive = false,
+  href,
+  variant = 'glass',
 }: DashboardPanelProps) {
-    return (
-        <div
-            className={cn(
-                'group relative flex flex-col overflow-hidden rounded-sm border bg-card/50 text-card-foreground shadow-sm transition-all hover:border-primary/50 hover:shadow-md',
-                className
+  const slot = headerSlot ?? headerAction
+  const isInteractive = interactive || Boolean(href)
+  const panelClassName = cn(
+    'dashboard-panel group flex min-h-0 flex-col rounded-[28px] text-card-foreground no-underline',
+    className
+  )
+
+  const content = (
+    <>
+      {(title || description || slot) && (
+        <div className='relative z-10 flex items-start justify-between gap-4 px-5 pt-5 sm:px-6 sm:pt-6'>
+          <div className='min-w-0 space-y-1'>
+            {title && (
+              <h3 className='font-manrope text-base font-semibold leading-tight tracking-tight text-foreground'>
+                {title}
+              </h3>
             )}
-        >
-            {(title || headerAction) && (
-                <div className='flex items-center justify-between border-b border-border/50 px-4 py-3'>
-                    <div className='flex flex-col gap-0.5'>
-                        {title && (
-                            <h3 className='font-semibold leading-none tracking-tight text-sm'>
-                                {title}
-                            </h3>
-                        )}
-                        {description && (
-                            <p className='text-[10px] text-muted-foreground uppercase tracking-wider font-medium'>
-                                {description}
-                            </p>
-                        )}
-                    </div>
-                    {headerAction && <div className='flex items-center'>{headerAction}</div>}
-                </div>
+            {description && (
+              <p className='max-w-[44ch] text-sm leading-5 text-muted-foreground/85'>
+                {description}
+              </p>
             )}
-            <div className={cn('flex-1', !noPadding && 'p-4')}>{children}</div>
+          </div>
+          {slot && <div className='relative z-10 shrink-0'>{slot}</div>}
         </div>
+      )}
+
+      <div
+        className={cn(
+          'relative z-10 flex min-h-0 flex-1 flex-col',
+          !noPadding && 'px-5 pb-5 pt-4 sm:px-6 sm:pb-6 sm:pt-5',
+          contentClassName
+        )}
+      >
+        {children}
+      </div>
+    </>
+  )
+
+  if (href) {
+    return (
+      <Link
+        to={href as never}
+        preload='intent'
+        className={panelClassName}
+        data-interactive={isInteractive ? 'true' : 'false'}
+        data-variant={variant}
+      >
+        {content}
+      </Link>
     )
+  }
+
+  return (
+    <div
+      className={panelClassName}
+      data-interactive={isInteractive ? 'true' : 'false'}
+      data-variant={variant}
+    >
+      {content}
+    </div>
+  )
 }

@@ -10,7 +10,7 @@ export function DashboardGrid({ children, className }: DashboardGridProps) {
     return (
         <div
             className={cn(
-                'grid auto-rows-min gap-2 md:grid-cols-2 lg:grid-cols-12 xl:grid-cols-24',
+                'grid auto-rows-min items-start gap-4 md:grid-cols-2 xl:grid-cols-12 xl:gap-5',
                 className
             )}
         >
