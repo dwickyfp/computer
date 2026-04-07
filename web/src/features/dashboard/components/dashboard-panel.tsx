@@ -34,7 +34,7 @@ export function DashboardPanel({
   const slot = headerSlot ?? headerAction
   const isInteractive = interactive || Boolean(href)
   const panelClassName = cn(
-    'dashboard-panel group flex min-h-0 flex-col rounded-[28px] text-card-foreground no-underline',
+    'dashboard-panel group flex min-h-0 flex-col rounded-[26px] text-card-foreground no-underline',
     className
   )
 

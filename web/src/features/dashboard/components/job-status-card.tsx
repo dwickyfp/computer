@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
+import { memo } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { Activity, Loader2 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { jobMetricsRepo, type JobMetric } from '@/repo/job-metrics'
 import { useRefreshInterval } from '../context/refresh-interval-context'
+import { getDashboardPollingQueryOptions } from '../query-defaults'
 import { DashboardPanel } from './dashboard-panel'
 
 const jobThresholds: Record<string, number> = {
@@ -35,12 +37,13 @@ function getJobDisplayName(key: string) {
     .join(' ')
 }
 
-export function JobStatusCard() {
+export const JobStatusCard = memo(function JobStatusCard() {
   const { refreshInterval } = useRefreshInterval()
   const { data: metrics, isLoading } = useQuery({
     queryKey: ['job-metrics'],
     queryFn: jobMetricsRepo.getAll,
-    refetchInterval: refreshInterval,
+    ...getDashboardPollingQueryOptions(refreshInterval),
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 
   return (
@@ -106,4 +109,4 @@ export function JobStatusCard() {
       </ScrollArea>
     </DashboardPanel>
   )
-}
+})

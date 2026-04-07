@@ -18,11 +18,11 @@
   --border: oklch(0.929 0.013 255.508);
   --input: oklch(0.929 0.013 255.508);
   --ring: oklch(0.704 0.04 256.788);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  --chart-1: oklch(0.66 0.18 248);
+  --chart-2: oklch(0.74 0.13 210);
+  --chart-3: oklch(0.76 0.14 168);
+  --chart-4: oklch(0.78 0.13 92);
+  --chart-5: oklch(0.71 0.16 24);
 
   --sidebar: var(--background);
   --sidebar-foreground: var(--foreground);
@@ -32,31 +32,108 @@
   --sidebar-accent-foreground: var(--accent-foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
+  --dashboard-navbar-surface: #f6f8fc;
   --dashboard-glass: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.96) 0%,
-    rgba(248, 250, 252, 0.88) 100%
+    rgba(255, 255, 255, 0.86) 0%,
+    rgba(235, 244, 255, 0.96) 100%
   );
   --dashboard-glass-elevated: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.98) 0%,
-    rgba(250, 250, 252, 0.92) 100%
+    rgba(248, 251, 255, 0.96) 0%,
+    rgba(227, 238, 252, 0.98) 100%
   );
-  --dashboard-canvas: rgba(255, 255, 255, 0.72);
-  --dashboard-canvas-strong: rgba(255, 255, 255, 0.84);
-  --dashboard-stroke: rgba(148, 163, 184, 0.18);
-  --dashboard-stroke-strong: rgba(99, 102, 241, 0.26);
-  --dashboard-highlight: rgba(255, 255, 255, 0.65);
-  --dashboard-grid: rgba(148, 163, 184, 0.12);
-  --dashboard-tooltip: rgba(255, 255, 255, 0.96);
-  --dashboard-shadow: 0 28px 70px -42px rgba(15, 23, 42, 0.22);
-  --dashboard-shadow-hover: 0 36px 100px -48px rgba(15, 23, 42, 0.28);
-  --dashboard-glow-a: rgba(99, 102, 241, 0.12);
-  --dashboard-glow-b: rgba(16, 185, 129, 0.1);
-  --dashboard-blur: 18px;
-  --dashboard-shell-top: var(--background);
-  --dashboard-shell-mid: rgba(243, 247, 252, 0.98);
-  --dashboard-shell-bottom: rgba(235, 242, 250, 1);
+  --dashboard-canvas: rgba(255, 255, 255, 0.6);
+  --dashboard-canvas-strong: rgba(238, 246, 255, 0.92);
+  --dashboard-stroke: rgba(98, 128, 176, 0.16);
+  --dashboard-stroke-strong: rgba(44, 112, 224, 0.28);
+  --dashboard-highlight: rgba(255, 255, 255, 0.72);
+  --dashboard-grid: rgba(92, 129, 184, 0.14);
+  --dashboard-axis-label: rgba(63, 84, 117, 0.68);
+  --dashboard-chart-track: rgba(148, 163, 184, 0.14);
+  --dashboard-chart-cursor: rgba(148, 163, 184, 0.12);
+  --dashboard-chart-surface: radial-gradient(
+      circle at top,
+      rgba(55, 130, 246, 0.12),
+      transparent 32%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.78) 0%,
+      rgba(235, 244, 255, 0.96) 100%
+    );
+  --dashboard-chart-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    inset 0 0 50px rgba(103, 132, 179, 0.08);
+  --dashboard-panel-inner-stroke: rgba(255, 255, 255, 0.44);
+  --dashboard-inset-stroke: rgba(96, 129, 176, 0.14);
+  --dashboard-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+  --dashboard-chip-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64),
+    0 10px 24px -22px rgba(74, 106, 158, 0.18);
+  --dashboard-toolbar-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 22px 40px -30px rgba(74, 106, 158, 0.18);
+  --dashboard-row-stroke: rgba(96, 129, 176, 0.12);
+  --dashboard-row-stroke-hover: rgba(66, 118, 196, 0.18);
+  --dashboard-row-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.56);
+  --dashboard-metric-surface: linear-gradient(
+    180deg,
+    rgba(250, 253, 255, 0.96) 0%,
+    rgba(226, 238, 252, 0.98) 100%
+  );
+  --dashboard-metric-inner-stroke: rgba(255, 255, 255, 0.54);
+  --dashboard-metric-glow: radial-gradient(
+    circle,
+    rgba(53, 128, 241, 0.14),
+    transparent 62%
+  );
+  --dashboard-hero-surface: radial-gradient(
+      circle at 42% 36%,
+      rgba(51, 139, 255, 0.16),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 66% 62%,
+      rgba(0, 212, 255, 0.12),
+      transparent 24%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(247, 251, 255, 0.94) 0%,
+      rgba(225, 237, 252, 0.98) 100%
+    );
+  --dashboard-hero-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    inset 0 0 80px rgba(86, 144, 255, 0.08);
+  --dashboard-hero-glow: radial-gradient(
+    circle,
+    rgba(74, 134, 240, 0.18),
+    transparent 60%
+  );
+  --dashboard-hero-grid-line: rgba(86, 123, 177, 0.08);
+  --dashboard-icon-surface: rgba(255, 255, 255, 0.72);
+  --dashboard-icon-accent: oklch(0.43 0.07 253);
+  --dashboard-neutral-pill-bg: rgba(255, 255, 255, 0.72);
+  --dashboard-neutral-pill-border: rgba(96, 129, 176, 0.18);
+  --dashboard-neutral-pill-text: oklch(0.44 0.02 257);
+  --dashboard-progress-track: rgba(160, 176, 201, 0.28);
+  --dashboard-ring-track: rgba(96, 129, 176, 0.16);
+  --dashboard-sticky-glass: rgba(248, 251, 255, 0.78);
+  --dashboard-sticky-border: rgba(96, 129, 176, 0.16);
+  --dashboard-sticky-shadow: 0 16px 38px -28px rgba(74, 106, 158, 0.26);
+  --dashboard-shadow-muted: 0 18px 36px -30px rgba(74, 106, 158, 0.14);
+  --dashboard-tabs-divider: rgba(96, 129, 176, 0.2);
+  --dashboard-tooltip: rgba(248, 250, 255, 0.98);
+  --dashboard-shadow: 0 28px 72px -40px rgba(74, 106, 158, 0.18);
+  --dashboard-shadow-hover: 0 38px 104px -46px rgba(74, 106, 158, 0.24);
+  --dashboard-glow-a: rgba(70, 141, 255, 0.14);
+  --dashboard-glow-b: rgba(56, 189, 248, 0.1);
+  --dashboard-blur: 16px;
+  --dashboard-shell-top: #dce9fb;
+  --dashboard-shell-mid: #cadcf4;
+  --dashboard-shell-bottom: #b8d0ee;
+  --dashboard-fg-strong: oklch(0.27 0.03 257);
+  --dashboard-fg: oklch(0.38 0.03 257);
+  --dashboard-fg-muted: oklch(0.49 0.022 257);
+  --dashboard-fg-subtle: oklch(0.61 0.016 257);
 }
 
 .dark {
@@ -79,36 +156,113 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.551 0.027 264.364);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+  --dashboard-navbar-surface: var(--background);
+  --chart-1: oklch(0.69 0.18 248);
+  --chart-2: oklch(0.77 0.14 210);
+  --chart-3: oklch(0.79 0.14 168);
+  --chart-4: oklch(0.81 0.13 92);
+  --chart-5: oklch(0.74 0.16 24);
   --dashboard-glass: linear-gradient(
     180deg,
-    rgba(18, 24, 34, 0.88) 0%,
-    rgba(11, 16, 24, 0.72) 100%
+    rgba(12, 24, 46, 0.96) 0%,
+    rgba(6, 15, 29, 0.99) 100%
   );
   --dashboard-glass-elevated: linear-gradient(
     180deg,
-    rgba(22, 30, 42, 0.92) 0%,
-    rgba(12, 18, 28, 0.82) 100%
+    rgba(16, 31, 58, 0.99) 0%,
+    rgba(7, 17, 34, 0.99) 100%
   );
-  --dashboard-canvas: rgba(8, 12, 20, 0.54);
-  --dashboard-canvas-strong: rgba(8, 12, 20, 0.74);
-  --dashboard-stroke: rgba(148, 163, 184, 0.14);
-  --dashboard-stroke-strong: rgba(191, 219, 254, 0.24);
-  --dashboard-highlight: rgba(255, 255, 255, 0.08);
-  --dashboard-grid: rgba(148, 163, 184, 0.08);
-  --dashboard-tooltip: rgba(9, 14, 24, 0.94);
-  --dashboard-shadow: 0 24px 72px -42px rgba(2, 6, 23, 0.84);
-  --dashboard-shadow-hover: 0 34px 104px -44px rgba(2, 6, 23, 0.92);
-  --dashboard-glow-a: rgba(56, 189, 248, 0.16);
-  --dashboard-glow-b: rgba(52, 211, 153, 0.12);
-  --dashboard-blur: 18px;
-  --dashboard-shell-top: #191e25;
-  --dashboard-shell-mid: #1b222c;
-  --dashboard-shell-bottom: #1a212a;
+  --dashboard-canvas: rgba(8, 16, 31, 0.72);
+  --dashboard-canvas-strong: rgba(4, 10, 22, 0.94);
+  --dashboard-stroke: rgba(135, 190, 255, 0.13);
+  --dashboard-stroke-strong: rgba(59, 164, 255, 0.36);
+  --dashboard-highlight: rgba(255, 255, 255, 0.06);
+  --dashboard-grid: rgba(108, 163, 235, 0.1);
+  --dashboard-axis-label: rgba(226, 232, 240, 0.45);
+  --dashboard-chart-track: rgba(148, 163, 184, 0.07);
+  --dashboard-chart-cursor: rgba(148, 163, 184, 0.06);
+  --dashboard-chart-surface: radial-gradient(
+      circle at top,
+      rgba(33, 113, 255, 0.14),
+      transparent 34%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(6, 15, 30, 0.96) 0%,
+      rgba(4, 11, 21, 0.98) 100%
+    );
+  --dashboard-chart-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 0 60px rgba(0, 0, 0, 0.22);
+  --dashboard-panel-inner-stroke: rgba(255, 255, 255, 0.045);
+  --dashboard-inset-stroke: rgba(255, 255, 255, 0.06);
+  --dashboard-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+  --dashboard-chip-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 24px -22px rgba(0, 0, 0, 0.65);
+  --dashboard-toolbar-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 34px -24px rgba(2, 8, 23, 0.58);
+  --dashboard-row-stroke: rgba(255, 255, 255, 0.03);
+  --dashboard-row-stroke-hover: rgba(127, 188, 255, 0.16);
+  --dashboard-row-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --dashboard-metric-surface: linear-gradient(
+    180deg,
+    rgba(12, 24, 46, 0.98) 0%,
+    rgba(6, 15, 28, 0.98) 100%
+  );
+  --dashboard-metric-inner-stroke: rgba(255, 255, 255, 0.04);
+  --dashboard-metric-glow: radial-gradient(
+    circle,
+    rgba(39, 151, 255, 0.24),
+    transparent 62%
+  );
+  --dashboard-hero-surface: radial-gradient(
+      circle at 42% 36%,
+      rgba(51, 139, 255, 0.4),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 66% 62%,
+      rgba(0, 212, 255, 0.22),
+      transparent 24%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(10, 24, 48, 0.96) 0%,
+      rgba(4, 12, 24, 0.98) 100%
+    );
+  --dashboard-hero-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 80px rgba(26, 99, 255, 0.1);
+  --dashboard-hero-glow: radial-gradient(
+    circle,
+    rgba(39, 151, 255, 0.32),
+    transparent 60%
+  );
+  --dashboard-hero-grid-line: rgba(255, 255, 255, 0.04);
+  --dashboard-icon-surface: rgba(255, 255, 255, 0.05);
+  --dashboard-icon-accent: #bae6fd;
+  --dashboard-neutral-pill-bg: rgba(255, 255, 255, 0.04);
+  --dashboard-neutral-pill-border: rgba(255, 255, 255, 0.1);
+  --dashboard-neutral-pill-text: rgba(226, 232, 240, 0.8);
+  --dashboard-progress-track: rgba(255, 255, 255, 0.05);
+  --dashboard-ring-track: rgba(255, 255, 255, 0.08);
+  --dashboard-sticky-glass: rgba(9, 17, 31, 0.68);
+  --dashboard-sticky-border: rgba(135, 190, 255, 0.14);
+  --dashboard-sticky-shadow: 0 18px 38px -26px rgba(1, 5, 18, 0.72);
+  --dashboard-shadow-muted: 0 16px 28px -24px rgba(1, 5, 18, 0.46);
+  --dashboard-tabs-divider: rgba(135, 190, 255, 0.18);
+  --dashboard-tooltip: rgba(4, 10, 20, 0.97);
+  --dashboard-shadow: 0 28px 78px -40px rgba(1, 5, 18, 0.86);
+  --dashboard-shadow-hover: 0 38px 112px -44px rgba(1, 5, 18, 0.92);
+  --dashboard-glow-a: rgba(34, 150, 255, 0.24);
+  --dashboard-glow-b: rgba(0, 210, 255, 0.16);
+  --dashboard-blur: 20px;
+  --dashboard-shell-top: #06101d;
+  --dashboard-shell-mid: #08172d;
+  --dashboard-shell-bottom: #04101f;
+  --dashboard-fg-strong: oklch(0.984 0.003 247.858);
+  --dashboard-fg: oklch(0.88 0.02 252);
+  --dashboard-fg-muted: oklch(0.74 0.03 256);
+  --dashboard-fg-subtle: oklch(0.63 0.025 256);
 }
 
 @theme inline {

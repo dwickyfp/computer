@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
+import { memo } from 'react'
 import { AlertTriangle, CheckCircle2, Database, RadioTower } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn, formatBytes } from '@/lib/utils'
 import { walMonitorRepo } from '@/repo/wal-monitor'
 import { useRefreshInterval } from '../context/refresh-interval-context'
+import { getDashboardPollingQueryOptions } from '../query-defaults'
 import { DashboardPanel } from './dashboard-panel'
 
 function getStatusTone(status: 'OK' | 'WARNING' | 'ERROR' | null) {
@@ -19,17 +21,18 @@ function getStatusTone(status: 'OK' | 'WARNING' | 'ERROR' | null) {
   }
 }
 
-export function WALMonitorList() {
+export const WALMonitorList = memo(function WALMonitorList() {
   const { refreshInterval } = useRefreshInterval()
-  const { data } = useQuery({
+  const { data: monitors = [] } = useQuery({
     queryKey: ['wal-monitor', 'all'],
     queryFn: walMonitorRepo.getAll,
-    refetchInterval: refreshInterval,
+    ...getDashboardPollingQueryOptions(refreshInterval),
+    notifyOnChangeProps: ['data'],
+    select: (data) =>
+      (data.monitors || []).filter(
+        (monitor) => (monitor.source?.type || 'POSTGRES') === 'POSTGRES'
+      ),
   })
-
-  const monitors = (data?.monitors || []).filter(
-    (monitor) => (monitor.source?.type || 'POSTGRES') === 'POSTGRES'
-  )
 
   return (
     <DashboardPanel
@@ -125,4 +128,4 @@ export function WALMonitorList() {
       </ScrollArea>
     </DashboardPanel>
   )
-}
+})

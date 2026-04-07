@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
+import { memo } from 'react'
 import { Cpu, Loader2, Zap } from 'lucide-react'
 import { systemMetricsRepo } from '@/repo/system-metrics'
 import { cn, formatBytes } from '@/lib/utils'
 import { useRefreshInterval } from '../context/refresh-interval-context'
+import { getDashboardPollingQueryOptions } from '../query-defaults'
 import { DashboardPanel } from './dashboard-panel'
 
 function CircularProgress({
@@ -98,16 +100,23 @@ function getLoadColor(percentage: number) {
   return 'text-rose-300'
 }
 
-export function SystemLoadCard() {
+export const SystemLoadCard = memo(function SystemLoadCard() {
   const { refreshInterval } = useRefreshInterval()
   const { data: metrics, isLoading } = useQuery({
     queryKey: ['system-metrics', 'latest'],
     queryFn: systemMetricsRepo.getLatest,
-    refetchInterval: refreshInterval,
+    ...getDashboardPollingQueryOptions(refreshInterval),
+    notifyOnChangeProps: ['data', 'isLoading'],
+    select: (metrics) => ({
+      cpuUsage: metrics.cpu_usage ?? 0,
+      memoryUsage: metrics.memory_usage_percent ?? 0,
+      totalMemory: metrics.total_memory ?? 0,
+      usedMemory: metrics.used_memory ?? 0,
+    }),
   })
 
-  const cpuUsage = metrics?.cpu_usage ?? 0
-  const memoryUsage = metrics?.memory_usage_percent ?? 0
+  const cpuUsage = metrics?.cpuUsage ?? 0
+  const memoryUsage = metrics?.memoryUsage ?? 0
 
   return (
     <DashboardPanel
@@ -144,12 +153,12 @@ export function SystemLoadCard() {
           icon={Zap}
           details={
             <div className='font-mono'>
-              {formatBytes(metrics?.used_memory ?? 0)} /{' '}
-              {formatBytes(metrics?.total_memory ?? 0)}
+              {formatBytes(metrics?.usedMemory ?? 0)} /{' '}
+              {formatBytes(metrics?.totalMemory ?? 0)}
             </div>
           }
         />
       </div>
     </DashboardPanel>
   )
-}
+})

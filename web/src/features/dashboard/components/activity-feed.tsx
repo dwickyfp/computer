@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { memo } from 'react'
 import {
   AlertCircle,
   BellRing,
@@ -10,14 +11,16 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { dashboardRepo } from '@/repo/dashboard'
 import { useRefreshInterval } from '../context/refresh-interval-context'
+import { getDashboardPollingQueryOptions } from '../query-defaults'
 import { DashboardPanel } from './dashboard-panel'
 
-export function ActivityFeed() {
+export const ActivityFeed = memo(function ActivityFeed() {
   const { refreshInterval } = useRefreshInterval()
   const { data: activities, isLoading } = useQuery({
     queryKey: ['dashboard', 'activity-feed'],
     queryFn: () => dashboardRepo.getActivityFeed(20),
-    refetchInterval: refreshInterval,
+    ...getDashboardPollingQueryOptions(refreshInterval),
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 
   const getIcon = (type: string, message: string) => {
@@ -124,4 +127,4 @@ export function ActivityFeed() {
       </ScrollArea>
     </DashboardPanel>
   )
-}
+})

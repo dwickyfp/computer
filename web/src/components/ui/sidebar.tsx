@@ -28,6 +28,7 @@ const SIDEBAR_WIDTH = '16rem'
 const SIDEBAR_WIDTH_MOBILE = '18rem'
 const SIDEBAR_WIDTH_ICON = '3rem'
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
+const SIDEBAR_TRANSITION_MS = 260
 
 type SidebarContextProps = {
   state: 'expanded' | 'collapsed'
@@ -36,6 +37,7 @@ type SidebarContextProps = {
   openMobile: boolean
   setOpenMobile: (open: boolean) => void
   isMobile: boolean
+  isTransitioning: boolean
   toggleSidebar: () => void
 }
 
@@ -65,11 +67,14 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
+  const [isTransitioning, setIsTransitioning] = React.useState(false)
+  const transitionTimeoutRef = React.useRef<number | null>(null)
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen)
   const open = openProp ?? _open
+  const previousOpenRef = React.useRef(open)
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
       const openState = typeof value === 'function' ? value(open) : value
@@ -110,17 +115,64 @@ function SidebarProvider({
   // This makes it easier to style the sidebar with Tailwind classes.
   const state = open ? 'expanded' : 'collapsed'
 
+  React.useEffect(() => {
+    if (isMobile) {
+      previousOpenRef.current = open
+      setIsTransitioning(false)
+      if (transitionTimeoutRef.current) {
+        window.clearTimeout(transitionTimeoutRef.current)
+        transitionTimeoutRef.current = null
+      }
+      return
+    }
+
+    if (previousOpenRef.current === open) {
+      return
+    }
+
+    previousOpenRef.current = open
+    setIsTransitioning(true)
+
+    if (transitionTimeoutRef.current) {
+      window.clearTimeout(transitionTimeoutRef.current)
+    }
+
+    transitionTimeoutRef.current = window.setTimeout(() => {
+      setIsTransitioning(false)
+      transitionTimeoutRef.current = null
+    }, SIDEBAR_TRANSITION_MS)
+  }, [isMobile, open])
+
+  React.useEffect(
+    () => () => {
+      if (transitionTimeoutRef.current) {
+        window.clearTimeout(transitionTimeoutRef.current)
+      }
+    },
+    []
+  )
+
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
       state,
       open,
       setOpen,
       isMobile,
+      isTransitioning,
       openMobile,
       setOpenMobile,
       toggleSidebar,
     }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
+    [
+      state,
+      open,
+      setOpen,
+      isMobile,
+      isTransitioning,
+      openMobile,
+      setOpenMobile,
+      toggleSidebar,
+    ]
   )
 
   return (

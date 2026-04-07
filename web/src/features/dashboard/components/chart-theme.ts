@@ -11,13 +11,11 @@ export const DASHBOARD_SERIES_COLORS = [
 export const dashboardTooltipStyle: CSSProperties = {
   backgroundColor: 'var(--dashboard-tooltip)',
   border: '1px solid var(--dashboard-stroke)',
-  borderRadius: '16px',
+  borderRadius: '18px',
   color: 'var(--color-foreground)',
   boxShadow: 'var(--dashboard-shadow)',
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
   fontSize: '12px',
-  padding: '10px 12px',
+  padding: '12px 14px',
 }
 
 export function getDashboardSeriesColor(index: number) {

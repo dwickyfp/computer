@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { memo } from 'react'
 import {
   CircleCheck,
   CircleDashed,
@@ -12,14 +13,16 @@ import {
 } from '@/repo/dashboard'
 import { cn } from '@/lib/utils'
 import { useRefreshInterval } from '../context/refresh-interval-context'
+import { getDashboardPollingQueryOptions } from '../query-defaults'
 import { DashboardPanel } from './dashboard-panel'
 
-export function WorkerStatusCard() {
+export const WorkerStatusCard = memo(function WorkerStatusCard() {
   const { refreshInterval } = useRefreshInterval()
   const { data, isLoading, isError } = useQuery<WorkerStatusResponse>({
     queryKey: ['worker-status'],
     queryFn: dashboardRepo.getWorkerStatus,
-    refetchInterval: refreshInterval,
+    ...getDashboardPollingQueryOptions(refreshInterval),
+    notifyOnChangeProps: ['data', 'isError', 'isLoading'],
   })
 
   return (
@@ -140,4 +143,4 @@ export function WorkerStatusCard() {
       )}
     </DashboardPanel>
   )
-}
+})
