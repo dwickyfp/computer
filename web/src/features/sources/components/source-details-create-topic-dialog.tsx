@@ -14,8 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { getApiErrorMessage } from '@/repo/client'
-import { sourcesRepo } from '@/repo/sources'
+import { getApiErrorMessage, sourcesRepo } from '@/repo/sources'
 
 interface SourceDetailsCreateTopicDialogProps {
   open: boolean
@@ -53,6 +52,12 @@ export function SourceDetailsCreateTopicDialog({
       queryClient.invalidateQueries({ queryKey: ['source-details', sourceId] })
       queryClient.invalidateQueries({
         queryKey: ['source-available-tables', sourceId],
+      })
+      queryClient.invalidateQueries({
+        queryKey: ['source-kafka-topics-summary', sourceId],
+      })
+      queryClient.invalidateQueries({
+        queryKey: ['source-kafka-topic-preview', sourceId],
       })
       setTopicName('')
       onOpenChange(false)

@@ -1,6 +1,5 @@
-import { useState, useMemo } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   type SortingState,
   type VisibilityState,
@@ -45,6 +44,7 @@ import {
 import { DataTablePagination, DataTableToolbar } from '@/components/data-table'
 import { SourceDetailsSchemaDrawer } from './source-details-schema-drawer'
 import { getSourceDetailsTablesColumns } from './source-details-tables-columns'
+import { KafkaTopicPreviewModal } from './kafka-topic-preview-modal'
 
 interface SourceReplicationTableProps {
   sourceId: number
@@ -70,6 +70,7 @@ export function SourceReplicationTable({
   const [schemaDrawerOpen, setSchemaDrawerOpen] = useState(false)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   const [selectedVersion, setSelectedVersion] = useState<number>(1)
+  const [previewTopicName, setPreviewTopicName] = useState<string | null>(null)
 
   const queryClient = useQueryClient()
 
@@ -83,20 +84,34 @@ export function SourceReplicationTable({
     setSchemaDrawerOpen(true)
   }
 
+  const handlePreviewTopic = (topicName: string) => {
+    setPreviewTopicName(topicName)
+  }
+
   const confirmDropTable = async (tableName: string) => {
     setIsProcessingDrop(true)
     try {
       await sourcesRepo.unregisterTable(sourceId, tableName)
       // Auto-refresh after drop
       await sourcesRepo.refreshSource(sourceId)
-      toast.success(`Table ${tableName} dropped from publication successfully`)
+      toast.success(
+        sourceType === 'KAFKA'
+          ? `Topic ${tableName} unregistered successfully`
+          : `Table ${tableName} dropped from publication successfully`
+      )
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['source-details', sourceId] })
+        queryClient.invalidateQueries({
+          queryKey: ['source-kafka-topics-summary', sourceId],
+        })
+        queryClient.invalidateQueries({
+          queryKey: ['source-kafka-topic-preview', sourceId],
+        })
       }, 3000)
       setTableToDrop(null)
     } catch (error) {
       toast.error(`Failed to drop table ${tableName}`)
-      console.error(error)
+      void error
     } finally {
       setIsProcessingDrop(false)
     }
@@ -125,10 +140,13 @@ export function SourceReplicationTable({
     },
   })
 
-  const columns = useMemo(
-    () =>
-      getSourceDetailsTablesColumns(handleUnregisterTable, handleViewSchema),
-    [handleUnregisterTable]
+  const columns = getSourceDetailsTablesColumns(
+    handleUnregisterTable,
+    handleViewSchema,
+    {
+      sourceType,
+      onPreview: sourceType === 'KAFKA' ? handlePreviewTopic : undefined,
+    }
   )
 
   const table = useReactTable({
@@ -162,10 +180,12 @@ export function SourceReplicationTable({
     <>
       <Card className='bg-sidebar'>
         <CardHeader>
-          <CardTitle>Monitored Tables</CardTitle>
+          <CardTitle>
+            {sourceType === 'KAFKA' ? 'Registered Topics' : 'Monitored Tables'}
+          </CardTitle>
           <CardDescription>
             {sourceType === 'KAFKA'
-              ? 'View and manage Kafka topics currently registered for this source.'
+              ? 'View and manage Kafka topics currently registered for this source. Live stats refresh every 5 seconds.'
               : 'View and manage tables currently being replicated.'}
           </CardDescription>
         </CardHeader>
@@ -296,6 +316,15 @@ export function SourceReplicationTable({
         isLoading={isLoadingSchema}
         version={selectedVersion}
       />
+      {sourceType === 'KAFKA' && previewTopicName && (
+        <KafkaTopicPreviewModal
+          key={previewTopicName}
+          sourceId={sourceId}
+          topicName={previewTopicName}
+          open
+          onOpenChange={(open) => !open && setPreviewTopicName(null)}
+        />
+      )}
     </>
   )
 }

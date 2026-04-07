@@ -22,7 +22,12 @@ from app.domain.schemas.source import (
     SourceConnectionTest,
 )
 from app.domain.schemas.common import TaskDispatchResponse
-from app.domain.schemas.source_detail import SourceDetailResponse, TableSchemaResponse
+from app.domain.schemas.source_detail import (
+    KafkaTopicPreviewResponse,
+    KafkaTopicSummary,
+    SourceDetailResponse,
+    TableSchemaResponse,
+)
 from app.domain.services.source import SourceService
 from app.domain.services.preset import PresetService
 from app.domain.schemas.preset import PresetCreate, PresetResponse
@@ -275,6 +280,41 @@ def create_kafka_topic(
 ) -> None:
     try:
         service.create_kafka_topic(source_id, request.topic_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get(
+    "/{source_id}/topics/summary",
+    response_model=List[KafkaTopicSummary],
+    summary="Get Kafka topic summaries",
+    description="Get Kafka topics under the source prefix with registration state and offset stats",
+)
+def get_kafka_topic_summaries(
+    source_id: int,
+    refresh: bool = Query(False, description="Refresh cached topic discovery for this source"),
+    service: SourceService = Depends(get_source_service_readonly),
+) -> List[KafkaTopicSummary]:
+    try:
+        return service.get_kafka_topic_summaries(source_id, refresh=refresh)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get(
+    "/{source_id}/topics/{topic_name}/preview",
+    response_model=KafkaTopicPreviewResponse,
+    summary="Preview Kafka topic messages",
+    description="Preview Kafka topic messages without committing offsets",
+)
+def get_kafka_topic_preview(
+    source_id: int,
+    topic_name: str,
+    page: int = Query(1, ge=1, description="Preview page number"),
+    service: SourceService = Depends(get_source_service_readonly),
+) -> KafkaTopicPreviewResponse:
+    try:
+        return service.get_kafka_topic_preview(source_id, topic_name, page=page)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

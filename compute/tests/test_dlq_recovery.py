@@ -121,6 +121,16 @@ class RecordingDestination:
         return len(records)
 
 
+class NoForceReconnectDestination(RecordingDestination):
+    def __init__(self, destination_type: str, destination_id: int = 2):
+        super().__init__(destination_type, destination_id=destination_id)
+        self.initialize_calls = 0
+
+    def initialize(self) -> None:
+        self.initialize_calls += 1
+        self._is_initialized = True
+
+
 def _version_value(dlq_manager: DLQManager, destination_id: int, record: CDCRecord):
     redis_key = dlq_manager._version_key(
         destination_id,
@@ -262,3 +272,57 @@ def test_live_write_waits_for_inflight_dlq_replay_and_newer_state_wins(
     assert destination.calls == [["old"], ["new"]]
     assert destination.store[1]["name"] == "new"
     assert _version_value(dlq_manager, destination.destination_id, new_record) == b"2000"
+
+
+@pytest.mark.parametrize("destination_type", ["KAFKA", "SNOWFLAKE"])
+def test_replay_reuses_initialized_destination_without_force_reconnect(
+    dlq_manager, destination_type
+):
+    pipeline, table_sync = _make_pipeline_context()
+    destination = NoForceReconnectDestination(destination_type)
+    worker = DLQRecoveryWorker(
+        pipeline=pipeline,
+        destinations={destination.destination_id: destination},
+        dlq_manager=dlq_manager,
+    )
+
+    record = _make_record("old", 1000)
+
+    dlq_manager.enqueue(
+        pipeline_id=pipeline.id,
+        source_id=pipeline.source_id,
+        destination_id=destination.destination_id,
+        table_name=record.table_name,
+        table_name_target=table_sync.table_name_target,
+        cdc_record=record,
+        table_sync=table_sync,
+    )
+
+    messages = dlq_manager.dequeue_batch(
+        source_id=pipeline.source_id,
+        table_name=record.table_name,
+        destination_id=destination.destination_id,
+    )
+    assert len(messages) == 1
+
+    with patch(
+        "core.dlq_recovery.TableSyncRepository.get_by_id", return_value=table_sync
+    ), patch("core.dlq_recovery.TableSyncRepository.update_error"), patch(
+        "core.dlq_recovery.PipelineDestinationRepository.update_error"
+    ):
+        worker._replay_messages_with_ids(
+            messages,
+            pipeline.source_id,
+            record.table_name,
+            destination.destination_id,
+        )
+
+    assert destination.initialize_calls == 0
+    assert destination.calls == [["old"]]
+    assert destination.store[1]["name"] == "old"
+    assert (
+        dlq_manager.has_messages(
+            pipeline.source_id, record.table_name, destination.destination_id
+        )
+        is False
+    )

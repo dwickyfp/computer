@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, getApiErrorMessage } from '@/repo/client'
-import { sourcesRepo } from '@/repo/sources'
+import { ApiError, getApiErrorMessage, sourcesRepo } from '@/repo/sources'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'
@@ -38,6 +37,8 @@ import {
     BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 
+const KAFKA_LIVE_REFETCH_MS = 5000
+
 export default function SourceDetailsPage() {
     // Use TansStack Router useParams
     const { sourceId } = useParams({ from: '/_authenticated/sources/$sourceId/details' })
@@ -57,6 +58,10 @@ export default function SourceDetailsPage() {
         queryFn: () => sourcesRepo.getDetails(id!),
         enabled: !!id,
         retry: false, // Don't retry if it fails (e.g. 404)
+        refetchInterval: (query) =>
+            query.state.data?.source?.type === 'KAFKA'
+                ? KAFKA_LIVE_REFETCH_MS
+                : false,
     })
     const isKafkaSource = data?.source.type === 'KAFKA'
     const kafkaMetadataError =
@@ -80,10 +85,15 @@ export default function SourceDetailsPage() {
             setTimeout(() => {
                 queryClient.invalidateQueries({ queryKey: ['source-details', id] })
                 queryClient.invalidateQueries({ queryKey: ['source-available-tables', id] })
+                queryClient.invalidateQueries({
+                    queryKey: ['source-kafka-topics-summary', id],
+                })
+                queryClient.invalidateQueries({
+                    queryKey: ['source-kafka-topic-preview', id],
+                })
             }, result.task_id ? 3000 : 0)
             toast.success(result.task_id ? "Source refresh queued" : "Source refreshed successfully")
         } catch (err) {
-            console.error(err)
             toast.error(getApiErrorMessage(err, "Failed to refresh source"))
         } finally {
             setIsRefreshing(false)
@@ -108,7 +118,7 @@ export default function SourceDetailsPage() {
             queryClient.invalidateQueries({ queryKey: ['source-details', id] })
             toast.success("Publication dropped successfully")
         } catch (err) {
-            console.error(err)
+            void err
             toast.error("Failed to drop publication")
         } finally {
             setIsPublicationLoading(false)
@@ -132,7 +142,7 @@ export default function SourceDetailsPage() {
             toast.success("Replication slot created successfully")
             queryClient.invalidateQueries({ queryKey: ['source-details', id] })
         } catch (err) {
-            console.error(err)
+            void err
             toast.error("Failed to create replication slot")
         } finally {
             setIsReplicationLoading(false)
@@ -147,7 +157,7 @@ export default function SourceDetailsPage() {
             toast.success("Replication slot dropped successfully")
             queryClient.invalidateQueries({ queryKey: ['source-details', id] })
         } catch (err) {
-            console.error(err)
+            void err
             toast.error("Failed to drop replication slot")
         } finally {
             setIsReplicationLoading(false)

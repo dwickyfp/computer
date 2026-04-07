@@ -1,4 +1,5 @@
 import { api } from './client'
+export { ApiError, getApiErrorMessage } from './client'
 
 export type SourceType = 'POSTGRES' | 'KAFKA'
 
@@ -66,6 +67,39 @@ export interface SourceTableInfo {
   table_name: string
   version: number
   schema_table?: SchemaColumn[]
+  first_offset?: number | null
+  next_offset?: number | null
+  message_count?: number
+}
+
+export interface KafkaTopicSummary {
+  topic_name: string
+  full_topic_name: string
+  is_registered: boolean
+  first_offset?: number | null
+  next_offset?: number | null
+  message_count: number
+}
+
+export interface KafkaTopicPreviewMessage {
+  partition: number
+  offset: number
+  timestamp?: string | null
+  key_preview?: string | null
+  value_preview?: string | null
+  key?: string | null
+  value?: string | null
+  headers?: string | null
+}
+
+export interface KafkaTopicPreviewResponse {
+  topic_name: string
+  full_topic_name: string
+  page: number
+  page_size: number
+  total_messages: number
+  total_pages: number
+  messages: KafkaTopicPreviewMessage[]
 }
 
 export interface SchemaColumn {
@@ -261,6 +295,28 @@ export const sourcesRepo = {
       `/sources/${sourceId}/available_tables`,
       {
         params: { refresh },
+      }
+    )
+    return data
+  },
+  getKafkaTopicSummaries: async (sourceId: number, refresh = false) => {
+    const { data } = await api.get<KafkaTopicSummary[]>(
+      `/sources/${sourceId}/topics/summary`,
+      {
+        params: { refresh },
+      }
+    )
+    return data
+  },
+  getKafkaTopicPreview: async (
+    sourceId: number,
+    topicName: string,
+    page = 1
+  ) => {
+    const { data } = await api.get<KafkaTopicPreviewResponse>(
+      `/sources/${sourceId}/topics/${encodeURIComponent(topicName)}/preview`,
+      {
+        params: { page },
       }
     )
     return data

@@ -17,3 +17,12 @@ def create_admin_client(client_config: dict[str, Any]):
         raise RuntimeError(KAFKA_DEPENDENCY_ERROR) from exc
 
     return AdminClient(client_config)
+
+
+def create_consumer(client_config: dict[str, Any]):
+    try:
+        from confluent_kafka import Consumer
+    except ImportError as exc:
+        raise RuntimeError(KAFKA_DEPENDENCY_ERROR) from exc
+
+    return Consumer(client_config)

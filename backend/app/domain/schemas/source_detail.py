@@ -21,8 +21,41 @@ class SourceTableInfo(BaseModel):
     table_name: str
     version: int = Field(default=1, description="Table schema version")
     schema_definition: Optional[List[dict]] = Field(default=None, alias="schema_table")
+    first_offset: Optional[int] = None
+    next_offset: Optional[int] = None
+    message_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class KafkaTopicSummary(BaseModel):
+    topic_name: str
+    full_topic_name: str
+    is_registered: bool
+    first_offset: Optional[int] = None
+    next_offset: Optional[int] = None
+    message_count: int = 0
+
+
+class KafkaTopicPreviewMessage(BaseModel):
+    partition: int
+    offset: int
+    timestamp: Optional[str] = None
+    key_preview: Optional[str] = None
+    value_preview: Optional[str] = None
+    key: Optional[str] = None
+    value: Optional[str] = None
+    headers: Optional[str] = None
+
+
+class KafkaTopicPreviewResponse(BaseModel):
+    topic_name: str
+    full_topic_name: str
+    page: int
+    page_size: int
+    total_messages: int
+    total_pages: int
+    messages: List[KafkaTopicPreviewMessage] = []
 
 
 class TableSchemaDiff(BaseModel):

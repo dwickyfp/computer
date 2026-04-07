@@ -7,7 +7,9 @@ Implements business rules and orchestrates repository operations for sources.
 from typing import Any, List
 from datetime import datetime, timezone, timedelta
 import asyncio
+import json
 import re
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 import psycopg2
@@ -29,6 +31,9 @@ from app.domain.schemas.source import (
     SourceResponse,
 )
 from app.domain.schemas.source_detail import (
+    KafkaTopicPreviewMessage,
+    KafkaTopicPreviewResponse,
+    KafkaTopicSummary,
     SourceDetailResponse,
     SourceTableInfo,
     TableSchemaResponse,
@@ -39,7 +44,7 @@ from app.domain.services.schema_monitor import SchemaMonitorService
 
 
 from app.infrastructure.redis import RedisClient
-from app.infrastructure.kafka import create_admin_client
+from app.infrastructure.kafka import create_admin_client, create_consumer
 from app.core.security import encrypt_value, decrypt_value
 
 logger = get_logger(__name__)
@@ -143,6 +148,128 @@ class SourceService:
             client["ssl.key.location"] = config["ssl_key_location"]
         return client
 
+    def _build_kafka_consumer_client_config(
+        self,
+        source: Source,
+        *,
+        group_id: str,
+        auto_offset_reset: str = "earliest",
+    ) -> dict[str, Any]:
+        client = self._build_kafka_admin_client_config(source)
+        client["group.id"] = group_id
+        client["auto.offset.reset"] = auto_offset_reset
+        client["enable.auto.commit"] = False
+        return client
+
+    @staticmethod
+    def _kafka_preview_group_id(source_id: int) -> str:
+        return f"rosetta-kafka-preview-{source_id}-{uuid4().hex}"
+
+    @staticmethod
+    def _kafka_preview_page_size() -> int:
+        return 10
+
+    @staticmethod
+    def _truncate_preview(text: str | None, limit: int = 120) -> str | None:
+        if text is None or len(text) <= limit:
+            return text
+        return f"{text[: limit - 1]}…"
+
+    @staticmethod
+    def _decode_preview_bytes(payload: bytes | None, *, indent: bool) -> str | None:
+        if payload is None:
+            return None
+
+        text = payload.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return text
+
+        if indent:
+            return json.dumps(parsed, indent=2, ensure_ascii=False)
+        return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+
+    @classmethod
+    def _serialize_preview_payload(cls, payload: bytes | None) -> tuple[str | None, str | None]:
+        full_text = cls._decode_preview_bytes(payload, indent=True)
+        compact_text = cls._decode_preview_bytes(payload, indent=False)
+        return full_text, cls._truncate_preview(compact_text)
+
+    @classmethod
+    def _serialize_preview_headers(cls, headers: list[tuple[str, bytes | None]] | None) -> str | None:
+        if not headers:
+            return None
+
+        normalized = [
+            {
+                "key": key,
+                "value": cls._decode_preview_bytes(value, indent=False),
+            }
+            for key, value in headers
+        ]
+        return json.dumps(normalized, indent=2, ensure_ascii=False)
+
+    @staticmethod
+    def _preview_timestamp(message: Any) -> str | None:
+        if not hasattr(message, "timestamp"):
+            return None
+
+        timestamp_data = message.timestamp()
+        if not isinstance(timestamp_data, tuple) or len(timestamp_data) != 2:
+            return None
+
+        _, timestamp_ms = timestamp_data
+        if timestamp_ms in (None, -1):
+            return None
+
+        return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
+
+    def _get_kafka_metadata(self, source: Source):
+        if self._is_postgres_source(source):
+            raise ValueError("Kafka topic discovery is only available for KAFKA sources")
+
+        config = dict(source.config or {})
+        bootstrap_servers = config.get("bootstrap_servers", "")
+        admin = create_admin_client(self._build_kafka_admin_client_config(source))
+        try:
+            return admin.list_topics(timeout=10)
+        except Exception as exc:
+            raise ValueError(
+                "Failed to fetch Kafka metadata from "
+                f"'{bootstrap_servers}'. Ensure the broker hostname is reachable "
+                "from the backend service. If the bootstrap server is reachable "
+                "but metadata still times out, verify Kafka advertised.listeners "
+                "is not pointing to an internal hostname such as 'kafka:9092'. "
+                f"Original error: {exc}"
+            ) from exc
+
+    def _discover_kafka_topics(self, source: Source) -> list[tuple[str, str]]:
+        metadata = self._get_kafka_metadata(source)
+        return self._discover_kafka_topics_from_metadata(source, metadata)
+
+    def _discover_kafka_topics_from_metadata(self, source: Source, metadata: Any) -> list[tuple[str, str]]:
+        config = dict(source.config or {})
+        prefix = config.get("topic_prefix", "")
+        prefix_with_dot = f"{prefix}." if prefix else ""
+        topics: list[tuple[str, str]] = []
+
+        for full_topic_name in metadata.topics.keys():
+            if full_topic_name.startswith("_"):
+                continue
+
+            if prefix_with_dot:
+                if full_topic_name.startswith(prefix_with_dot):
+                    topics.append(
+                        (full_topic_name.removeprefix(prefix_with_dot), full_topic_name)
+                    )
+                elif prefix and full_topic_name == prefix:
+                    continue
+            else:
+                topics.append((full_topic_name, full_topic_name))
+
+        return sorted(set(topics), key=lambda topic: topic[0])
+
     def _normalize_kafka_topic_name(self, source: Source, topic_name: str) -> tuple[str, str]:
         normalized = str(topic_name or "").strip()
         if not normalized:
@@ -179,34 +306,7 @@ class SourceService:
             logger.warning("Failed to invalidate cache for source %s: %s", source_id, e)
 
     def _discover_kafka_tables(self, source: Source) -> list[str]:
-        if self._is_postgres_source(source):
-            raise ValueError("Kafka topic discovery is only available for KAFKA sources")
-
-        config = dict(source.config or {})
-        bootstrap_servers = config.get("bootstrap_servers", "")
-        admin = create_admin_client(self._build_kafka_admin_client_config(source))
-        try:
-            metadata = admin.list_topics(timeout=10)
-        except Exception as exc:
-            raise ValueError(
-                "Failed to fetch Kafka metadata from "
-                f"'{bootstrap_servers}'. Ensure the broker hostname is reachable "
-                "from the backend service. If the bootstrap server is reachable "
-                "but metadata still times out, verify Kafka advertised.listeners "
-                "is not pointing to an internal hostname such as 'kafka:9092'. "
-                f"Original error: {exc}"
-            ) from exc
-        prefix = config.get("topic_prefix", "")
-        prefix_with_dot = f"{prefix}." if prefix else ""
-        tables = []
-        for topic in metadata.topics.keys():
-            if topic.startswith("_"):
-                continue
-            if prefix_with_dot and topic.startswith(prefix_with_dot):
-                tables.append(topic.removeprefix(prefix_with_dot))
-            elif prefix and topic == prefix:
-                continue
-        return sorted(set(tables))
+        return [topic_name for topic_name, _ in self._discover_kafka_topics(source)]
 
     def _sync_kafka_tables(self, source: Source) -> list[str]:
         tables = self._discover_kafka_tables(source)
@@ -232,6 +332,254 @@ class SourceService:
             for table in table_repo.get_by_source_id(source_id)
             if table.table_name
         }
+
+    def _collect_kafka_topic_stats(
+        self,
+        source: Source,
+        discovered_topics: list[tuple[str, str]],
+        metadata: Any,
+    ) -> dict[str, dict[str, int | None]]:
+        if not discovered_topics:
+            return {}
+
+        from confluent_kafka import TopicPartition
+
+        consumer = create_consumer(
+            self._build_kafka_consumer_client_config(
+                source,
+                group_id=self._kafka_preview_group_id(source.id),
+            )
+        )
+        try:
+            stats: dict[str, dict[str, int | None]] = {}
+            for topic_name, full_topic_name in discovered_topics:
+                topic_metadata = metadata.topics.get(full_topic_name)
+                partitions = sorted(getattr(topic_metadata, "partitions", {}).keys())
+
+                first_offset: int | None = None
+                next_offset: int | None = None
+                message_count = 0
+
+                for partition_id in partitions:
+                    low, high = consumer.get_watermark_offsets(
+                        TopicPartition(full_topic_name, partition_id),
+                        timeout=10,
+                        cached=False,
+                    )
+                    low = int(low)
+                    high = int(high)
+                    message_count += max(high - low, 0)
+                    first_offset = low if first_offset is None else min(first_offset, low)
+                    next_offset = high if next_offset is None else max(next_offset, high)
+
+                stats[topic_name] = {
+                    "first_offset": first_offset,
+                    "next_offset": next_offset,
+                    "message_count": message_count,
+                }
+
+            return stats
+        finally:
+            consumer.close()
+
+    def get_kafka_topic_summaries(
+        self,
+        source_id: int,
+        refresh: bool = False,
+    ) -> list[KafkaTopicSummary]:
+        source = self.get_source(source_id)
+        if self._is_postgres_source(source):
+            raise ValueError("Kafka topic summaries are only available for KAFKA sources")
+
+        metadata = self._get_kafka_metadata(source)
+        discovered_topics = self._discover_kafka_topics_from_metadata(source, metadata)
+        discovered_topic_names = [topic_name for topic_name, _ in discovered_topics]
+
+        if refresh:
+            try:
+                redis_client = RedisClient.get_instance()
+                redis_client.setex(
+                    f"source:{source_id}:tables",
+                    300,
+                    json.dumps(discovered_topic_names),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to cache refreshed Kafka topic list for source %s: %s",
+                    source_id,
+                    exc,
+                )
+
+        stats_by_topic = self._collect_kafka_topic_stats(source, discovered_topics, metadata)
+        registered_topics = self._get_cached_kafka_tables(source_id)
+
+        return [
+            KafkaTopicSummary(
+                topic_name=topic_name,
+                full_topic_name=full_topic_name,
+                is_registered=topic_name in registered_topics,
+                first_offset=stats_by_topic.get(topic_name, {}).get("first_offset"),
+                next_offset=stats_by_topic.get(topic_name, {}).get("next_offset"),
+                message_count=int(
+                    stats_by_topic.get(topic_name, {}).get("message_count") or 0
+                ),
+            )
+            for topic_name, full_topic_name in discovered_topics
+        ]
+
+    @classmethod
+    def _build_kafka_preview_message(cls, message: Any) -> KafkaTopicPreviewMessage:
+        key_text, key_preview = cls._serialize_preview_payload(message.key())
+        value_text, value_preview = cls._serialize_preview_payload(message.value())
+        headers_text = cls._serialize_preview_headers(message.headers())
+
+        return KafkaTopicPreviewMessage(
+            partition=int(message.partition()),
+            offset=int(message.offset()),
+            timestamp=cls._preview_timestamp(message),
+            key_preview=key_preview,
+            value_preview=value_preview,
+            key=key_text,
+            value=value_text,
+            headers=headers_text,
+        )
+
+    @staticmethod
+    def _is_kafka_partition_eof(error: Any) -> bool:
+        code = error.code() if hasattr(error, "code") else None
+        try:
+            from confluent_kafka import KafkaError
+
+            if code == KafkaError._PARTITION_EOF:
+                return True
+        except Exception:
+            pass
+
+        return "EOF" in str(error).upper()
+
+    def _read_kafka_partition_preview_messages(
+        self,
+        consumer: Any,
+        full_topic_name: str,
+        partition_id: int,
+        start_offset: int,
+        limit: int,
+    ) -> list[KafkaTopicPreviewMessage]:
+        from confluent_kafka import TopicPartition
+
+        if limit <= 0:
+            return []
+
+        topic_partition = TopicPartition(full_topic_name, partition_id, start_offset)
+        consumer.assign([topic_partition])
+
+        messages: list[KafkaTopicPreviewMessage] = []
+        empty_polls = 0
+        while len(messages) < limit and empty_polls < 3:
+            message = consumer.poll(1.0)
+            if message is None:
+                empty_polls += 1
+                continue
+
+            empty_polls = 0
+            if message.error():
+                if self._is_kafka_partition_eof(message.error()):
+                    break
+                raise ValueError(
+                    f"Failed to preview Kafka topic '{full_topic_name}': {message.error()}"
+                )
+
+            if int(message.partition()) != partition_id or int(message.offset()) < start_offset:
+                continue
+
+            messages.append(self._build_kafka_preview_message(message))
+
+        return messages
+
+    def get_kafka_topic_preview(
+        self,
+        source_id: int,
+        topic_name: str,
+        *,
+        page: int = 1,
+    ) -> KafkaTopicPreviewResponse:
+        source = self.get_source(source_id)
+        if self._is_postgres_source(source):
+            raise ValueError("Kafka topic preview is only available for KAFKA sources")
+
+        normalized_topic_name, full_topic_name = self._normalize_kafka_topic_name(source, topic_name)
+        metadata = self._get_kafka_metadata(source)
+        topic_metadata = metadata.topics.get(full_topic_name)
+        if topic_metadata is None:
+            raise ValueError(f"Kafka topic '{full_topic_name}' was not found")
+
+        page_size = self._kafka_preview_page_size()
+        requested_page = max(page, 1)
+
+        from confluent_kafka import TopicPartition
+
+        consumer = create_consumer(
+            self._build_kafka_consumer_client_config(
+                source,
+                group_id=self._kafka_preview_group_id(source.id),
+            )
+        )
+        try:
+            partition_watermarks: list[tuple[int, int, int]] = []
+            total_messages = 0
+            for partition_id in sorted(getattr(topic_metadata, "partitions", {}).keys()):
+                low, high = consumer.get_watermark_offsets(
+                    TopicPartition(full_topic_name, partition_id),
+                    timeout=10,
+                    cached=False,
+                )
+                low = int(low)
+                high = int(high)
+                partition_watermarks.append((partition_id, low, high))
+                total_messages += max(high - low, 0)
+
+            total_pages = max(1, (total_messages + page_size - 1) // page_size)
+            remaining_skip = (requested_page - 1) * page_size
+            messages: list[KafkaTopicPreviewMessage] = []
+
+            for partition_id, low, high in partition_watermarks:
+                partition_count = max(high - low, 0)
+                if partition_count == 0:
+                    continue
+                if remaining_skip >= partition_count:
+                    remaining_skip -= partition_count
+                    continue
+
+                start_offset = low + remaining_skip
+                take = min(page_size - len(messages), high - start_offset)
+                if take <= 0:
+                    remaining_skip = 0
+                    continue
+
+                messages.extend(
+                    self._read_kafka_partition_preview_messages(
+                        consumer,
+                        full_topic_name,
+                        partition_id,
+                        start_offset,
+                        take,
+                    )
+                )
+                remaining_skip = 0
+                if len(messages) >= page_size:
+                    break
+
+            return KafkaTopicPreviewResponse(
+                topic_name=normalized_topic_name,
+                full_topic_name=full_topic_name,
+                page=requested_page,
+                page_size=page_size,
+                total_messages=total_messages,
+                total_pages=total_pages,
+                messages=messages,
+            )
+        finally:
+            consumer.close()
 
     def create_source(self, source_data: SourceCreate) -> Source:
         """
@@ -272,9 +620,9 @@ class SourceService:
                     )
             else:
                 self._ensure_kafka_group_id(source)
-                self._sync_kafka_tables(source)
                 self.db.commit()
                 self.db.refresh(source)
+                self._discover_kafka_tables(source)
         except Exception as e:
             logger.error("Failed to initialize source metadata: %s", e)
 
@@ -377,9 +725,10 @@ class SourceService:
                 self._update_source_table_list(source)
             else:
                 self._ensure_kafka_group_id(source)
-                self._sync_kafka_tables(source)
             self.db.commit()
             self.db.refresh(source)
+            if not self._is_postgres_source(source):
+                self._discover_kafka_tables(source)
         except Exception as e:
             logger.error("Failed to refresh source metadata: %s", e)
 
@@ -550,15 +899,35 @@ class SourceService:
             wal_monitor = wal_monitor_repo.get_by_source(source_id)
         else:
             kafka_metadata_error: str | None = None
+            discovered_topics: list[tuple[str, str]] = []
+            kafka_stats_by_topic: dict[str, dict[str, int | None]] = {}
+            registered_tables = self._get_cached_kafka_tables(source.id)
             try:
-                registered_tables = set(
-                    self._sync_kafka_tables(source)
-                    if force_refresh
-                    else self.fetch_available_tables(source_id)
+                metadata = self._get_kafka_metadata(source)
+                discovered_topics = self._discover_kafka_topics_from_metadata(
+                    source, metadata
                 )
+                kafka_stats_by_topic = self._collect_kafka_topic_stats(
+                    source,
+                    discovered_topics,
+                    metadata,
+                )
+                if force_refresh:
+                    try:
+                        redis_client = RedisClient.get_instance()
+                        redis_client.setex(
+                            f"source:{source_id}:tables",
+                            300,
+                            json.dumps([topic_name for topic_name, _ in discovered_topics]),
+                        )
+                    except Exception as cache_exc:
+                        logger.warning(
+                            "Failed to cache refreshed Kafka topics for source %s: %s",
+                            source_id,
+                            cache_exc,
+                        )
             except ValueError as exc:
                 kafka_metadata_error = str(exc)
-                registered_tables = self._get_cached_kafka_tables(source.id)
                 logger.warning(
                     "Using cached Kafka metadata for source %s after metadata fetch failed: %s",
                     source_id,
@@ -568,7 +937,7 @@ class SourceService:
                 {
                     "bootstrap_servers": source.config.get("bootstrap_servers"),
                     "topic_prefix": source.config.get("topic_prefix"),
-                    "topic_count": len(registered_tables),
+                    "topic_count": len(discovered_topics),
                     "group_id": source.config.get("group_id")
                     or self._system_kafka_group_id(source.id),
                     "format": source.config.get("format", "PLAIN_JSON"),
@@ -583,14 +952,18 @@ class SourceService:
 
         source_tables = []
         for table, count in tables_with_count:
-            # Filter: Only include tables present in the REALTIME publication query
-            if table.table_name not in registered_tables:
+            if self._is_postgres_source(source) and table.table_name not in registered_tables:
                 continue
 
             # count is now MAX(version_schema) from HistorySchemaEvolution.
             # INITIAL_LOAD has version_schema=1, subsequent changes increment it.
             # If no history records exist yet, default to version 1.
             version = count if count > 0 else 1
+            kafka_stats = (
+                kafka_stats_by_topic.get(table.table_name or "")
+                if not self._is_postgres_source(source)
+                else {}
+            )
 
             source_tables.append(
                 SourceTableInfo(
@@ -606,6 +979,9 @@ class SourceService:
                             else []
                         )
                     ),
+                    first_offset=kafka_stats.get("first_offset"),
+                    next_offset=kafka_stats.get("next_offset"),
+                    message_count=int(kafka_stats.get("message_count") or 0),
                 )
             )
 
@@ -1100,14 +1476,10 @@ class SourceService:
 
         if not self._is_postgres_source(source):
             try:
-                self._sync_kafka_tables(source)
-                self.db.commit()
-                self.db.refresh(source)
+                self._discover_kafka_tables(source)
             except ValueError:
-                self.db.rollback()
                 raise
             except Exception as e:
-                self.db.rollback()
                 logger.error(
                     "Failed to refresh Kafka source metadata for source %s: %s",
                     source_id,
@@ -1559,10 +1931,8 @@ class SourceService:
 
         if not self._is_postgres_source(source):
             try:
-                tables = self._sync_kafka_tables(source)
+                tables = self._discover_kafka_tables(source)
                 try:
-                    import json
-
                     redis_client = RedisClient.get_instance()
                     redis_client.setex(cache_key, 300, json.dumps(tables))
                 except Exception as e:
@@ -1571,13 +1941,8 @@ class SourceService:
                         source_id,
                         e,
                     )
-                self.db.commit()
                 return tables
-            except ValueError:
-                self.db.rollback()
-                raise
             except Exception as e:
-                self.db.rollback()
                 logger.error(
                     "Failed to refresh Kafka topics for source %s: %s", source.name, e
                 )

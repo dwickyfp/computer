@@ -6,6 +6,7 @@ become available. Uses Redis Streams consumer groups for at-least-once delivery.
 """
 
 import logging
+import inspect
 import threading
 import time
 from typing import Optional
@@ -602,17 +603,7 @@ class DLQRecoveryWorker:
 
         try:
             with self._dlq_manager.write_guard(destination_id, table_name):
-                # Ensure destination is initialized before writing
-                if not destination._is_initialized:
-                    self._logger.debug(
-                        f"Initializing destination {destination.name} before replay"
-                    )
-                    destination.initialize()
-                else:
-                    self._logger.debug(
-                        f"Checking connection health for destination {destination.name}"
-                    )
-                    destination.initialize(force_reconnect=False)
+                self._ensure_destination_ready_for_replay(destination)
 
                 # Process each operation type batch
                 for op in op_order:
@@ -742,6 +733,42 @@ class DLQRecoveryWorker:
 
             # Update retry count for ALL messages on total failure
             self._handle_retry(messages_with_ids, source_id, table_name, destination_id)
+
+    def _ensure_destination_ready_for_replay(
+        self, destination: BaseDestination
+    ) -> None:
+        """
+        Prepare a destination for DLQ replay.
+
+        PostgreSQL destinations support ``force_reconnect=False`` for a cheap
+        connection refresh, but Kafka and Snowflake expose ``initialize()``
+        without that keyword. Reusing the existing initialized client is enough
+        for those destinations because health is already checked before replay.
+        """
+        if not destination._is_initialized:
+            self._logger.debug(
+                f"Initializing destination {destination.name} before replay"
+            )
+            destination.initialize()
+            return
+
+        self._logger.debug(
+            f"Checking connection health for destination {destination.name}"
+        )
+
+        try:
+            parameters = inspect.signature(destination.initialize).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+
+        if "force_reconnect" in parameters:
+            destination.initialize(force_reconnect=False)
+            return
+
+        self._logger.debug(
+            "Destination %s does not support force_reconnect; reusing initialized client",
+            destination.name,
+        )
 
     def _track_written_versions_if_safe(
         self,
