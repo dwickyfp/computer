@@ -78,7 +78,7 @@
         180deg,
         var(--dashboard-shell-top) 0%,
         var(--dashboard-shell-top) 18%,
-        var(--dashboard-shell-mid) 54%,
+        var(--dashboard-shell-mid) 58%,
         var(--dashboard-shell-bottom) 100%
       );
   }
@@ -92,13 +92,13 @@
       linear-gradient(
         180deg,
         transparent 0%,
-        transparent 14%,
-        rgba(255, 255, 255, 0.01) 42%,
+        transparent 18%,
+        rgba(255, 255, 255, 0.006) 44%,
         transparent 100%
       ),
-      radial-gradient(circle at 74% 24%, var(--dashboard-glow-a), transparent 26%),
-      radial-gradient(circle at 20% 40%, var(--dashboard-glow-b), transparent 20%);
-    opacity: 0.34;
+      radial-gradient(circle at 74% 24%, var(--dashboard-glow-a), transparent 24%),
+      radial-gradient(circle at 20% 40%, var(--dashboard-glow-b), transparent 18%);
+    opacity: 0.24;
   }
 
   .dashboard-panel {

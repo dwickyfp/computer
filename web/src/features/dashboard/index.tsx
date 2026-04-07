@@ -193,37 +193,37 @@ function DashboardContent() {
                   <Server className='h-4 w-4 text-muted-foreground' />
                 </div>
               }
-              className='min-h-[220px] xl:col-span-3'
-              contentClassName='justify-between gap-4'
+              className='min-h-[182px] xl:col-span-3'
+              contentClassName='gap-3'
               href='/pipelines'
               interactive
               variant='dense'
             >
-              <div className='space-y-2'>
+              <div className='space-y-1.5'>
                 <div className='flex items-end justify-between gap-3'>
                   <div>
                     <p className='text-sm text-muted-foreground'>Total pipelines</p>
-                    <p className='mt-2 font-mono text-5xl font-semibold tracking-tight'>
+                    <p className='mt-1.5 font-mono text-4xl font-semibold tracking-tight sm:text-5xl'>
                       {(summary?.pipelines?.total ?? 0).toLocaleString()}
                     </p>
                   </div>
                   <ArrowUpRight className='h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5' />
                 </div>
-                <p className='text-sm leading-6 text-muted-foreground'>
-                  Open the pipeline workspace to inspect jobs and state changes.
+                <p className='max-w-[26ch] text-sm leading-6 text-muted-foreground'>
+                  Open the workspace to inspect jobs and state changes.
                 </p>
               </div>
 
-              <div className='dashboard-inset dashboard-inset-strong grid grid-cols-2 gap-3 rounded-[22px] p-4'>
+              <div className='dashboard-inset dashboard-inset-strong grid grid-cols-2 gap-3 rounded-[18px] p-3'>
                 <div>
                   <p className='text-xs text-muted-foreground'>Active</p>
-                  <p className='mt-2 font-mono text-2xl font-semibold text-emerald-300'>
+                  <p className='mt-1.5 font-mono text-2xl font-semibold text-emerald-300'>
                     {(summary?.pipelines?.START ?? 0).toLocaleString()}
                   </p>
                 </div>
                 <div>
                   <p className='text-xs text-muted-foreground'>Paused</p>
-                  <p className='mt-2 font-mono text-2xl font-semibold text-amber-300'>
+                  <p className='mt-1.5 font-mono text-2xl font-semibold text-amber-300'>
                     {(summary?.pipelines?.PAUSE ?? 0).toLocaleString()}
                   </p>
                 </div>
@@ -238,28 +238,28 @@ function DashboardContent() {
                   <Activity className='h-4 w-4 text-muted-foreground' />
                 </div>
               }
-              className='min-h-[220px] xl:col-span-3'
-              contentClassName='justify-between gap-4'
+              className='min-h-[182px] xl:col-span-3'
+              contentClassName='gap-3'
               href='/pipelines'
               interactive
               variant='dense'
             >
-              <div className='space-y-3'>
+              <div className='space-y-1.5'>
                 <div className='flex items-end justify-between gap-3'>
                   <div>
                     <p className='text-sm text-muted-foreground'>Rows today</p>
-                    <p className='mt-2 font-mono text-5xl font-semibold tracking-tight'>
+                    <p className='mt-1.5 font-mono text-4xl font-semibold tracking-tight sm:text-5xl'>
                       {flowToday.toLocaleString()}
                     </p>
                   </div>
                   <ArrowUpRight className='h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5' />
                 </div>
-                <p className='text-sm leading-6 text-muted-foreground'>
-                  Track how much fresh data the platform is processing now.
+                <p className='max-w-[26ch] text-sm leading-6 text-muted-foreground'>
+                  Track how much fresh data is processing right now.
                 </p>
               </div>
 
-              <div className='dashboard-inset dashboard-inset-strong flex items-center justify-between rounded-[22px] px-4 py-3'>
+              <div className='dashboard-inset dashboard-inset-strong flex items-center justify-between rounded-[18px] px-4 py-2.5'>
                 <div className='flex items-center gap-2'>
                   {flowTrend > 0 ? (
                     <TrendingUp className='h-4 w-4 text-emerald-300' />
@@ -295,30 +295,30 @@ function DashboardContent() {
                   <CreditCard className='h-4 w-4 text-muted-foreground' />
                 </div>
               }
-              className='min-h-[220px] xl:col-span-3'
-              contentClassName='justify-between gap-4'
+              className='min-h-[182px] xl:col-span-3'
+              contentClassName='gap-3'
               href='/destinations'
               interactive
               variant='dense'
             >
-              <div className='space-y-3'>
+              <div className='space-y-1.5'>
                 <div className='flex items-end justify-between gap-3'>
                   <div>
                     <p className='text-sm text-muted-foreground'>
                       Projected run rate
                     </p>
-                    <p className='mt-2 font-mono text-4xl font-semibold tracking-tight sm:text-5xl'>
+                    <p className='mt-1.5 font-mono text-4xl font-semibold tracking-tight sm:text-[3.2rem]'>
                       {formatCurrency(summary?.credits?.month_total ?? 0)}
                     </p>
                   </div>
                   <ArrowUpRight className='h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5' />
                 </div>
-                <p className='text-sm leading-6 text-muted-foreground'>
+                <p className='max-w-[28ch] text-sm leading-6 text-muted-foreground'>
                   Review destinations and adjust workload before spend rises.
                 </p>
               </div>
 
-              <div className='dashboard-inset dashboard-inset-strong rounded-[22px] px-4 py-3'>
+              <div className='dashboard-inset dashboard-inset-strong rounded-[18px] px-4 py-2.5'>
                 <p className='text-xs text-muted-foreground'>
                   Based on credits consumed this month so far.
                 </p>

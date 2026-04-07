@@ -55,28 +55,28 @@ export function SourceHealthCard({ className, href }: SourceHealthCardProps) {
           <Database className='h-4 w-4 text-muted-foreground' />
         </div>
       }
-      className={cn('min-h-[220px]', className)}
-      contentClassName='gap-4 px-5 pb-5 pt-4 sm:px-6 sm:pb-6 sm:pt-5'
+      className={cn('min-h-[182px]', className)}
+      contentClassName='gap-3 px-5 pb-5 pt-3.5 sm:px-6 sm:pb-6 sm:pt-4'
       href={href}
       interactive={Boolean(href)}
       variant='dense'
     >
-      <div className='grid flex-1 grid-cols-3 gap-3'>
+      <div className='grid grid-cols-3 gap-2.5'>
         {sourceStates.map(({ key, label, icon: Icon, iconClassName }) => (
           <div
             key={key}
-            className='dashboard-inset rounded-[22px] p-3.5 sm:p-4'
+            className='dashboard-inset rounded-[18px] p-3'
           >
             <div
               className={cn(
-                'flex h-10 w-10 items-center justify-center rounded-full ring-1 ring-inset ring-white/5',
+                'flex h-8 w-8 items-center justify-center rounded-full ring-1 ring-inset ring-white/5',
                 iconClassName
               )}
             >
-              <Icon className='h-4 w-4' />
+              <Icon className='h-3.5 w-3.5' />
             </div>
-            <div className='mt-4 space-y-1.5'>
-              <div className='font-mono text-2xl font-semibold tracking-tight sm:text-3xl'>
+            <div className='mt-3 space-y-1'>
+              <div className='font-mono text-2xl font-semibold tracking-tight'>
                 {isLoading ? '...' : (health?.[key] ?? 0).toLocaleString()}
               </div>
               <p className='text-sm text-muted-foreground'>{label}</p>
@@ -85,7 +85,7 @@ export function SourceHealthCard({ className, href }: SourceHealthCardProps) {
         ))}
       </div>
 
-      <div className='dashboard-inset dashboard-inset-strong flex items-center justify-between rounded-[22px] px-4 py-3'>
+      <div className='dashboard-inset dashboard-inset-strong flex items-center justify-between rounded-[18px] px-4 py-2.5'>
         <div>
           <p className='text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground/70'>
             Coverage
