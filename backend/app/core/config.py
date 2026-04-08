@@ -112,6 +112,14 @@ class Settings(BaseSettings):
     redis_url: str = Field(
         default="redis://localhost:6379/0", description="Redis connection URL"
     )
+    dlq_key_prefix: str = Field(
+        default="rosetta:dlq",
+        description="Redis key prefix for DLQ stream keys",
+    )
+    dlq_consumer_group: str = Field(
+        default="dlq_recovery",
+        description="Redis consumer group name used by compute DLQ recovery",
+    )
 
     # Worker / Celery Configuration
     worker_enabled: bool = Field(

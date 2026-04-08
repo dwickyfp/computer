@@ -12,6 +12,7 @@ import {
   GitBranch,
   Link2,
   Calendar,
+  ArchiveX,
 } from 'lucide-react'
 import { type SidebarData } from '../types'
 
@@ -57,6 +58,11 @@ export const sidebarData: SidebarData = {
     {
       title: 'Integrations',
       items: [
+        {
+          title: 'DLQ Manager',
+          icon: ArchiveX,
+          url: '/dlq-manager',
+        },
         {
           title: 'Pipelines',
           icon: Workflow,

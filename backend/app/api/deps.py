@@ -192,3 +192,19 @@ def get_pipeline_provision_service(
     from app.domain.services.pipeline_provision_service import PipelineProvisionService
 
     return PipelineProvisionService(db)
+
+
+def get_dlq_service(db: Session = Depends(get_db)) -> "DLQService":
+    """Get DLQ service dependency (read-write)."""
+    from app.domain.services.dlq import DLQService
+
+    return DLQService(db)
+
+
+def get_dlq_service_readonly(
+    db: Session = Depends(get_db_readonly),
+) -> "DLQService":
+    """Get DLQ service dependency (read-only)."""
+    from app.domain.services.dlq import DLQService
+
+    return DLQService(db)

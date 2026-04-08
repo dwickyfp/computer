@@ -13,6 +13,7 @@ import { Route as ClerkRouteRouteImport } from './routes/clerk/route'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedSmartTagsRouteImport } from './routes/_authenticated/smart-tags'
+import { Route as AuthenticatedDlqManagerRouteImport } from './routes/_authenticated/dlq-manager'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors404RouteImport } from './routes/(errors)/404'
@@ -67,6 +68,11 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
 const AuthenticatedSmartTagsRoute = AuthenticatedSmartTagsRouteImport.update({
   id: '/smart-tags',
   path: '/smart-tags',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedDlqManagerRoute = AuthenticatedDlqManagerRouteImport.update({
+  id: '/dlq-manager',
+  path: '/dlq-manager',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const errors503Route = errors503RouteImport.update({
@@ -290,6 +296,7 @@ export interface FileRoutesByFullPath {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
+  '/dlq-manager': typeof AuthenticatedDlqManagerRoute
   '/smart-tags': typeof AuthenticatedSmartTagsRoute
   '/flow-tasks/$flowTaskId': typeof AuthenticatedFlowTasksFlowTaskIdRouteRouteWithChildren
   '/destinations/$destinationId': typeof AuthenticatedDestinationsDestinationIdRoute
@@ -324,6 +331,7 @@ export interface FileRoutesByTo {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
+  '/dlq-manager': typeof AuthenticatedDlqManagerRoute
   '/smart-tags': typeof AuthenticatedSmartTagsRoute
   '/': typeof AuthenticatedIndexRoute
   '/destinations/$destinationId': typeof AuthenticatedDestinationsDestinationIdRoute
@@ -366,6 +374,7 @@ export interface FileRoutesById {
   '/(errors)/404': typeof errors404Route
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
+  '/_authenticated/dlq-manager': typeof AuthenticatedDlqManagerRoute
   '/_authenticated/smart-tags': typeof AuthenticatedSmartTagsRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/flow-tasks/$flowTaskId': typeof AuthenticatedFlowTasksFlowTaskIdRouteRouteWithChildren
@@ -408,6 +417,7 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
+    | '/dlq-manager'
     | '/smart-tags'
     | '/flow-tasks/$flowTaskId'
     | '/destinations/$destinationId'
@@ -442,6 +452,7 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
+    | '/dlq-manager'
     | '/smart-tags'
     | '/'
     | '/destinations/$destinationId'
@@ -483,6 +494,7 @@ export interface FileRouteTypes {
     | '/(errors)/404'
     | '/(errors)/500'
     | '/(errors)/503'
+    | '/_authenticated/dlq-manager'
     | '/_authenticated/smart-tags'
     | '/_authenticated/'
     | '/_authenticated/flow-tasks/$flowTaskId'
@@ -549,6 +561,13 @@ declare module '@tanstack/react-router' {
       path: '/smart-tags'
       fullPath: '/smart-tags'
       preLoaderRoute: typeof AuthenticatedSmartTagsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dlq-manager': {
+      id: '/_authenticated/dlq-manager'
+      path: '/dlq-manager'
+      fullPath: '/dlq-manager'
+      preLoaderRoute: typeof AuthenticatedDlqManagerRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/(errors)/503': {
@@ -936,6 +955,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedLinkedTasksRouteRoute: typeof AuthenticatedLinkedTasksRouteRouteWithChildren
   AuthenticatedPipelinesRouteRoute: typeof AuthenticatedPipelinesRouteRouteWithChildren
   AuthenticatedSettingsRouteRoute: typeof AuthenticatedSettingsRouteRouteWithChildren
+  AuthenticatedDlqManagerRoute: typeof AuthenticatedDlqManagerRoute
   AuthenticatedSmartTagsRoute: typeof AuthenticatedSmartTagsRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
@@ -956,6 +976,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedPipelinesRouteRoute:
     AuthenticatedPipelinesRouteRouteWithChildren,
   AuthenticatedSettingsRouteRoute: AuthenticatedSettingsRouteRouteWithChildren,
+  AuthenticatedDlqManagerRoute: AuthenticatedDlqManagerRoute,
   AuthenticatedSmartTagsRoute: AuthenticatedSmartTagsRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,

@@ -28,6 +28,25 @@ export const linkedTaskKeys = {
   runs: (linkedTaskId: number) => ['linked-task-runs', linkedTaskId] as const,
 }
 
+export interface DLQQueueQueryParams {
+  destination_id?: number
+  include_empty?: boolean
+  pipeline_id?: number
+  search?: string
+}
+
+export interface DLQQueueIdentifier {
+  destination_id: number
+  source_id: number
+  table_name: string
+}
+
+export const dlqKeys = {
+  all: ['dlq'] as const,
+  messages: (queue: DLQQueueIdentifier | null) => ['dlq', 'messages', queue] as const,
+  queues: (params: DLQQueueQueryParams = {}) => ['dlq', 'queues', params] as const,
+}
+
 export const pipelineKeys = {
   all: ['pipelines'] as const,
   detail: (pipelineId: number) => ['pipeline', pipelineId] as const,

@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     schema_validation,
     catalog,
     internal_notification,
+    dlq,
 )
 
 # Create v1 router
@@ -80,3 +81,5 @@ api_router.include_router(
 api_router.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
 
 api_router.include_router(internal_notification.router, tags=["internal-notifications"])
+
+api_router.include_router(dlq.router, prefix="/dlq", tags=["dlq"])
